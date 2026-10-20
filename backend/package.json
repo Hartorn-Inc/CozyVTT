@@ -80,9 +80,6 @@
     "prisma": {
       "mysql2": "3.24.6"
     },
-    "@prisma/config": {
-      "deepmerge-ts": "8.0.2"
-    },
     "@istanbuljs/load-nyc-config": {
       "js-yaml": "4.3.2"
     }
