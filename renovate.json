@@ -1,0 +1,109 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "baseBranches": ["dev"],
+  "schedule": ["before 6am on monday"],
+  "prHourlyLimit": 2,
+  "prConcurrentLimit": 5,
+  "packageRules": [
+    {
+      "description": "npm patch cooldown (hijacked publish window)",
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["patch"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "npm minor cooldown",
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["minor"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "npm major cooldown",
+      "matchDatasources": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "minimumReleaseAge": "14 days"
+    },
+    {
+      "description": "Actions and container image cooldown",
+      "matchManagers": ["github-actions", "dockerfile", "docker-compose"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Group backend npm minor and patch",
+      "groupName": "backend-minor-and-patch",
+      "matchFileNames": ["backend/package.json"],
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "description": "Group frontend npm minor and patch",
+      "groupName": "frontend-minor-and-patch",
+      "matchFileNames": ["frontend/package.json"],
+      "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "description": "Group GitHub Actions updates",
+      "groupName": "github-actions",
+      "matchManagers": ["github-actions"]
+    },
+    {
+      "description": "Group Docker and compose image updates",
+      "groupName": "docker",
+      "matchManagers": ["dockerfile", "docker-compose"]
+    },
+    {
+      "description": "TypeScript 7 cannot run under typescript-eslint or ts-jest yet",
+      "matchPackageNames": ["typescript"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "typescript-eslint accepts TypeScript below 6.1 only",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<6.1.0"
+    },
+    {
+      "description": "@types/node follows the Node major by hand (even LTS only)",
+      "matchPackageNames": ["@types/node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "argon2 0.45 writes hash params in an order libsodium refuses",
+      "matchPackageNames": ["argon2"],
+      "allowedVersions": "!/^0\\.45\\./"
+    },
+    {
+      "description": "zod 4.6.6 and 4.6.7 change union list-limit messages",
+      "matchPackageNames": ["zod"],
+      "allowedVersions": "!/^(4\\.6\\.6|4\\.6\\.7)$/"
+    },
+    {
+      "description": "Tailwind CSS 4 is a move of its own",
+      "matchPackageNames": ["tailwindcss"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Node base image major moves by hand with the even LTS",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["node"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "nginx major and minor move by hand with even stable lines",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["nginx"],
+      "matchUpdateTypes": ["major", "minor"],
+      "enabled": false
+    },
+    {
+      "description": "Postgres major needs a dump/restore release of its own",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["postgres"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    }
+  ]
+}
