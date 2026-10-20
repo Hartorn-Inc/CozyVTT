@@ -6,8 +6,9 @@
 # Every gate was someone remembering to run it locally, and a rule nobody runs
 # is not a rule.
 #
-# The same commands a developer runs, on every push and pull request touching
-# dev or main, plus what self-hosters run and a developer usually does not: the
+# The same commands a developer runs, on every push to dev or main and on
+# every pull request (including stacks whose base is not dev), plus what
+# self-hosters run and a developer usually does not: the
 # production images, the nginx configuration, a browser walking through the
 # running stack, the migrations against the schema, and an advisory check of
 # the dependencies. No deployment, no
@@ -25,7 +26,6 @@ on:
   push:
     branches: [dev, main]
   pull_request:
-    branches: [dev, main]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
