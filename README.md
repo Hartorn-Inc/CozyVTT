@@ -121,7 +121,7 @@ If you find a security issue, please report it privately per [SECURITY.md](SECUR
 
 **Backend**
 - Node.js + Express + TypeScript (strict mode)
-- PostgreSQL 15 + Prisma ORM
+- PostgreSQL 18 + Prisma ORM
 - Socket.io for real-time WebSocket events
 - Argon2id password hashing
 - Multer + Sharp for file uploads and thumbnail generation

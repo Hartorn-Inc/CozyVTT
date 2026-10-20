@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- **The stack runs PostgreSQL 18.** Compose, CI, the backend's `pg_dump`/`psql`, and the Ubuntu install steps use 18. The named volume is mounted at `/var/lib/postgresql` (18 stores the cluster under `18/docker`). The database container's filesystem is read-only, with `/tmp` and `/var/run/postgresql` in memory.
+
+### Upgrading
+
+A leftover PostgreSQL 15 `postgres_data` volume will not start. Remove it (`docker volume rm` the compose project volume) before `docker compose up`. That drops the old cluster; there is no in-container migrator.
+
+---
+
 ## [1.5.3] - 2026-10-17
 
 ### Upgrading from 1.5.2

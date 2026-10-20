@@ -101,12 +101,12 @@ docker compose up -d --build
 ```
 
 This starts four containers on an isolated internal network:
-- `cozyvtt-database` — PostgreSQL 15 (internal only, not exposed to host)
+- `cozyvtt-database` — PostgreSQL 18 (internal only, not exposed to host)
 - `cozyvtt-backend` — Express API on internal port 4000
 - `cozyvtt-frontend` — React SPA served by Nginx on internal port 80
 - `cozyvtt-nginx` — Reverse proxy, the only container with public ports (80 and 443)
 
-Every container runs with Docker's `no-new-privileges` option, so no program in it can gain privileges, and with only the few Linux capabilities (the separate powers root normally holds) that its start-up needs, such as giving a folder to the right owner or switching to an unprivileged user. The frontend container's files are read-only: it only serves the built app, and nginx keeps its scratch files in memory. So are the proxy's (`cozyvtt-nginx`): it writes its settings, rendered from `nginx/nginx.conf` as it starts, to memory, and keeps large uploads and downloads as they pass on a volume of its own, `nginx_temp`, which Compose creates on the first start and which needs no backup. The backend's files are read-only as well, apart from `backend/uploads`, `backend/backups` and `backend/logs` and its `/tmp`, where a backup or a restore keeps its working copy of the database: a volume of its own, `backend_tmp`, created on the first start like `nginx_temp`, with nothing in it to back up. The backend starts as root only long enough to give its mounted folders the right owner, then runs as an unprivileged user, `appuser`. Commands you run inside the backend container take `-u appuser`, as every one in this guide does: root in that container cannot write the backend's files.
+Every container runs with Docker's `no-new-privileges` option, so no program in it can gain privileges, and with only the few Linux capabilities (the separate powers root normally holds) that its start-up needs, such as giving a folder to the right owner or switching to an unprivileged user. The frontend container's files are read-only: it only serves the built app, and nginx keeps its scratch files in memory. So are the proxy's (`cozyvtt-nginx`): it writes its settings, rendered from `nginx/nginx.conf` as it starts, to memory, and keeps large uploads and downloads as they pass on a volume of its own, `nginx_temp`, which Compose creates on the first start and which needs no backup. The backend's files are read-only as well, apart from `backend/uploads`, `backend/backups` and `backend/logs` and its `/tmp`, where a backup or a restore keeps its working copy of the database: a volume of its own, `backend_tmp`, created on the first start like `nginx_temp`, with nothing in it to back up. So is the database container: PostgreSQL writes the cluster on `postgres_data` (mounted at `/var/lib/postgresql`; 18 stores it under `18/docker`) and keeps `/tmp` and `/var/run/postgresql` in memory. A leftover PostgreSQL 15 volume will not start; remove it with `docker volume rm` before `compose up`. The backend starts as root only long enough to give its mounted folders the right owner, then runs as an unprivileged user, `appuser`. Commands you run inside the backend container take `-u appuser`, as every one in this guide does: root in that container cannot write the backend's files.
 
 Database migrations run automatically when the backend starts.
 
@@ -784,9 +784,9 @@ node --version
 
 If it worked, this prints `v26` followed by the rest of the version number, for example `v26.11.1`.
 
-### 2. Install PostgreSQL 15
+### 2. Install PostgreSQL 18
 
-Ubuntu's own package archive carries a single PostgreSQL version per release (14 on Ubuntu 22.04), so `postgresql-15` comes from the PostgreSQL project's package repository. Add it first:
+Ubuntu's own package archive carries a single PostgreSQL version per release (16 on Ubuntu 24.04), so `postgresql-18` comes from the PostgreSQL project's package repository. Add it first:
 
 ```bash
 sudo apt-get install -y curl ca-certificates
@@ -800,7 +800,7 @@ sudo apt-get update
 The `apt-get update` output should include lines starting `Get:` or `Hit:` for `https://apt.postgresql.org/pub/repos/apt`. Then install PostgreSQL and create the database:
 
 ```bash
-sudo apt-get install -y postgresql-15
+sudo apt-get install -y postgresql-18
 sudo -u postgres createuser cozyvtt
 sudo -u postgres createdb -O cozyvtt cozyvtt
 sudo -u postgres psql -c "ALTER USER cozyvtt WITH PASSWORD 'your-db-password';"
@@ -1009,7 +1009,7 @@ curl -sI https://your-domain.com/ | grep -i -e content-security -e permissions-p
 
 It should print three lines. These lines are a copy of `frontend/security-headers.conf`, so after an upgrade compare them with that file.
 
-**Backups need PostgreSQL's command-line tools.** The Admin Dashboard's **Create Backup** and restore run `pg_dump` and `psql` on the machine the backend runs on. The `postgresql-15` package from step 2 brings them; `pg_dump --version` should print 15 or higher. If it says command not found, install `postgresql-client-15` from the same repository.
+**Backups need PostgreSQL's command-line tools.** The Admin Dashboard's **Create Backup** and restore run `pg_dump` and `psql` on the machine the backend runs on. The `postgresql-18` package from step 2 brings them; `pg_dump --version` should print 18 or higher. If it says command not found, install `postgresql-client-18` from the same repository.
 
 ---
 
@@ -1598,7 +1598,7 @@ docker compose logs --tail 30 backend nginx
 Three lines like these appear each time the stack starts and are harmless: the database tries to set the permissions of its folders, which already have the right ones, and the frontend's image tries to make it listen on IPv6 as well, which nothing needs: the bundled nginx reaches it over Docker's own network.
 
 ```
-cozyvtt-database  | chmod: /var/lib/postgresql/data: Operation not permitted
+cozyvtt-database  | chmod: /var/lib/postgresql: Operation not permitted
 cozyvtt-database  | chmod: /var/run/postgresql: Operation not permitted
 cozyvtt-frontend  | 10-listen-on-ipv6-by-default.sh: info: can not modify /etc/nginx/conf.d/default.conf (read-only file system?)
 ```

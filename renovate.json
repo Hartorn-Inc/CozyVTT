@@ -101,7 +101,7 @@
       "enabled": false
     },
     {
-      "description": "Postgres major needs a dump/restore release of its own",
+      "description": "Postgres major is a dump/restore (or pg_upgrade) release: a 19 tag on the parent mount inits empty 19/docker beside unread 18 data",
       "matchDatasources": ["docker"],
       "matchPackageNames": ["postgres"],
       "matchUpdateTypes": ["major"],

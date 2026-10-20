@@ -42,7 +42,7 @@ graph TB
     end
 
     subgraph Data["Data Layer"]
-        Postgres["database\nPostgreSQL 15"]
+        Postgres["database\nPostgreSQL 18"]
         Uploads["uploads/\n(filesystem)"]
     end
 
@@ -71,7 +71,7 @@ Every service in `docker-compose.yml` runs with `no-new-privileges`, drops every
 
 | Service | `cap_add` | What uses them | Filesystem |
 |---|---|---|---|
-| `database` | `CHOWN`, `DAC_READ_SEARCH`, `SETUID`, `SETGID` | The image's start script, which gives the data folder to the postgres user, looks inside it and switches to that user; PostgreSQL runs with none | Writable; the data is on the `postgres_data` volume |
+| `database` | `CHOWN`, `DAC_READ_SEARCH`, `SETUID`, `SETGID` | The image's start script, which gives the data folder to the postgres user, looks inside it and switches to that user; PostgreSQL runs with none | Read-only; the cluster is on the `postgres_data` volume at `/var/lib/postgresql` (18 stores it under `18/docker`); `/tmp` and `/var/run/postgresql` are tmpfs |
 | `backend` | `CHOWN`, `DAC_READ_SEARCH`, `FOWNER`, `SETUID`, `SETGID` | `scripts/start.sh`, which gives the `uploads`, `logs` and `backups` folders to `appuser`, makes `backups` its alone (mode 700) and switches to `appuser` through `su-exec`; the backend runs with none | Read-only; it writes only to those three bind-mounted folders and to `/tmp`, the `backend_tmp` volume |
 | `frontend` | `CHOWN`, `SETUID`, `SETGID`, `NET_BIND_SERVICE` | nginx's master process, which gives its scratch folders to the nginx user, listens on port 80 and starts its workers as that user | Read-only; `/run`, `/var/cache/nginx` and `/tmp` are held in memory (`tmpfs`) |
 | `nginx` | As `frontend`, and `DAC_READ_SEARCH` | The same, on ports 80 and 443, and reading a file only its owner may read, such as a TLS key in `nginx/certs` | Read-only; `/run`, `/tmp` and `/etc/nginx/conf.d` (where the entrypoint renders `nginx.conf`) in memory, and `/var/cache/nginx`, where bodies too large to hold in memory wait, on the `nginx_temp` volume |
