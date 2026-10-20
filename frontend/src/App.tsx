@@ -34,6 +34,10 @@ const DocumentsPage    = lazy(() => import('@/pages/DocumentsPage'));
 const CharacterTemplatesPage = lazy(() => import('@/pages/CharacterTemplatesPage'));
 const ProfilePage      = lazy(() => import('@/pages/ProfilePage'));
 const AdminPage        = lazy(() => import('@/pages/AdminPage'));
+// Throwaway UI prototype; Vite removes this route from production builds.
+const AccessibleLiveTablePrototypePage = lazy(
+  () => import('@/pages/prototypes/AccessibleLiveTablePrototypePage'),
+);
 
 function MascotImage({ className = '' }: { className?: string }) {
   const { mascotUrl } = useTheme();
@@ -93,6 +97,14 @@ function App() {
           {/* Signed in, but the account still has to replace an admin-issued
               password — the server rejects everything else until it does */}
           <Route path="/auth/change-password" element={<ChangePasswordPage />} />
+
+          {/* Wayfinder #25 — development-only, unauthenticated prototype route. */}
+          {import.meta.env.DEV && (
+            <Route
+              path="/prototype/accessible-live-table"
+              element={<AccessibleLiveTablePrototypePage />}
+            />
+          )}
 
           {/* Protected Routes - Require Authentication */}
           <Route
