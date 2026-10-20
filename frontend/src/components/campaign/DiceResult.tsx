@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { Dices, User, Target } from 'lucide-react';
 import type { DiceRolledEvent } from '@/types';
 

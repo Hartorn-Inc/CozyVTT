@@ -10,7 +10,7 @@
 
 import { useState } from 'react';
 import { assetDirectory } from '@/utils/assetUrl';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import { Check, Search, Upload } from 'lucide-react';
 import { api } from '@/services/api';
 import type { Asset } from '@/types';

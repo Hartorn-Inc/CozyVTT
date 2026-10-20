@@ -39,12 +39,12 @@ export default defineConfig({
       output: {
         // Split vendor libraries into named chunks so they are cached independently.
         // Browsers re-download a chunk only when its content changes; app code changes
-        // far more often than React or framer-motion, so splitting keeps those cached.
+        // far more often than React or Motion, so splitting keeps those cached.
         // A group also takes in the modules its packages import.
         codeSplitting: {
           groups: [
             { name: 'vendor-react', test: /[\\/]node_modules[\\/](react|react-dom|react-router)[\\/]/ },
-            { name: 'vendor-framer', test: /[\\/]node_modules[\\/]framer-motion[\\/]/ },
+            { name: 'vendor-motion', test: /[\\/]node_modules[\\/](motion|framer-motion)[\\/]/ },
             { name: 'vendor-socket', test: /[\\/]node_modules[\\/]socket\.io-client[\\/]/ },
             { name: 'vendor-lucide', test: /[\\/]node_modules[\\/]lucide-react[\\/]/ },
             { name: 'vendor-markdown', test: /[\\/]node_modules[\\/]react-markdown[\\/]/ },

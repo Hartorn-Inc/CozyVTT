@@ -2,14 +2,14 @@
  * The operating system's "reduce motion" setting and the app's animations.
  *
  * App wraps everything in <MotionConfig reducedMotion="user">, so when the
- * setting is on, framer-motion skips movement (transform and layout
+ * setting is on, Motion skips movement (transform and layout
  * animations) and jumps straight to the end. These checks hold that behaviour
- * across framer-motion upgrades: with the setting on, a slide lands at once
+ * across Motion upgrades: with the setting on, a slide lands at once
  * under "user", and the same slide under "never" is still under way.
  *
  * index.css also shortens CSS animations and transitions under the setting.
  * Transitions must be switched off there (0s), never made very short: when
- * framer-motion ends a fade it writes the final opacity on the element, and
+ * Motion ends a fade it writes the final opacity on the element, and
  * a CSS transition of any length then starts from the value the fade began
  * with. Firefox paints that start value for one frame, so a modal or toast
  * that faded in blinks out once, and a step that faded out shows again.
@@ -17,10 +17,10 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
-import { MotionConfig, motion } from 'framer-motion';
+import { MotionConfig, motion } from 'motion/react';
 import indexCss from '../index.css?raw';
 
-// framer-motion reads the setting once, the first time a component asks for
+// Motion reads the setting once, the first time a component asks for
 // it, so it is switched on before anything in this file renders.
 beforeAll(() => {
   Object.defineProperty(window, 'matchMedia', {

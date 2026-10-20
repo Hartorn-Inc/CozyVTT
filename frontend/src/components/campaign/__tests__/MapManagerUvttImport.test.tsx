@@ -17,7 +17,7 @@ import type { AxiosAdapter, AxiosInstance, AxiosResponse } from 'axios';
 import MapManager from '../MapManager';
 import { api } from '@/services/api';
 
-vi.mock('framer-motion', () => {
+vi.mock('motion/react', () => {
   const MotionDiv = (props: Record<string, unknown>) => {
     const { children, ...rest } = props as { children?: unknown } & Record<string, unknown>;
     const plain = Object.fromEntries(Object.entries(rest).filter(([k]) => !/^(initial|animate|exit|transition|layout|whileHover|whileTap)$/.test(k)));

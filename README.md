@@ -137,7 +137,7 @@ If you find a security issue, please report it privately per [SECURITY.md](SECUR
 - Socket.io client
 - Axios for REST API calls
 - react-resizable-panels for the session workspace
-- Framer Motion for animations (reduced-motion aware)
+- Motion for animations (reduced-motion aware)
 - Vitest + Testing Library
 
 ---

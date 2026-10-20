@@ -7,7 +7,7 @@ import { memo, useState } from 'react';
 import type { CharacterSummary, Campaign } from '@/types';
 import { User, Calendar, Link2, MoreVertical, Edit, Copy, Trash2, FileDown, Link as LinkIcon } from 'lucide-react';
 import GameSystemBadge from '@/components/common/GameSystemBadge';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface CharacterCardProps {
   character: CharacterSummary;

@@ -4,7 +4,7 @@
 
 import React from 'react';
 import { Plus, Trash2, GripVertical, CheckSquare, Square } from 'lucide-react';
-import { Reorder } from 'framer-motion';
+import { Reorder } from 'motion/react';
 import type { ListSection } from '../../../../../types/flexible-character-sheet';
 import { generateId } from '../../utils/section-helpers';
 import { SHEET_SHORT_TEXT_MAX } from '@/constants/sheetLimits';

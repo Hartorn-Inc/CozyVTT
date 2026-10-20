@@ -4,7 +4,7 @@
 
 import React, { useState } from 'react';
 import { Edit, User } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import type { Character } from '../../../types';
 import type { FlexibleSection } from '../../../types/flexible-character-sheet';
 import { initializeFlexibleData } from './utils/section-helpers';
