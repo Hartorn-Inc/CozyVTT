@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Changed
 
 - **The stack runs PostgreSQL 18.** Compose, CI, the backend's `pg_dump`/`psql`, and the Ubuntu install steps use 18. The named volume is mounted at `/var/lib/postgresql` (18 stores the cluster under `18/docker`). The database container's filesystem is read-only, with `/tmp` and `/var/run/postgresql` in memory.
-- **Dependencies.** Prisma 7.10.1, with the mysql2 override at 3.24.6. The frontend animation library is Motion 14 (`motion/react`) in place of framer-motion. The Tailwind selector-parser override is 7.1.7. CI runners are ubuntu-26.04. js-yaml stays at 4.3.2 under the coverage tool; 5 is not taken.
+- **Dependencies.** Prisma 7.10.1, with the mysql2 override at 3.24.6. The frontend animation library is Motion 14 (`motion/react`) in place of framer-motion. The Tailwind selector-parser override is 7.1.7. CI runners are ubuntu-26.04. js-yaml stays at 4.3.2 under the coverage tool; 5 is not taken. Renovate pins npm versions (except peer dependencies) and Docker/Action digests.
 
 ### Upgrading
 
