@@ -1,0 +1,3 @@
+# zizmor static analysis config for GitHub Actions workflows.
+# https://docs.zizmor.sh/
+rules: {}

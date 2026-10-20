@@ -6,25 +6,30 @@
 # Every gate was someone remembering to run it locally, and a rule nobody runs
 # is not a rule.
 #
-# The same commands a developer runs, on every push and pull request touching
-# dev or main, plus what self-hosters run and a developer usually does not: the
+# The same commands a developer runs, on every push to dev or main and on
+# every pull request (including stacks whose base is not dev), plus what
+# self-hosters run and a developer usually does not: the
 # production images, the nginx configuration, a browser walking through the
 # running stack, the migrations against the schema, and an advisory check of
 # the dependencies. No deployment, no
 # publishing, no secrets.
 #
 # Every action is pinned to a commit, with its version in a comment, so a tag
-# moved upstream cannot change what runs here; Dependabot
-# (.github/dependabot.yml) proposes new versions. The runner image is pinned
-# the same way, to ubuntu-24.04: a move of ubuntu-latest to a new release
-# should arrive as a change here, tried on its own.
+# moved upstream cannot change what runs here; Renovate (renovate.json)
+# proposes new versions. Zizmor audits these workflows on the same triggers.
+# The runner image is pinned the same way, to ubuntu-24.04: a move of
+# ubuntu-latest to a new release should arrive as a change here, tried on its
+# own.
 name: CI
 
 on:
   push:
     branches: [dev, main]
   pull_request:
-    branches: [dev, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 # Read the code, nothing more: no job here writes to the repository.
 permissions:
@@ -40,6 +45,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -85,7 +92,7 @@ jobs:
     # one on the port the tests expect.
     services:
       postgres:
-        image: postgres:15-alpine
+        image: postgres:15-alpine@sha256:f7d23353e1b15400d22ebe31189f4d314b87a4c129cc400c8c2d8d4ca127bf81
         env:
           POSTGRES_USER: cozyvtt
           POSTGRES_PASSWORD: cozyvtt
@@ -101,6 +108,8 @@ jobs:
       DATABASE_URL: postgresql://cozyvtt:cozyvtt@localhost:55433/cozyvtt_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -139,6 +148,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # The route check also loads the OpenAPI file as YAML, which needs PyYAML.
       - run: pip install pyyaml
       - run: python3 scripts/spec-coverage.py
@@ -158,6 +169,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 26
@@ -193,6 +206,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Read docker-compose.yml with the example settings
         run: cp .env.example .env && docker compose config -q
       - run: docker compose build
@@ -238,3 +253,19 @@ jobs:
       - name: Stop the stack
         if: always()
         run: docker compose down -v
+
+  zizmor:
+    name: Zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read # checkout the workflows zizmor audits
+      actions: read # zizmor reads action metadata for online audits
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+        with:
+          persona: pedantic
+          advanced-security: false
