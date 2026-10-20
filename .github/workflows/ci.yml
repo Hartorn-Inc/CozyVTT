@@ -17,9 +17,8 @@
 # Every action is pinned to a commit, with its version in a comment, so a tag
 # moved upstream cannot change what runs here; Renovate (renovate.json)
 # proposes new versions. Zizmor audits these workflows on the same triggers.
-# The runner image is pinned the same way, to ubuntu-24.04: a move of
-# ubuntu-latest to a new release should arrive as a change here, tried on its
-# own.
+# The runner image is pinned the same way, to ubuntu-26.04: a move of
+# ubuntu-latest to a new release should arrive as a change here.
 name: CI
 
 on:
@@ -38,7 +37,7 @@ permissions:
 jobs:
   frontend:
     name: Frontend
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     defaults:
       run:
@@ -83,7 +82,7 @@ jobs:
 
   backend:
     name: Backend
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     defaults:
       run:
@@ -144,7 +143,7 @@ jobs:
 
   docs:
     name: Docs
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -165,7 +164,7 @@ jobs:
   # audit runs whatever the ones before it found, so every result is shown.
   audit:
     name: Dependency advisories
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -202,7 +201,7 @@ jobs:
   # sizes.
   images:
     name: Production images, nginx and smoke tests
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -256,7 +255,7 @@ jobs:
 
   zizmor:
     name: Zizmor
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # checkout the workflows zizmor audits
