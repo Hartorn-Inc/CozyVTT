@@ -2,7 +2,7 @@
 // useReducedMotion — the OS "reduce motion" preference, for JS animation
 //
 // index.css collapses every CSS animation/transition under
-// `@media (prefers-reduced-motion: reduce)`, and framer-motion is handled
+// `@media (prefers-reduced-motion: reduce)`, and Motion is handled
 // by <MotionConfig reducedMotion="user"> in App.tsx. Neither can reach a
 // requestAnimationFrame loop painting to a canvas — so map animations
 // have to ask for the preference explicitly.

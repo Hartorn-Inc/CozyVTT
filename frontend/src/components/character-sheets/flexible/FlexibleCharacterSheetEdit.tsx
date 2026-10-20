@@ -4,7 +4,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Save, X, Plus, User, Upload } from 'lucide-react';
-import { Reorder } from 'framer-motion';
+import { Reorder } from 'motion/react';
 import type { Character } from '../../../types';
 import type { FlexibleSection, SectionTemplate } from '../../../types/flexible-character-sheet';
 import { initializeFlexibleData } from './utils/section-helpers';

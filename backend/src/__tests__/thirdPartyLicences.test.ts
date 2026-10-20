@@ -142,7 +142,7 @@ describe('THIRD_PARTY_LICENSES.md', () => {
     Zustand: ['frontend', 'zustand'],
     'TanStack Query': ['frontend', '@tanstack/react-query'],
     'react-resizable-panels': ['frontend', 'react-resizable-panels'],
-    'Framer Motion': ['frontend', 'framer-motion'],
+    Motion: ['frontend', 'motion'],
     'react-markdown': ['frontend', 'react-markdown'],
     'remark-gfm': ['frontend', 'remark-gfm'],
     'remark-breaks': ['frontend', 'remark-breaks'],

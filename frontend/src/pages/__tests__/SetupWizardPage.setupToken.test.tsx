@@ -13,7 +13,7 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import SetupWizardPage from '../SetupWizardPage';
 
-vi.mock('framer-motion', () => {
+vi.mock('motion/react', () => {
   const MotionDiv = (props: Record<string, unknown>) => {
     const { children, ...rest } = props as { children?: unknown } & Record<string, unknown>;
     const plain = Object.fromEntries(Object.entries(rest).filter(([k]) => !/^(initial|animate|exit|transition|layout|whileHover|whileTap)$/.test(k)));

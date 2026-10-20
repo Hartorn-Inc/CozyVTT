@@ -1,7 +1,7 @@
 import { lazy, Suspense, useState, useEffect } from 'react';
 import { Routes, Route, Navigate, useNavigate } from 'react-router';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { MotionConfig } from 'framer-motion';
+import { MotionConfig } from 'motion/react';
 import { Loader2 } from 'lucide-react';
 import { api } from '@/services/api';
 import { queryClient } from '@/lib/queryClient';
@@ -56,7 +56,7 @@ function PageLoader() {
 function App() {
   return (
     <ErrorBoundary>
-      {/* reducedMotion="user" makes every framer-motion animation (toasts, dice
+      {/* reducedMotion="user" makes every Motion animation (toasts, dice
           pops, modals, error slides) respect the OS "reduce motion" setting —
           transform/layout animations are suppressed, opacity/color kept. */}
       <MotionConfig reducedMotion="user">

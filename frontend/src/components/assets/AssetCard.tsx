@@ -1,5 +1,5 @@
 import { memo, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import {
   Eye,
   Trash2,
@@ -237,7 +237,7 @@ function AssetCardInner({ asset, viewMode, onView, onDelete }: AssetCardProps) {
     <>
     {/* TODO(ui): `transition-all` here and on the list card above also
         transitions opacity, so in Firefox each card fades in twice: when
-        framer-motion's fade ends it writes the final opacity on the element,
+        Motion's fade ends it writes the final opacity on the element,
         and the 150ms CSS transition replays it from 0. The cards should
         transition only what hover changes (`transition-shadow`). */}
     <motion.div

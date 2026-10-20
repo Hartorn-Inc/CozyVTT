@@ -165,7 +165,7 @@ _Nothing at present._
   and jest-dom 7. **Done** for the backend's web framework: Express 5, with
   express-rate-limit 8 and helmet 8, and for its smaller libraries:
   connect-pg-simple 10, archiver 8, dotenv 18, file-type 22 and mathjs 15.
-  **Done** for React: React 19.3 with React Router 8.4, and for framer-motion
+  **Done** for React: React 19.3 with React Router 8.4, and for Motion
   14, lucide-react 1 and react-markdown 10. React Router 6 had two moderate
   advisories that could not be reached in CozyVTT, a single-page app with no
   server rendering whose one address taken from a link, the page to go back to

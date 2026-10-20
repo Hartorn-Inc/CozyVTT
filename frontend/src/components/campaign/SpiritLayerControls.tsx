@@ -5,7 +5,7 @@
 // ============================================
 
 import { useState, useEffect, useCallback } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
+import { AnimatePresence, motion } from 'motion/react';
 import { Eye, EyeOff, Ghost, Layers, X, Loader2 } from 'lucide-react';
 import { useCampaign } from '@/contexts/CampaignContext';
 import { useTokenListIgnoringMovement } from '@/stores/gameStore';

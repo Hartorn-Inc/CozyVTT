@@ -103,7 +103,7 @@ export function createApp(options: AppOptions): express.Express {
         directives: {
           defaultSrc: ["'self'"],
           scriptSrc: ["'self'"],
-          styleSrc: ["'self'", "'unsafe-inline'"], // Required for Framer Motion / Tailwind inline styles
+          styleSrc: ["'self'", "'unsafe-inline'"], // Required for Motion / Tailwind inline styles
           imgSrc: ["'self'", 'data:', 'blob:'],    // Canvas exports and base64 avatars
           // TODO(security): ws: and wss: allow a live connection to any host.
           // CSP Level 3 lets 'self' match the page's own ws: and wss:; check
