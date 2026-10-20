@@ -1,0 +1,89 @@
+---
+alwaysApply: true
+---
+
+# CozyVTT Agent Orchestration
+
+This repository is a TypeScript Node/Express + Prisma backend and a React/Vite
+frontend. Use the CozyVTT agent roster below; do not import workflows or
+architecture from another repository, and do not duplicate existing
+`.cursor/skills`.
+
+## Coordinator boundary
+
+The coordinator plans the work, selects and delegates to the smallest
+appropriate builder, dispatches independent reviewers, and integrates the
+result. The coordinator is not a generic implementer and must not bypass the
+roster by doing an entire domain's work directly. Builders write only within
+their assigned scope. Reviewers are independent and readonly; they report
+findings and do not edit code. Preserve existing files/comments, do not edit a
+plan file, and do not commit or run destructive commands.
+
+## Roster
+
+### Write-capable builders
+
+- `backend-api` — `backend/src/routes`, `services`, `middleware`,
+  `validators`, `config`, Prisma-facing code, and HTTP tests.
+- `frontend-ui` — React/Vite pages, components, contexts, hooks, services,
+  query clients, and ordinary UI outside live table internals and game-system
+  sheets.
+- `realtime-table` — `backend/src/websocket`, `frontend/src/stores/gameStore.ts`,
+  map rendering/state, socket services, live-table filtering, locking, and
+  parity.
+- `game-systems` — backend/frontend game-system types, Zod schemas, templates,
+  limits, character-sheet UI, Keeper-only fields, and parity.
+- `ops-ci` — Docker Compose, nginx, Dockerfiles, scripts, `.github`, CI,
+  production packaging, dependency `allowScripts`, advisories, and licences.
+
+### Readonly reviewers
+
+- Matching reviewers: `backend-reviewer`, `frontend-reviewer`,
+  `realtime-reviewer`, `game-systems-reviewer`, `infra-reviewer`.
+- Cross-cutting reviewers: `architecture-reviewer`, `security-reviewer`,
+  `standards-reviewer`, `spec-parity-reviewer`, `accessibility-reviewer`,
+  `design-reviewer`, and `user-advocate`.
+
+Every builder has exactly one matching reviewer. The frontend reviewer checks
+accessibility, but `accessibility-reviewer` remains a separate required
+reviewer for UI work.
+
+## Workflow
+
+1. Inspect the request, affected paths, architecture docs, and existing tests.
+2. For a user-facing UI change, run both `design-reviewer` and
+   `user-advocate` in `design-gate` mode before implementation when the
+   interaction, layout, or information architecture is not already
+   established. A BLOCKED gate stops implementation until resolved.
+3. Delegate implementation to the builder matching the primary changed paths.
+   Split genuinely independent scopes rather than making one builder own all
+   layers.
+4. After implementation, dispatch the matching reviewer and relevant
+   cross-cutting reviewers in parallel. UI changes require
+   `frontend-reviewer` plus `accessibility-reviewer`; run
+   `user-advocate` again in `implementation-review` mode. Add architecture,
+   security, and spec-parity review whenever their routing rows apply.
+5. Integrate only changes within the request, run the documented verification
+   gates, resolve clear findings, and report exact files, tests, and blocked
+   checks.
+
+## Path-to-builder/reviewer routing
+
+| Changed path or concern | Builder | Required reviewers |
+| --- | --- | --- |
+| `backend/src/routes/**`, `backend/src/services/**`, `backend/src/middleware/**`, `backend/src/validators/**`, `backend/src/config/**`, Prisma-facing backend code, HTTP route tests | `backend-api` | `backend-reviewer`; add `architecture-reviewer`, `security-reviewer`, and `spec-parity-reviewer` when applicable |
+| Auth, MFA, sessions, RBAC, ownership, resource scoping, or upload authorization anywhere | matching builder (`backend-api` or `realtime-table`) | `security-reviewer` plus matching reviewer |
+| `frontend/src/pages/**`, `frontend/src/components/**` outside map/game-system sheets, `frontend/src/contexts/**`, `frontend/src/hooks/**`, `frontend/src/services/**`, `frontend/src/lib/**`, ordinary UI tests | `frontend-ui` | `frontend-reviewer` + `accessibility-reviewer`; `design-reviewer` and `user-advocate` design gate before implementation when needed, then `user-advocate` implementation review; add `architecture-reviewer` and `spec-parity-reviewer` when applicable |
+| `backend/src/websocket/**`, `frontend/src/stores/gameStore.ts`, `frontend/src/components/campaign/map/**`, `frontend/src/services/socket.ts`, live table/map services and tests | `realtime-table` | `realtime-reviewer`, `architecture-reviewer`, `security-reviewer`, `spec-parity-reviewer`; add `accessibility-reviewer` and `user-advocate` for UI changes |
+| Vision, raycasting, spatial index, token mask/centre, style allowlists, vibe audio, map filtering, map locking, or backend/frontend byte-parity files | `realtime-table` | `realtime-reviewer` + `spec-parity-reviewer`; add `security-reviewer` for visibility/authorization changes |
+| `backend/src/game-systems/**`, `backend/src/validators/game-systems/**`, character templates, `frontend/src/types/game-systems/**`, `frontend/src/constants/game-systems.ts`, `frontend/src/constants/sheetLimits.ts`, `frontend/src/components/character-sheets/**`, game-system tests/docs | `game-systems` | `game-systems-reviewer`, `spec-parity-reviewer`; add `frontend-reviewer` + `accessibility-reviewer`, design gate, and post-build `user-advocate` for sheet UI; add `security-reviewer` for Keeper-only or permission changes |
+| `docker-compose*`, `Dockerfile*`, `nginx/**`, `scripts/**`, `.github/**`, backup/restore/production packaging, dependency manifests/lockfiles/licence notices | `ops-ci` | `infra-reviewer`; add `security-reviewer`, `standards-reviewer`, and `spec-parity-reviewer` when applicable |
+| `docs/**`, generated API/WebSocket references, route inventory, parity tests, or cross-package limits | builder for the associated domain | `standards-reviewer` + `spec-parity-reviewer` + the associated matching reviewer |
+| Any change spanning multiple rows | builders for each independent scope | all matching reviewers, plus `architecture-reviewer` and any applicable cross-cutting reviewers |
+
+Use the concise shared references under `.cursor/agents/references/` and the
+actual commands in `.cursor/agents/references/cozyvtt-commands.md`. Route work only to this
+CozyVTT roster and its documented TypeScript/React architecture. When rows
+overlap, use the most specific path row (for example, `services/socket.ts`
+routes to `realtime-table`, while other frontend services route to
+`frontend-ui`).
