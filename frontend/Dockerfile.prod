@@ -13,7 +13,7 @@ RUN npm run build
 
 # Serve via Nginx (lightweight serving of built static files). nginx's stable
 # line, the same as the proxy's in docker-compose.yml; move both together.
-FROM nginx:1.30-alpine AS production
+FROM nginx:1.30-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5 AS production
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 
