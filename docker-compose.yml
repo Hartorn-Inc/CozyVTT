@@ -39,7 +39,7 @@ x-logging: &logging
 
 services:
   database:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     container_name: cozyvtt-database
     logging: *logging
     restart: unless-stopped
@@ -57,12 +57,19 @@ services:
       - DAC_READ_SEARCH
       - SETUID
       - SETGID
+    # The image layer is read-only: PostgreSQL writes the cluster on the
+    # volume (18 stores it at /var/lib/postgresql/18/docker) and the unix
+    # socket and scratch files on tmpfs. A leftover 15 volume will not start.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
     environment:
       POSTGRES_DB: ${DATABASE_NAME:-cozyvtt}
       POSTGRES_USER: ${DATABASE_USER:-cozyvtt}
       POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-cozyvtt}"]
       interval: 10s

@@ -418,7 +418,7 @@ it:
 
 ```bash
 docker run -d --name cozyvtt-test-pg -e POSTGRES_USER=cozyvtt -e POSTGRES_PASSWORD=cozyvtt \
-  -e POSTGRES_DB=cozyvtt_test -p 55500:5432 postgres:15-alpine
+  -e POSTGRES_DB=cozyvtt_test -p 55500:5432 postgres:18-alpine
 cd backend
 DATABASE_URL=postgresql://cozyvtt:cozyvtt@localhost:55500/cozyvtt_test npx prisma db push
 ```
@@ -765,7 +765,8 @@ when to remove the entry: Tailwind CSS 4, TypeScript 7 and TypeScript 6.1
 (until typescript-eslint accepts it) among them, and `@types/node`, which
 moves with the Node major. Node and nginx move to a new
 major or stable line by hand, and PostgreSQL's major version never through
-Dependabot, since its data has to be dumped and restored. A new release
+Renovate, since a 19 tag on the parent mount would init empty `19/docker`
+beside unread 18 data. A new release
 waits before Dependabot proposes it (`cooldown`): an npm package 3 days for a
 patch, 7 for a minor and 14 for a major, an action or base image 7 days, so
 a hijacked publish is usually pulled first. Security updates do not wait.

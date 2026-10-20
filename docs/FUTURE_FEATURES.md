@@ -148,23 +148,12 @@ _Nothing at present._
   once into an offscreen canvas invalidated on reveal, as the lighting mask
   already is, at one pixel per cell scaled with smoothing off.
 
-- **Move the database to a current PostgreSQL major.** The stack runs
-  `postgres:15`, chosen at 1.0.0 and supported upstream until November 2027.
-  Nothing in the app needs a newer server, and the client tools in the backend
-  image are pinned to the nearest major this Alpine packages so backups stay
-  restorable. What makes the move its own piece of work is the upgrade path: a
-  data directory is specific to its major, so a newer image refuses to start on
-  an existing volume and `docker compose up -d --build` would leave every
-  self-hoster down until they dumped and reloaded by hand. The move needs a
-  one-shot step at container start that notices a 15 data directory, dumps it,
-  initialises the new cluster, loads the dump, and deletes nothing until the new
-  cluster verifies, rehearsed on a seeded instance the way 1.5.0 was. Prisma's
-  supported server range has to be checked for the target major first.
-  The same release is the time to make the database container's filesystem
-  read-only, as the backend's, the frontend's and the proxy's are, once the
-  new image's first start and the dump-and-reload step are proven to write
-  nowhere but the data volume and `/var/run/postgresql`.
-  **Do** before 15 leaves support; **revisit** sooner if a feature needs it.
+- **Move the database to the next PostgreSQL major.** Hartorn ships
+  `postgres:18` with the official parent mount and a read-only database
+  filesystem (ADR 0005). A 19 bump still needs dump/restore or `pg_upgrade`:
+  Renovate majors stay off because a tag-only PR would init empty `19/docker`
+  beside unread 18 data.
+  **Do** before 18 leaves support; **revisit** sooner if a feature needs it.
 
 - **Move the remaining libraries to their current major versions.** 1.5.2
   updated every package within its current major version, moved to ESLint 10,

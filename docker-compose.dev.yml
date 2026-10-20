@@ -12,9 +12,15 @@
 
 services:
   database:
-    image: postgres:15-alpine
+    image: postgres:18-alpine
     container_name: cozyvtt-database
     restart: unless-stopped
+    # Same read-only root as production so a crash-loop shows up locally.
+    # A leftover 15 volume will not start; `docker volume rm` it first.
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/run/postgresql
     environment:
       POSTGRES_DB: ${DATABASE_NAME}
       POSTGRES_USER: ${DATABASE_USER}
@@ -22,7 +28,7 @@ services:
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-cozyvtt}"]
       interval: 10s
