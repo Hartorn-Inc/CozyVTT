@@ -157,16 +157,24 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         });
       }
 
-      // TODO(rules): a gameSystem sent with the campaignId is not checked
-      // against the campaign's, so the API creates a Pathfinder 2e character
-      // straight into a D&D 5e campaign, or a typed one into a Flexible
-      // campaign, which assigning and accepting an invitation both refuse.
-      // It should answer 400 unless systemsCompatible(gameSystem, the
-      // campaign's) holds, with the same message as the assign route.
       if (!gameSystem) {
         // Prisma's GameSystem is a string-literal union; cast to the local enum
         // type finalGameSystem was inferred from (identical string values).
         finalGameSystem = campaign.gameSystem as GameSystem | null;
+      }
+
+      // After inheritance: a typed Campaign accepts only a Character of that
+      // same system (a Flexible Character is refused). A Campaign with no
+      // game system accepts any Character. Omitting or nulling gameSystem
+      // inherited the Campaign's system above, so that is not a
+      // Flexible-into-typed create.
+      if (!systemsCompatible(finalGameSystem, campaign.gameSystem)) {
+        const charLabel = finalGameSystem ?? 'flexible';
+        const campLabel = campaign.gameSystem ?? 'flexible';
+        return res.status(400).json({
+          error: 'Game System Mismatch',
+          message: `Cannot assign a ${charLabel} character to a ${campLabel} campaign. Character and campaign game systems must match.`,
+        });
       }
     }
 
@@ -1085,9 +1093,9 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
       });
     }
 
-    // Enforce game system compatibility:
-    // flexible character (null) only goes to flexible campaigns (null), and vice versa.
-    // typed characters must match the campaign's game system exactly.
+    // Enforce game system compatibility: a typed Campaign accepts only a
+    // Character of that same system (a Flexible Character is refused). A
+    // Campaign with no game system accepts any Character.
     const charSystem = character.gameSystem;
     const campSystem = campaign.gameSystem;
 

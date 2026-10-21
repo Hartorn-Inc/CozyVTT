@@ -27,6 +27,7 @@ export default function InvitationModal({
   const [characters, setCharacters] = useState<CharacterSummary[]>([]);
   const [selectedCharacterIds, setSelectedCharacterIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [processing, setProcessing] = useState(false);
   const { toast, showToast, hideToast } = useToast();
 
@@ -35,9 +36,12 @@ export default function InvitationModal({
     const fetchCharacters = async () => {
       try {
         setLoading(true);
+        setLoadError('');
         const response = await api.listCharacters();
 
-        // Unassigned characters the server will let join this campaign
+        // Unassigned characters the server will let join this campaign: a typed
+        // Campaign takes the same game system; a Campaign with no game system
+        // takes any Character. A Flexible Character is refused by a typed Campaign.
         const compatible = response.characters.filter(
           (char: CharacterSummary) => !char.campaignId && systemsCompatible(char.gameSystem, invitation.campaign?.gameSystem)
         );
@@ -45,6 +49,8 @@ export default function InvitationModal({
         setCharacters(compatible);
       } catch (error) {
         console.error('Error fetching characters:', error);
+        setCharacters([]);
+        setLoadError(apiErrorMessage(error) || 'Failed to load characters');
       } finally {
         setLoading(false);
       }
@@ -156,14 +162,22 @@ export default function InvitationModal({
               <div className="text-center py-8">
                 <p className="text-sm text-warm-gray">Loading characters...</p>
               </div>
+            ) : loadError ? (
+              <div role="alert" className="mb-4 bg-danger/10 border border-danger/30 rounded-lg p-4">
+                <p className="text-sm text-danger-ink font-medium">{loadError}</p>
+              </div>
             ) : characters.length === 0 ? (
               <div className="text-center py-8 px-4 rounded-lg bg-parchment/50">
-                <p className="text-sm text-warm-gray mb-2">
-                  No compatible characters available
-                </p>
-                <p className="text-xs text-warm-gray">
-                  Create a new character or unassign one from another campaign to bring it here.
-                </p>
+                {invitation.campaign?.gameSystem ? (
+                  <p className="text-sm text-warm-gray">
+                    Only unassigned {getSystemName(invitation.campaign.gameSystem)} Characters are
+                    offered, not Flexible sheets. You can still Accept and add a Character later.
+                  </p>
+                ) : (
+                  <p className="text-sm text-warm-gray">
+                    No unassigned Characters to bring. You can still accept.
+                  </p>
+                )}
               </div>
             ) : (
               <div className="space-y-2 max-h-64 overflow-y-auto">

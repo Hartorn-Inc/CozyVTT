@@ -319,7 +319,7 @@ describe('Game Systems - E2E Tests', () => {
     });
   });
 
-  describe('Game System Mismatch Scenarios', () => {
+  describe('Existing game-system mismatches', () => {
     let dnd5eCampaignId: string;
     let pf2eCharacterId: string;
 
@@ -361,15 +361,17 @@ describe('Game Systems - E2E Tests', () => {
       pf2eCharacterId = character.id;
     });
 
-    it('should allow assigning character to campaign (no strict validation)', async () => {
-      // Note: In the current implementation, we allow mismatched systems
-      // This is intentional to support multi-system campaigns
+    it('still stores a Character already in a Campaign of another game system', async () => {
+      // ADR 0015: no bulk rewrite. The database still stores a Character whose
+      // game system differs from its Campaign. HTTP assign of this combination
+      // is covered in characterGameSystemMatch.e2e.test.ts.
       const character = await prisma.character.update({
         where: { id: pf2eCharacterId },
         data: { campaignId: dnd5eCampaignId },
       });
 
       expect(character.campaignId).toBe(dnd5eCampaignId);
+      expect(character.gameSystem).toBe(PrismaGameSystem.PATHFINDER_2E);
     });
   });
 

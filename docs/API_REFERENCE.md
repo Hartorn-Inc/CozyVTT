@@ -759,6 +759,8 @@ the most one account can. Delete one you no longer need to make room."
 
 For a character with a game system, `name` is written into the sheet's `characterName` (`investigatorName` in Call of Cthulhu), and your display name into `playerName`, before the sheet is checked; a Flexible sheet (no game system) gets neither. A D&D 5e sheet needs at least the fields above; a sheet that does not pass answers `400` with `validationErrors`, as on `PUT`.
 
+When `campaignId` is set, omit or null `gameSystem` still inherits the Campaign's game system (that is not a Flexible-into-typed create). After inheritance, a Character whose game system does not match a typed Campaign is **400** `Game System Mismatch` (a Flexible sheet into a typed Campaign is refused; a Campaign with no game system accepts any Character). The envelope is the same as `POST /api/characters/:id/assign`.
+
 ---
 
 ### `GET /api/characters/:id`
@@ -796,11 +798,22 @@ Delete a character. Only the owner can delete.
 
 ### `POST /api/characters/:id/assign`
 
-Assign a character to a campaign.
+Assign a Character to a Campaign, or unassign it.
+
+A typed Campaign (one with a game system) accepts only a Character of that same system. A Flexible sheet is refused by a typed Campaign with **400** `Game System Mismatch`. A Campaign with no game system accepts any Character. Existing mismatches still load (`GET` is 200); this write is the next one that is refused.
 
 **Request:**
 ```json
 { "campaignId": "8d3f6b2a-1c4e-4f7a-b9d2-3e5a7c9f1b04" }
+```
+
+A refused assign answers:
+
+```json
+{
+  "error": "Game System Mismatch",
+  "message": "Cannot assign a PATHFINDER_2E character to a DND_5E campaign. Character and campaign game systems must match."
+}
 ```
 
 ---
@@ -1341,7 +1354,9 @@ List pending invitations for the authenticated user.
 
 ### `POST /api/invitations/:id/accept`
 
-Accept a campaign invitation and optionally assign characters.
+Accept a Campaign invitation and optionally bring Characters in.
+
+A typed Campaign requires the same Character game system (a Flexible sheet is refused). A Campaign with no game system accepts any Character — the same join rule as `POST /api/characters/:id/assign`. A mismatch on this route answers **400** with `{ "message" }` only (existing invitation style), not the assign `error: Game System Mismatch` envelope.
 
 **Request:**
 ```json

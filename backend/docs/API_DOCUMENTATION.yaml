@@ -3249,10 +3249,9 @@ paths:
           to a campaign; a list naming the same id twice is refused too. One
           assigned elsewhere while the accept runs makes it answer 400 and
           change nothing.
-        - Each character's `gameSystem` must be the campaign's: a character with
-          a system joins only a campaign with the same one, and a character with
-          none (Flexible) only a campaign with none. The same rule as
-          `POST /api/characters/{id}/assign`.
+        - A typed Campaign requires the same Character `gameSystem` (a Flexible
+          sheet is refused). A Campaign with no game system accepts any
+          Character. The same rule as `POST /api/characters/{id}/assign`.
 
         On success, also broadcasts a `roster.updated` event
         (`{ action: 'member.joined', userId, campaignId, characterIds }`) over
@@ -4656,11 +4655,13 @@ paths:
         Create a new character.
         - `name` is trimmed and must be 1 to 200 characters.
         - If `campaignId` is provided and `gameSystem` is omitted or null, the
-          character inherits the campaign's `gameSystem`. A `gameSystem`
-          sent together with `campaignId` is not checked against the
-          campaign's own system, so a character can be created straight into a
-          campaign it does not match; `POST /api/characters/{id}/assign`
-          refuses that combination, but this endpoint does not.
+          character inherits the campaign's `gameSystem`. That is not a
+          Flexible-into-typed create; it becomes a typed Character when the
+          Campaign has a game system. When `campaignId` is set, after that
+          inheritance, a Character whose `gameSystem` does not match a typed
+          Campaign is 400 `Game System Mismatch` (a Flexible sheet into a
+          typed Campaign is refused; a Campaign with no game system accepts
+          any Character).
         - For a typed game system, `name` is written into the sheet's own name
           field (`characterName`, or `investigatorName` for
           `CALL_OF_CTHULHU_7E`) and the caller's display name into
@@ -4752,7 +4753,10 @@ paths:
             `FlexibleCharacterData` layout (message `Character data does not
             match the Flexible sheet layout`), answered with
             `validationErrors` listing each problem; or the caller already
-            owns 1,000 characters.
+            owns 1,000 characters; or, when `campaignId` is set, the
+            Character's `gameSystem` after inheritance does not match a typed
+            Campaign (`Game System Mismatch`, same envelope as
+            `POST /api/characters/{id}/assign`).
           content:
             application/json:
               schema:
@@ -4760,7 +4764,6 @@ paths:
                 properties:
                   error:
                     type: string
-                    example: Validation Error
                   message:
                     type: string
                   validationErrors:
@@ -4774,6 +4777,17 @@ paths:
                           type: string
                         code:
                           type: string
+              examples:
+                validationError:
+                  summary: Body or sheet validation
+                  value:
+                    error: Validation Error
+                    message: Character name is required
+                gameSystemMismatch:
+                  summary: Character does not match a typed Campaign
+                  value:
+                    error: Game System Mismatch
+                    message: Cannot assign a PATHFINDER_2E character to a DND_5E campaign. Character and campaign game systems must match.
         '403':
           description: >
             The caller is not a member of the campaign named by `campaignId`,
@@ -5028,9 +5042,10 @@ paths:
           it had one. No campaign membership is needed for this.
         - Sending a `campaignId` assigns the character to that campaign. The
           campaign must exist (404 otherwise) and the caller must already be a
-          member of it (403 otherwise). The character's `gameSystem` must
-          match the campaign's (both flexible, or the same typed system), or
-          the request answers 400 and nothing changes. If the character was
+          member of it (403 otherwise). A typed Campaign requires the same
+          Character `gameSystem` (a Flexible sheet is refused); a Campaign
+          with no game system accepts any Character. A mismatch answers 400
+          `Game System Mismatch` and nothing changes. If the character was
           assigned to another campaign, it is removed from the caller's
           membership there first. A character coming from another campaign,
           or from none, loses a Call of Cthulhu sheet's Keeper's Notes (see
@@ -5091,7 +5106,7 @@ paths:
                     example: Game System Mismatch
                   message:
                     type: string
-                    example: Cannot assign a DND_5E character to a flexible campaign. Character and campaign game systems must match.
+                    example: Cannot assign a PATHFINDER_2E character to a DND_5E campaign. Character and campaign game systems must match.
         '403':
           description: >-
             The caller does not own the character, or (when assigning) is not

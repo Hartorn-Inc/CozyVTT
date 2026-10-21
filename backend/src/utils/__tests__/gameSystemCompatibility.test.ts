@@ -8,15 +8,17 @@ describe('systemsCompatible', () => {
     ['PATHFINDER_2E', 'PATHFINDER_2E'],
     [null, null],
     [undefined, null],
+    ['DND_5E', null],
+    [null, undefined],
+    ['CALL_OF_CTHULHU_7E', undefined],
   ])('lets a %s character join a %s campaign', (character, campaign) => {
     expect(systemsCompatible(character, campaign)).toBe(true);
   });
 
   it.each([
-    [null, 'DND_5E'],
-    ['DND_5E', null],
     ['PATHFINDER_2E', 'DND_5E'],
-    ['CALL_OF_CTHULHU_7E', undefined],
+    [null, 'DND_5E'],
+    [undefined, 'DND_5E'],
   ])('keeps a %s character out of a %s campaign', (character, campaign) => {
     expect(systemsCompatible(character, campaign)).toBe(false);
   });

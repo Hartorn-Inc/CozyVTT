@@ -56,7 +56,7 @@ Your DM invites you by typing part of your display name into a search and pickin
 1. **Log in** to CozyVTT
 2. On your **Dashboard**, a **Pending Invitations** section appears below the Your Characters, Asset Library, Documents and Character Templates cards
 3. Each invitation shows the campaign name and, after **DM:**, the campaign's owner (usually the DM)
-4. Click **View Invitation →** to open it. Tick the characters you want to bring, if you have any created already, then click **Accept Invitation**. Only characters of the campaign's game system are offered, and only ones not already in a campaign: a D&D 5e campaign takes D&D 5e characters, and a campaign set to Flexible takes Flexible characters
+4. Click **View Invitation →** to open it. Tick the characters you want to bring, if you have any created already, then click **Accept Invitation**. Only characters not already in a campaign are offered: a D&D 5e Campaign takes D&D 5e Characters (not Flexible sheets or other game systems); a Campaign with no game system takes any Character.
 5. Or click **Decline** if it's not for you
 
 *Screenshot pending — Pending invitations section.*
@@ -112,7 +112,7 @@ Once your character is created, you'll need to assign them to your campaign so t
 From the **Characters** page:
 1. Find your character card
 2. Open the card's menu (**⋮**) and choose **Assign to Campaign**
-3. Select the campaign you want to assign them to
+3. Select the campaign you want to assign them to. A D&D 5e Campaign takes D&D 5e Characters (not Flexible sheets or other game systems); a Campaign with no game system takes any Character.
 
 *GIF pending — Assigning a character to a campaign.*
 

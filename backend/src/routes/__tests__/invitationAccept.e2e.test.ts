@@ -11,10 +11,10 @@
  *   accepted inside it without looking again, so a second accept sent at the
  *   same moment got as far as creating the membership a second time and
  *   answered 500.
- * - It let a Flexible character into a campaign with a game system, and any
- *   character into a Flexible campaign, where assigning a character to a
- *   campaign from the Characters page refuses both. It now applies the same
- *   rule.
+ * - It let a Flexible sheet into a Campaign with a game system. It now
+ *   applies the same rule as assign: a typed Campaign accepts only a
+ *   Character of that same system (Flexible refused); a Campaign with no
+ *   game system accepts any Character.
  *
  * Requires PostgreSQL at DATABASE_URL.
  */
@@ -99,9 +99,16 @@ describe('POST /api/invitations/:id/accept', () => {
     expect((await prisma.character.findUnique({ where: { id: hero.id } }))?.campaignId).toBe(invite.campaignId);
   });
 
+  it('brings a D&D 5e character into an untyped campaign', async () => {
+    const invite = await invitation(null);
+    const hero = await character('Typed hero, untyped table', 'DND_5E');
+    const res = await accept(invite.id, { characterIds: [hero.id] });
+    expect(res.status).toBe(200);
+    expect((await prisma.character.findUnique({ where: { id: hero.id } }))?.campaignId).toBe(invite.campaignId);
+  });
+
   it.each([
     ['a Flexible character into a D&D 5e campaign', null, 'DND_5E'],
-    ['a D&D 5e character into a Flexible campaign', 'DND_5E', null],
     ['a Pathfinder 2e character into a D&D 5e campaign', 'PATHFINDER_2E', 'DND_5E'],
   ] as const)('refuses %s, as assigning it would', async (_what, characterSystem, campaignSystem) => {
     const invite = await invitation(campaignSystem);
