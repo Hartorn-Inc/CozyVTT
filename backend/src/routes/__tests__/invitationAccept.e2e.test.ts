@@ -11,10 +11,11 @@
  *   accepted inside it without looking again, so a second accept sent at the
  *   same moment got as far as creating the membership a second time and
  *   answered 500.
- * - It let a Flexible character into a campaign with a game system, and any
- *   character into a Flexible campaign, where assigning a character to a
- *   campaign from the Characters page refuses both. It now applies the same
- *   rule.
+ * - It let a Flexible character into a campaign with a game system, which
+ *   assigning a Character from the Characters page refuses. It now applies
+ *   the same rule as assign (ADR 0015): a Campaign with no game system
+ *   accepts any Character; a typed Campaign refuses a Flexible sheet and
+ *   any other system.
  *
  * Requires PostgreSQL at DATABASE_URL.
  */
@@ -101,7 +102,6 @@ describe('POST /api/invitations/:id/accept', () => {
 
   it.each([
     ['a Flexible character into a D&D 5e campaign', null, 'DND_5E'],
-    ['a D&D 5e character into a Flexible campaign', 'DND_5E', null],
     ['a Pathfinder 2e character into a D&D 5e campaign', 'PATHFINDER_2E', 'DND_5E'],
   ] as const)('refuses %s, as assigning it would', async (_what, characterSystem, campaignSystem) => {
     const invite = await invitation(campaignSystem);
@@ -110,6 +110,14 @@ describe('POST /api/invitations/:id/accept', () => {
     expect(res.status).toBe(400);
     expect((await prisma.character.findUnique({ where: { id: hero.id } }))?.campaignId).toBeNull();
     expect((await prisma.campaignInvitation.findUnique({ where: { id: invite.id } }))?.status).toBe('PENDING');
+  });
+
+  it('brings a D&D 5e character into a campaign with no game system', async () => {
+    const invite = await invitation(null);
+    const hero = await character('Typed into untyped', 'DND_5E');
+    const res = await accept(invite.id, { characterIds: [hero.id] });
+    expect(res.status).toBe(200);
+    expect((await prisma.character.findUnique({ where: { id: hero.id } }))?.campaignId).toBe(invite.campaignId);
   });
 
   it('accepts once when the same invitation is accepted several times at once', async () => {

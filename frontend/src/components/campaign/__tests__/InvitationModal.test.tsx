@@ -1,11 +1,11 @@
 /**
  * Which characters the invitation offers to bring along.
  *
- * The same rule the server applies when the invitation is accepted, and when
- * a character is assigned from the Characters page: a character joins only a
- * campaign of its own game system, and a Flexible character only a Flexible
- * campaign. The dialog offered Flexible characters to every campaign and
- * every character to a Flexible one, which the server now refuses.
+ * ADR 0015: a typed Campaign offers only unassigned Characters of that Game
+ * system (a Flexible sheet is refused); a Campaign with no game system offers
+ * any unassigned Character. The same rule the server applies when the
+ * invitation is accepted, and when a Character is assigned from the Characters
+ * page.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -57,7 +57,7 @@ describe('InvitationModal', () => {
     expect(await offered(GameSystem.DND_5E)).toEqual(['Dwarf']);
   });
 
-  it('offers a Flexible campaign only unassigned Flexible characters', async () => {
-    expect(await offered(null)).toEqual(['Wanderer']);
+  it('offers a Campaign with no game system every unassigned Character', async () => {
+    expect(await offered(null)).toEqual(['Dwarf', 'Wanderer', 'Oracle']);
   });
 });

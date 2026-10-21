@@ -157,16 +157,22 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         });
       }
 
-      // TODO(rules): a gameSystem sent with the campaignId is not checked
-      // against the campaign's, so the API creates a Pathfinder 2e character
-      // straight into a D&D 5e campaign, or a typed one into a Flexible
-      // campaign, which assigning and accepting an invitation both refuse.
-      // It should answer 400 unless systemsCompatible(gameSystem, the
-      // campaign's) holds, with the same message as the assign route.
+      // Inherit when omitted or null so create-in into a typed Campaign
+      // without specifying a system still creates a matching Character, not
+      // a Flexible sheet. Then refuse unless the resolved Character game
+      // system is compatible with the Campaign (ADR 0015).
       if (!gameSystem) {
         // Prisma's GameSystem is a string-literal union; cast to the local enum
         // type finalGameSystem was inferred from (identical string values).
         finalGameSystem = campaign.gameSystem as GameSystem | null;
+      }
+      if (!systemsCompatible(finalGameSystem, campaign.gameSystem)) {
+        const charLabel = finalGameSystem ?? 'flexible';
+        const campLabel = campaign.gameSystem ?? 'flexible';
+        return res.status(400).json({
+          error: 'Game System Mismatch',
+          message: `Cannot assign a ${charLabel} character to a ${campLabel} campaign. Character and campaign game systems must match.`,
+        });
       }
     }
 
@@ -1085,9 +1091,10 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
       });
     }
 
-    // Enforce game system compatibility:
-    // flexible character (null) only goes to flexible campaigns (null), and vice versa.
-    // typed characters must match the campaign's game system exactly.
+    // A Campaign with no game system accepts any Character. A typed Campaign
+    // refuses a Flexible sheet and any other system. Re-assigning to a
+    // mismatched Campaign, including the one the Character is already in, is
+    // a mismatched write.
     const charSystem = character.gameSystem;
     const campSystem = campaign.gameSystem;
 

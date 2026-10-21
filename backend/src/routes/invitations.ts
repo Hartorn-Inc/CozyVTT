@@ -127,7 +127,9 @@ router.post('/:id/accept', authenticated, async (req: AuthenticatedRequest, res:
         });
       }
 
-      // The same rule as assigning a character from the Characters page.
+      // The same rule as assigning a Character from the Characters page:
+      // a Campaign with no game system accepts any Character; a typed
+      // Campaign refuses a Flexible sheet and any other system.
       const incompatibleCharacter = characters.find(
         (c) => !systemsCompatible(c.gameSystem, invitation.campaign.gameSystem)
       );

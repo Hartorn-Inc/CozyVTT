@@ -161,6 +161,11 @@ export default function InvitationModal({
                 <p className="text-sm text-warm-gray mb-2">
                   No compatible characters available
                 </p>
+                {invitation.campaign?.gameSystem ? (
+                  <p className="text-xs text-warm-gray mb-2">
+                    A typed Campaign only takes that Game system. A Flexible sheet cannot join it.
+                  </p>
+                ) : null}
                 <p className="text-xs text-warm-gray">
                   Create a new character or unassign one from another campaign to bring it here.
                 </p>

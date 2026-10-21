@@ -276,7 +276,7 @@ export default function NewCharacterModal({
     <Modal open={isOpen} onClose={handleClose} title="Create New Character" icon={User} size="lg" closeDisabled={loading}>
       {/* Error Alert */}
       {error && (
-                <div className="mb-4 bg-spirit-red/10 border border-spirit-red/30 rounded-lg p-4 max-h-60 overflow-y-auto">
+                <div role="alert" className="mb-4 bg-spirit-red/10 border border-spirit-red/30 rounded-lg p-4 max-h-60 overflow-y-auto">
                   <p className="text-sm text-spirit-red font-medium whitespace-pre-wrap font-mono">
                     {error}
                   </p>
