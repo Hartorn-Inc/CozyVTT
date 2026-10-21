@@ -28,9 +28,11 @@ const app = createTestApp();
 describe('Character assign and create-in match Campaign game system', () => {
   let dmId: string;
   let playerId: string;
+  let outsiderId: string;
   let dndCampaignId: string;
   let untypedCampaignId: string;
   let playerAgent: ReturnType<typeof request.agent>;
+  let outsiderAgent: ReturnType<typeof request.agent>;
 
   const signIn = async (email: string) => {
     const agent = request.agent(app);
@@ -56,8 +58,10 @@ describe('Character assign and create-in match Campaign game system', () => {
     const stamp = Date.now();
     const dm = await createTestUser({ email: `gsmatch_dm_${stamp}@test.invalid`, isApproved: true });
     const player = await createTestUser({ email: `gsmatch_pl_${stamp}@test.invalid`, isApproved: true });
+    const outsider = await createTestUser({ email: `gsmatch_out_${stamp}@test.invalid`, isApproved: true });
     dmId = dm.id;
     playerId = player.id;
+    outsiderId = outsider.id;
 
     const dndCampaign = await createTestCampaign(dmId, { name: `D&D ${stamp}`, gameSystem: GameSystem.DND_5E });
     const untypedCampaign = await createTestCampaign(dmId, { name: `Untyped ${stamp}`, gameSystem: null });
@@ -74,11 +78,12 @@ describe('Character assign and create-in match Campaign game system', () => {
     });
 
     playerAgent = await signIn(`gsmatch_pl_${stamp}@test.invalid`);
+    outsiderAgent = await signIn(`gsmatch_out_${stamp}@test.invalid`);
   });
 
   afterAll(async () => {
     await cleanupCampaigns([dndCampaignId, untypedCampaignId]);
-    await cleanupUsers([dmId, playerId]);
+    await cleanupUsers([dmId, playerId, outsiderId]);
     await prisma.$disconnect();
   });
 
@@ -221,6 +226,34 @@ describe('Character assign and create-in match Campaign game system', () => {
     expect(res.status).toBe(201);
     expect(res.body.character.gameSystem).toBe(GameSystem.DND_5E);
     expect(res.body.character.campaignId).toBe(dndCampaignId);
+  });
+
+  it('inherits an explicit null gameSystem from a DND_5E Campaign', async () => {
+    const res = await createCharacter({
+      name: 'Inherit null gameSystem',
+      gameSystem: null,
+      campaignId: dndCampaignId,
+      data: dndSheet(),
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.character.campaignId).toBe(dndCampaignId);
+    expect(res.body.character.gameSystem).toBe(GameSystem.DND_5E);
+  });
+
+  it('refuses create-in by a non-member before checking game systems', async () => {
+    const before = await prisma.character.count({ where: { userId: outsiderId } });
+
+    const res = await outsiderAgent.post('/api/characters').send({
+      name: 'Outsider create-in',
+      gameSystem: GameSystem.PATHFINDER_2E,
+      campaignId: dndCampaignId,
+      data: pfSheet(),
+    });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).not.toBe('Game System Mismatch');
+    expect(await prisma.character.count({ where: { userId: outsiderId } })).toBe(before);
   });
 
   it('unassigns an existing mismatch', async () => {

@@ -99,6 +99,27 @@ describe('AssignCharacterModal', () => {
     );
   });
 
+  it('selects Unassign when the current Campaign is not compatible', async () => {
+    const lostMine = campaign('camp-dnd', 'Lost Mine', GameSystem.DND_5E);
+    listCampaigns.mockResolvedValue({ campaigns: [lostMine] });
+    const wanderer = character('Wanderer', null);
+
+    render(
+      <AssignCharacterModal
+        isOpen
+        character={wanderer}
+        currentCampaign={lostMine}
+        onClose={vi.fn()}
+        onConfirm={vi.fn()}
+      />
+    );
+
+    const unassign = await screen.findByRole('radio', { name: /Unassigned/ });
+    expect(unassign).toBeChecked();
+    expect(screen.queryByRole('radio', { name: /Lost Mine/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Unassign' })).toBeEnabled();
+  });
+
   it('lets a Flexible Character already in a typed Campaign unassign when nothing compatible is offered', async () => {
     const dnd = campaign('camp-dnd', 'Lost Mine', GameSystem.DND_5E);
     listCampaigns.mockResolvedValue({ campaigns: [dnd] });
