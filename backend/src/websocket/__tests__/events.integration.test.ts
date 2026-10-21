@@ -47,6 +47,8 @@ let player2Id: string;
 let outsiderId: string;
 let campaignId: string;
 let mapId: string;
+let otherCampaignId: string;
+let otherMapId: string;
 let dmCookie: string;
 let player1Cookie: string;
 let player2Cookie: string;
@@ -141,6 +143,33 @@ beforeAll(async () => {
 
   await prisma.campaign.update({ where: { id: campaignId }, data: { currentMapId: mapId } });
 
+  // A second Campaign with its own map: used to prove a ping whose map is
+  // not in this Campaign vanishes, not merely that a missing mapId is dropped.
+  const otherCampaign = await prisma.campaign.create({
+    data: {
+      name: `WS Other Campaign ${runId}`,
+      ownerId: dmId,
+      vibeSettings: {},
+    },
+  });
+  otherCampaignId = otherCampaign.id;
+
+  const otherMap = await prisma.map.create({
+    data: {
+      campaignId: otherCampaignId,
+      name: 'WS Other Map',
+      imageUrl: '/api/assets/maps/placeholder',
+      baseLayerUrl: '/api/assets/maps/placeholder',
+      width: 30,
+      height: 30,
+      gridSize: 50,
+      tokens: toJson([]),
+      annotations: toJson([]),
+      wallSegments: toJson([]),
+    },
+  });
+  otherMapId = otherMap.id;
+
   await prisma.campaignMembership.createMany({
     data: [
       { userId: dmId, campaignId, role: 'DM', characterIds: [] },
@@ -161,7 +190,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await server?.close();
   // Campaign cascade removes memberships, maps, messages, dice rolls
-  await prisma.campaign.deleteMany({ where: { id: campaignId } });
+  await prisma.campaign.deleteMany({ where: { id: { in: [campaignId, otherCampaignId] } } });
   await prisma.user.deleteMany({ where: { id: { in: [dmId, player1Id, player2Id, outsiderId] } } });
   await prisma.$disconnect();
 });
@@ -932,6 +961,33 @@ describe('map pings', () => {
     player.emit('map.ping', { mapId, x: 7, y: 8 });
     expect((await valid).x).toBe(7);
     expect(seen).toBe(true); // only from the valid one
+
+    dm.disconnect();
+    player.disconnect();
+  });
+
+  it('a ping whose map is not in this Campaign vanishes and is not broadcast', async () => {
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const player = await server.connectAndAuth(player1Cookie, campaignId);
+
+    // A PLAYER of this Campaign pinging another Campaign's map: the DM of
+    // this Campaign must not receive map.pinged. otherMapId is a real map
+    // of a different Campaign, so this is campaign ownership, not existence.
+    // The sender also gets no `error` — vanish, not "Map not found".
+    const noAnswer = expectNoEvent(player, 'error');
+    const silence = expectNoEvent(dm, 'map.pinged');
+    player.emit('map.ping', { mapId: otherMapId, x: 10, y: 20 });
+    await noAnswer;
+    await silence;
+
+    // A valid ping afterwards proves the socket is still live and that the
+    // foreign one was dropped rather than merely slow.
+    const valid = waitForEvent<{ mapId: string; x: number }>(dm, 'map.pinged');
+    player.emit('map.ping', { mapId, x: 7, y: 8 });
+    const received = await valid;
+    expect(received.mapId).toBe(mapId);
+    expect(received.mapId).not.toBe(otherMapId);
+    expect(received.x).toBe(7);
 
     dm.disconnect();
     player.disconnect();
