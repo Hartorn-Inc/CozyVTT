@@ -3,7 +3,7 @@
 # Requires: .env file with all required variables set (see .env.example)
 #
 # For development (hot-reload, exposed ports), use:
-#   docker compose -f docker-compose.dev.yml up
+#   make up
 #
 # Prefer not to edit this file: personal tweaks belong in docker-compose.override.yml,
 # which Compose merges automatically and git ignores — so `git pull` never conflicts.

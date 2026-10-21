@@ -24,6 +24,10 @@ dist/
 uploads/
 logs/
 backups/
+# Development Compose mounts these separately; keep local runtime data out of
+# build contexts too.
+uploads-dev/
+backups-dev/
 
 # ---- Test artifacts ---------------------------------------------------------
 coverage/

@@ -154,7 +154,8 @@ jobs:
       - run: python3 scripts/spec-coverage.py
       - run: python3 scripts/websocket-events.py --check
       # The scripts' own tests: every form of route and event the doc checks
-      # read, and what the nginx check and the coverage summary read.
+      # read, and what the nginx check, the coverage summary and the
+      # conventional-commit title check read.
       - run: python3 -m unittest discover -s scripts/tests
 
   # Known advisories, from both lockfiles. A high or critical advisory in the

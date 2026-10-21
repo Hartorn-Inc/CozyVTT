@@ -82,6 +82,9 @@ nginx/conf.d/*
 # ---- Runtime / user data ----------------------------------------------------
 uploads/
 backups/
+# Development Compose keeps disposable runtime data separate from production.
+backend/uploads-dev/
+backend/backups-dev/
 
 # ---- Test artifacts ---------------------------------------------------------
 coverage/

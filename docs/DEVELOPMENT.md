@@ -29,7 +29,18 @@ This guide covers everything you need to run CozyVTT locally **for development w
 | PostgreSQL | 14+ | Or use the Docker Compose stack |
 | npm | 11+ | Comes with Node.js 26 |
 | Docker + Docker Compose | Any recent | Optional — needed for the containerized setup |
+| GNU Make | Any recent | Required for `make up`; recipes use a POSIX-compatible shell |
+| POSIX shell | Any recent | Required by the Makefile's safety checks and Docker commands |
+| GNU coreutils | Any recent | Required for `realpath`, `sha256sum`, and GNU `stat` used by the Makefile |
+| util-linux | Any recent | Required for `findmnt`; setup fails closed when it is unavailable |
 | Python | 3 | For the documentation checks; `pip install pyyaml` for the YAML and nginx checks |
+
+The Makefile anchors Compose and runtime paths to its own repository location,
+and its quoted shell path handling supports checkout paths containing spaces.
+Keep the root Makefile self-contained: GNU Make does not preserve spaces
+reliably when a path is assembled from multiple included makefiles.
+Make is a prerequisite for the safety checks. Raw Compose is only a
+start-only fallback after a successful `make setup`.
 
 ---
 
@@ -80,7 +91,7 @@ cozyvtt/
 ├── docs/                  User and developer documentation
 ├── Examples/              Example character sheets for each game system, as JSON
 ├── nginx/                 The bundled reverse proxy's configuration
-├── scripts/               The doc, nginx and coverage checks (Python)
+├── scripts/               The doc, nginx, coverage and commit-title checks (Python)
 ├── docker-compose.yml     Production Docker stack (default)
 ├── docker-compose.dev.yml Development Docker stack (hot-reload, exposed ports)
 └── .env.example           Environment variable template
@@ -145,14 +156,40 @@ CORS_ORIGIN="http://localhost:3000"
 |----------|----------|---------|-------------|
 | `VITE_ALLOWED_HOSTS` | No | — | Comma-separated allowed hostnames for the Vite server |
 | `VITE_PROXY_TARGET` | No | `http://localhost:4000` | Where the Vite dev server sends `/api` and `/socket.io` |
+| `DEV_CORS_ORIGIN` | No | `http://localhost:3000` | Docker dev stack's allowed browser origin; set the exact custom host and port when needed |
 
-The dev server reads these two from the environment it is started in, not from
-`frontend/.env`: `vite.config.ts` is read before Vite loads a `.env` file. The
-dev stack sets both (`VITE_ALLOWED_HOSTS` from the root `.env`). Outside Docker,
-put them before the command, for example
+The Vite dev server reads `VITE_ALLOWED_HOSTS` and `VITE_PROXY_TARGET` from the
+environment it is started in, not from `frontend/.env`: `vite.config.ts` is
+read before Vite loads a `.env` file. The Docker dev stack reads
+`DEV_CORS_ORIGIN` for the backend's allowed browser origin. Outside Docker,
+put the Vite settings before the command, for example
 `VITE_ALLOWED_HOSTS=mybox.local npm run dev`.
 
 The app asks its own address for the API and the live connection, and the Vite dev server proxies `/api` and `/socket.io` to the backend, so in development as in production everything is served from one address. Serving the backend from a different address than the page is not supported: the code still reads `VITE_API_URL` and `VITE_SOCKET_URL`, but with them set every picture, sound and PDF document is refused by the page's security policy and the backend's resource policy. What it would take is a backlog entry in [FUTURE_FEATURES.md](./FUTURE_FEATURES.md).
+
+### Docker development secrets and email
+
+These variables belong in the root `.env` used by Docker Compose, not in
+`backend/.env`:
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DEV_SESSION_SECRET` | Yes for `make up` | — | Development-only session signing secret; it must not reuse production `SESSION_SECRET` |
+| `DEV_SETUP_TOKEN` | No | — | Development-only setup-wizard token; blank makes the backend print one in its log |
+| `DEV_APP_URL` | No | `http://localhost:3000` | Development URL used in email links and other absolute URLs |
+| `DEV_SMTP_HOST` | No | — | Development SMTP host |
+| `DEV_SMTP_PORT` | No | — | Development SMTP port; blank uses the backend's normal port default |
+| `DEV_SMTP_USER` | No | — | Development SMTP username |
+| `DEV_SMTP_PASS` | No | — | Development SMTP password |
+| `DEV_SMTP_FROM` | No | — | Development sender address |
+| `DEV_SMTP_SECURE` | No | — | `true` for TLS SMTP in development |
+
+The development Compose file ignores the production `SESSION_SECRET`,
+`SETUP_TOKEN`, `APP_URL`, and `SMTP_*` values. Email remains disabled unless
+the development SMTP settings are supplied. Generate `DEV_SESSION_SECRET`
+with `openssl rand -hex 32` and place it only in `.env`; Make rejects the
+known placeholder, blank values, equal production values, and exported
+overrides without printing secrets.
 
 ---
 
@@ -230,24 +267,94 @@ There is no seed data yet: `backend/prisma/seed.ts` is a stub that logs two line
 
 > ⚠️ **This section is for local development only.** The command below runs the **dev stack** (`docker-compose.dev.yml`), which publishes the database, the backend and the frontend on this computer only (`127.0.0.1`), runs the backend under Node's watch mode in development mode with verbose logging, and runs the frontend under Vite's dev server with hot module replacement. **Do not use this for a public deployment.** For production, use the plain `docker-compose.yml` and follow **[DEPLOYMENT.md](./DEPLOYMENT.md)**.
 
+> Before starting development, stop or isolate any production CozyVTT stack
+> using the fixed `cozyvtt-*` container names. The Makefile uses the dedicated
+> per-checkout Compose project and rejects an active production stack or a
+> pre-isolation dev stack that would still own the old ports.
+
 ```bash
 # Copy the root .env template
 cp .env.example .env
-# Edit .env — at minimum set DATABASE_PASSWORD, SESSION_SECRET
+# Edit .env — set database values and a separate DEV_SESSION_SECRET
+chmod 600 .env
 
-# NOTE: the -f flag is REQUIRED. Without it you'll start the production stack.
-docker compose -f docker-compose.dev.yml up
+# NOTE: use the Makefile targets so the bind-mounted runtime directories are
+# created and owned by the backend user before the non-root service starts.
+# `make up` is canonical; `make start` is an alias.
+make up
 ```
 
-> The dev stack runs the backend as an unprivileged user from the start, with no
-> root step to fix ownership, so create the two bind-mounted folders yourself before
-> the first `up`: `mkdir -p backend/uploads backend/backups`. Docker would otherwise
-> create a missing one as root and the backend could not write to it.
+`make up` is the canonical target; `make start` is its alias. `make up` first
+requires `.env` to be a regular, non-symlink file with mode `0600` and a
+non-empty `DEV_SESSION_SECRET`. Both use the
+repository location recorded by the Makefile, pass the repository's `.env`
+when it exists, and use the dedicated per-checkout Compose project printed by
+`make print-project`. The
+setup preflight rejects symlinked runtime directories, directories that resolve
+outside `backend/`, an active production stack, and another checkout's
+containers. It requires Linux `findmnt` from util-linux and rejects a runtime
+directory that is currently a mount point or contains nested mounts; this
+check cannot prevent a later mount change. It then creates `backend/uploads-dev` and
+`backend/backups-dev` and explicitly runs the profiled
+`backend-permissions` Compose helper with `--build --rm --no-deps`. That root
+one-shot helper mounts only those two dev runtime directories, has no
+application environment, source-tree mount or network, and repairs ownership
+without changing the source tree or deleting data.
+
+After the directories are created, Make captures each host directory's
+device/inode identity and passes those values as helper command arguments. The
+helper verifies the identities after Docker creates the bind mounts and before
+ownership repair, protecting bind-source selection. It cannot prevent a later
+concurrent replacement of a host path. Nested symlinks are rejected by both
+the host preflight and the helper.
+
+The backend's `/app/logs` path is an anonymous disposable volume in
+development, so the broad source mount does not write development logs into
+the host's production-oriented `backend/logs` directory.
+
+The dev runtime directories and the project-scoped Compose Postgres volume are
+disposable local development data. Production continues to use
+`backend/uploads`, `backend/backups`, and its existing Compose resources.
+Different checkouts get separate project resources, but their default host
+ports still collide; use the custom-host port override below to run another
+checkout simultaneously.
+
+If this checkout was used with the pre-isolation dev setup, its active
+containers still have fixed `cozyvtt-*` names and its old data remains in
+`backend/uploads`, `backend/backups`, and the old project volume. `make up`
+refuses to compete with those containers. To stop only that old dev project,
+run the validated cleanup target:
+
+```bash
+make legacy-stop
+```
+
+`make legacy-stop` checks every fixed-name container's Compose config-file,
+working-directory, and service labels before using the old project to stop and
+remove only those containers. It never uses `down -v` or deletes volumes, so
+the old directories and database volume remain available for deliberate
+migration or backup.
+
+After a successful `make setup`, this is a start-only Compose fallback from
+the repository root. Make is still required: run all three safety targets
+immediately before this raw start command, and use the project name from the
+same checkout:
+
+```bash
+make require-env
+make setup
+make legacy-check
+docker compose --project-name "$(make print-project)" --project-directory . --env-file .env -f docker-compose.dev.yml up -d
+```
 
 Services, each published on `127.0.0.1` so that only this computer can reach them:
 - Frontend: `http://localhost:3000`
 - Backend API: `http://localhost:4000`
-- PostgreSQL: `localhost:5432`
+- PostgreSQL: `localhost:5432` (in the disposable project-scoped volume)
+
+Different checkouts get different project resources, but they still share this
+host's default ports. They cannot run simultaneously without a local override
+such as the custom-host example below.
 
 The backend always runs with `NODE_ENV=development` here, whatever `.env` says (`.env.example` sets `production`, for the production stack), so the example secrets only draw a warning and errors show their details. The browser reaches the backend through Vite's proxy on `localhost:3000`, the page's own address, as it reaches it through nginx in production.
 
@@ -261,11 +368,27 @@ services:
       - "3001:3000"
 ```
 
-```bash
-docker compose -f docker-compose.dev.yml -f docker-compose.dev.local.yml up
+Before starting that custom-host stack, set the exact browser origin and
+allowed Vite host in `.env`, for example:
+
+```env
+DEV_APP_URL=http://mybox.local:3001
+DEV_CORS_ORIGIN=http://mybox.local:3001
+VITE_ALLOWED_HOSTS=mybox.local
 ```
 
-Then open `http://<this computer's address>:3001` on the other device; a name rather than an address also needs adding to `VITE_ALLOWED_HOSTS` in `.env`. Anyone on that network can reach it too, so do this only on a network you trust.
+Run the three safety targets, then use this start-only Compose fallback with
+the custom override file:
+
+```bash
+make require-env
+make setup
+make legacy-check
+docker compose --project-name "$(make print-project)" --project-directory . --env-file .env -f docker-compose.dev.yml -f docker-compose.dev.local.yml up -d
+```
+
+Then open `http://mybox.local:3001` on the other device. Anyone on that
+network can reach it too, so do this only on a network you trust.
 
 The backend container runs `npm run dev`, which restarts the backend when a file it has loaded changes (`node --watch`, below). The frontend container runs `vite` with hot module replacement. The backend's start script (`backend/scripts/start.sh`) applies any pending migrations with `prisma migrate deploy` each time the container starts.
 
@@ -273,14 +396,21 @@ The backend container runs `npm run dev`, which restarts the backend when a file
 
 ```bash
 # After `npm install <package>` on the host, in either project:
-docker compose -f docker-compose.dev.yml exec --user root frontend npm install
-docker compose -f docker-compose.dev.yml exec --user root backend npm install
+docker compose --project-name "$(make print-project)" --project-directory . --env-file .env -f docker-compose.dev.yml exec --user root frontend npm install
+docker compose --project-name "$(make print-project)" --project-directory . --env-file .env -f docker-compose.dev.yml exec --user root backend npm install
 
 # After changing prisma/schema.prisma:
-docker compose -f docker-compose.dev.yml exec --user root backend npx prisma generate
+docker compose --project-name "$(make print-project)" --project-directory . --env-file .env -f docker-compose.dev.yml exec --user root backend npx prisma generate
 ```
 
-`--user root` is needed because the images install `node_modules` as a different user from the one the process runs as; without it both commands fail with `EACCES: permission denied`. Rebuilding the image does the same thing more slowly, with `-V` so the new container does not keep the old `node_modules` volume: `docker compose -f docker-compose.dev.yml up --build -V`. Do the same after pulling a change to either `package.json`, such as the move to Prisma 7 in 1.5.3: without `-V`, `up --build` alone leaves the backend on the packages it had before.
+`--user root` is needed because the images install `node_modules` as a different user from the one the process runs as; without it both commands fail with `EACCES: permission denied`. Rebuilding the image does the same thing more slowly, with `-V` so the new container does not keep the old `node_modules` volume:
+
+```bash
+make setup
+docker compose --project-name "$(make print-project)" --project-directory . --env-file .env -f docker-compose.dev.yml up -d --build -V
+```
+
+Do the same after pulling a change to either `package.json`, such as the move to Prisma 7 in 1.5.3: without `-V`, `up --build` alone leaves the backend on the packages it had before.
 
 ### Security headers are production-only
 
@@ -325,7 +455,7 @@ npx prisma migrate deploy
 >
 > ```bash
 > # Once, with the dev stack running:
-> docker compose -f docker-compose.dev.yml exec database createdb -U cozyvtt cozyvtt_shadow
+> docker compose --project-name "$(make print-project)" --project-directory . --env-file .env -f docker-compose.dev.yml exec database createdb -U cozyvtt cozyvtt_shadow
 >
 > # Each new migration, from backend/ (the folder name is a UTC timestamp and a name):
 > mkdir -p prisma/migrations/20261011120000_describe_your_change
@@ -711,7 +841,8 @@ Some of those deserve a note:
   `python3 scripts/websocket-events.py --write`. Both fail on a route or
   event declared in a form they cannot read, so nothing is left out of them
   unnoticed; `python3 -m unittest discover -s scripts/tests` tests that, and
-  tests `nginx-check.py` and `coverage-summary.py` too.
+  tests `nginx-check.py`, `coverage-summary.py` and
+  `conventional-commit-title.py` too.
 
 `.github/workflows/ci.yml` runs the same commands on pushes to `dev` and `main`
 and on pull requests into them (a push to any other branch runs nothing). It
@@ -766,7 +897,9 @@ when to remove the entry: Tailwind CSS 4, TypeScript 7 and TypeScript 6.1
 moves with the Node major. Node and nginx move to a new
 major or stable line by hand, and PostgreSQL's major version never through
 Renovate, since a 19 tag on the parent mount would init empty `19/docker`
-beside unread 18 data. A new release
+beside unread 18 data. Renovate uses semantic commits, so its dependency
+pull requests are titled `chore(deps): …`; production dependency bumps may
+be `fix(deps): …`. A new release
 waits before Dependabot proposes it (`cooldown`): an npm package 3 days for a
 patch, 7 for a minor and 14 for a major, an action or base image 7 days, so
 a hijacked publish is usually pulled first. Security updates do not wait.
@@ -774,10 +907,15 @@ Dependabot alerts for published advisories are on. Its automatic security pull r
 turned on in the repository's settings once 1.5.3 is on `main`; GitHub opens
 those against `main` whatever `target-branch` says.
 
-A pull request into `main` cannot merge until the Frontend, Backend, Docs,
-Dependency advisories, and Production images, nginx and smoke tests jobs pass
-(a ruleset in the repository's settings). Pushes to `dev` are not blocked: CI
-reports there.
+A pull request into `dev` or `main` cannot merge until every required check
+passes, including Frontend, Backend, Docs, Dependency advisories, Production
+images, nginx and smoke tests, Zizmor, and `PR title` (a ruleset in the
+repository's settings). Direct pushes to those branches are blocked. Job
+`PR title` (`.github/workflows/pr-title.yml`) checks that the pull request
+title is a conventional commit (`type(scope)?: description`); it also runs
+when the title is edited, without rebuilding the rest of CI. On a push it
+succeeds without checking, because a skipped required job would block the
+merge.
 
 ### Before a release: rehearse the upgrade
 
@@ -937,18 +1075,26 @@ CI runs on pushes to `dev` and `main` and on pull requests into them; a branch o
 
 ### Commit Messages
 
+Pull request titles and the squash or rebase commits they land use the
+conventional form `type(scope)?: description`. Types are `feat`, `fix`,
+`docs`, `style`, `refactor`, `perf`, `test`, `chore`, `ci`, `build` and
+`revert`; the optional scope is lowercase; `!` before `:` marks a breaking
+change. Job `PR title` (`.github/workflows/pr-title.yml`) checks the pull
+request title against that form. Renovate's dependency pull requests are
+`chore(deps): …`; production dependency bumps may be `fix(deps): …`.
+
 Use the imperative mood, present tense:
 
 ```
-Add initiative tracker to campaign page
-Fix token position not persisting after map switch
-Update README with Docker instructions
+feat: add initiative tracker to campaign page
+fix: persist token position after map switch
+docs: update README with Docker instructions
 ```
 
 For larger changes, use a short subject and a body:
 
 ```
-Add spirit layer token visibility filtering
+feat: add spirit layer token visibility filtering
 
 Server now filters spirit tokens per-client when broadcasting map.changed.
 Players only receive tokens they have permission to see based on their

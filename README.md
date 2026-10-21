@@ -148,6 +148,10 @@ If you find a security issue, please report it privately per [SECURITY.md](SECUR
 
 - Docker 24+ with Docker Compose v2, for the recommended install below
 - Node.js 26+ and PostgreSQL 14+, only to install without Docker (see [Manual Deployment](docs/DEPLOYMENT.md#manual-deployment))
+- GNU Make and a POSIX-compatible shell, for the development setup commands
+- GNU coreutils (`realpath`, `sha256sum`, and GNU `stat`), for the Makefile safety checks
+- util-linux (`findmnt`), required by the Makefile mount-boundary preflight
+- OpenSSL, for generating the private development session secret
 - A browser from 2023 or later: Chrome or Edge 111, Firefox 114, Safari 16.4 (iPadOS 16.4 on an iPad) or newer. An older browser does not load the app
 - SMTP server (optional — required for password reset and invitation emails)
 
@@ -168,11 +172,42 @@ Navigate to `http://localhost` and complete the setup wizard. It asks for the se
 
 ### Local Development
 
-If you've cloned the repo to hack on CozyVTT itself, use the dev compose file instead — it enables hot reload, publishes the frontend, backend and database ports on this computer only, and runs `NODE_ENV=development`:
+If you've cloned the repo to hack on CozyVTT itself, stop or isolate any
+production CozyVTT stack using the fixed `cozyvtt-*` container names, then use
+the Makefile's development target. It creates the bind-mounted runtime
+directories and repairs their ownership before starting the dev Compose stack.
+The stack enables hot reload, publishes the frontend, backend and database
+ports on this computer only, and runs `NODE_ENV=development`:
 
 ```bash
-docker compose -f docker-compose.dev.yml up
+# Fresh checkouts need a local, gitignored environment file.
+cp .env.example .env
+# Edit .env — set database values and a separate DEV_SESSION_SECRET.
+chmod 600 .env
+make up
 ```
+
+The setup preflight rejects active production containers and unsafe symlinks or
+paths outside `backend/`. Its isolated, profiled Compose helper mounts only
+`backend/uploads-dev` and `backend/backups-dev`, has no application environment
+or network, and runs as root only to assign them to the non-root backend user.
+The dev data is disposable and separate from production: PostgreSQL uses a
+Compose-scoped volume derived from this checkout, while production keeps its
+existing `postgres_data`, `backend/uploads`, and `backend/backups` resources.
+`make up` enforces that `.env` is a private regular file and that
+`DEV_SESSION_SECRET` is set; development does not reuse production session or
+SMTP variables.
+Different checkouts get separate project resources but still collide on the
+default host ports; use the documented local port override to run one beside
+another.
+
+If this checkout was used with the pre-isolation dev setup, `make up` refuses
+while its fixed `cozyvtt-*` containers are active. Run `make legacy-stop` to
+validate and stop/remove only those old containers without `down -v`; their
+old volume and runtime directories remain. See [the development
+guide](docs/DEVELOPMENT.md#local-setup-with-docker).
+For a custom dev host or port, set `DEV_APP_URL` and `DEV_CORS_ORIGIN` to the
+exact browser origin, and add the hostname to `VITE_ALLOWED_HOSTS` in `.env`.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full dev setup (including running outside Docker).
 
