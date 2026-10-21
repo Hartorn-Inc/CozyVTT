@@ -13,6 +13,7 @@
 
 import { Server } from 'socket.io';
 import { AuthenticatedSocket } from '../auth';
+import { prisma } from '../../config/database';
 import logger from '../../utils/logger';
 import { emitToMapReaders } from '../utils';
 import { pingLimiter } from '../shared';
@@ -38,13 +39,16 @@ export function registerPingHandlers(io: Server, socket: AuthenticatedSocket): v
       const { mapId, x, y } = data ?? {};
 
       if (!mapId || typeof mapId !== 'string') return;
-      // TODO(play): the map is not checked to be one of this campaign's, as the
-      // other handlers check it; refuse a map from outside the campaign.
       if (typeof x !== 'number' || typeof y !== 'number') return;
       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
       // Silent drop over the limit — see the note in shared.ts.
       if (!pingLimiter.check(socket.userId!, PING_LIMIT, PING_WINDOW_MS)) return;
+
+      // A map of another campaign is dropped silently; emitToMapReaders
+      // would still send it to this campaign's DMs.
+      const map = await prisma.map.findUnique({ where: { id: mapId }, select: { campaignId: true } });
+      if (!map || map.campaignId !== socket.campaignId) return;
 
       // The sender included, so they see their own ping as well; a ping on
       // a map the DM is preparing reaches only the DM.
