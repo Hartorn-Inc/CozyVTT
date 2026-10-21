@@ -8,7 +8,7 @@ GitHub Issues on `Hartorn-Inc/CozyVTT` via `gh`. See `docs/agents/issue-tracker.
 
 ### Triage labels
 
-Canonical roles: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.
+Canonical roles: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`. `ready-for-agent` is the specified-work signal; it does not start Cloud Agent. Kick: one new collaborator comment that starts with `@cursor` plus an instruction (recipe in that file).
 
 ### Domain docs
 
