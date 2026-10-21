@@ -1211,6 +1211,12 @@ A request may carry at most 100 text fields. A field name is at most 100 bytes, 
 
 Get a single asset's metadata.
 
+Who may read it is the shared `canReadAsset` rule, the same decision as the
+file-serving routes (`GET /api/assets/:id/download`, maps, tokens, documents,
+audio). A caller who can read the file gets `200` here too. Anyone else gets
+`404`, not `403`, matching a missing row, so metadata and bytes cannot disagree
+and the reply cannot confirm a private id exists.
+
 ---
 
 ### `GET /api/assets/audio/:id`

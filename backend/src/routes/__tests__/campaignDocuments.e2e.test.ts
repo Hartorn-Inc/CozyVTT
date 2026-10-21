@@ -318,12 +318,16 @@ describe('campaign documents', () => {
     });
 
     it('a member cannot download one that is not shared', async () => {
-      expect((await download(player, txtId)).status).toBe(403);
+      const res = await download(player, txtId);
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: 'Not Found', message: 'Asset not found' });
     });
 
     it('a stranger cannot download a shared document', async () => {
       await link(owner, campaignA, pdfId);
-      expect((await download(stranger, pdfId)).status).toBe(403);
+      const res = await download(stranger, pdfId);
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ error: 'Not Found', message: 'Asset not found' });
     });
   });
 

@@ -161,7 +161,7 @@ describe("a character's token image", () => {
     const updated = await player.put(`/api/characters/${own.body.character.id}`).send({ tokenImageUrl: url });
     expect(updated.status).toBe(403);
     // And the private asset stays private.
-    expect((await player.get(url)).status).toBe(403);
+    expect((await player.get(url)).status).toBe(404);
   });
 
   // The write check reads the asset id out of the address and asks whether
@@ -181,7 +181,7 @@ describe("a character's token image", () => {
       // Bring it into the campaign the DM shares with the player.
       await prisma.character.update({ where: { id: created.body.character.id }, data: { campaignId } });
     }
-    expect((await player.get(`/api/assets/tokens/${victim}`)).status).toBe(403);
+    expect((await player.get(`/api/assets/tokens/${victim}`)).status).toBe(404);
   });
 
   // The sheet editors send the stored picture back with every save. Once it
@@ -277,8 +277,12 @@ describe('what the asset library tells a member', () => {
     await prisma.campaign.update({ where: { id: campaignId }, data: { spiritLayerEnabled: false, currentMapId: current.id } });
 
     // The prepared map is not sent to a player, so being its base layer opens nothing.
-    expect((await player.get(url)).status).toBe(403);
-    expect((await player.get(`/api/assets/${shared}`)).status).toBe(403);
+    const hiddenBytes = await player.get(url);
+    const hiddenMeta = await player.get(`/api/assets/${shared}`);
+    expect(hiddenBytes.status).toBe(404);
+    expect(hiddenBytes.body).toEqual({ error: 'Not Found', message: 'Map asset not found' });
+    expect(hiddenMeta.status).toBe(404);
+    expect(hiddenMeta.body).toEqual({ error: 'Not Found', message: 'Asset not found' });
 
     // Once that map is the one the campaign shows, the image is openly on the table.
     await prisma.campaign.update({ where: { id: campaignId }, data: { currentMapId: prepared.id } });
@@ -298,8 +302,12 @@ describe('what the asset library tells a member', () => {
 
     const hidden = await player.get(`/api/assets?campaignId=${campaignId}&type=MAP`);
     expect(hidden.body.assets.map((a: { id: string }) => a.id)).not.toContain(spirit);
-    expect((await player.get(`/api/assets/maps/${spirit}`)).status).toBe(403);
-    expect((await player.get(`/api/assets/${spirit}`)).status).toBe(403);
+    const hiddenBytes = await player.get(`/api/assets/maps/${spirit}`);
+    const hiddenMeta = await player.get(`/api/assets/${spirit}`);
+    expect(hiddenBytes.status).toBe(404);
+    expect(hiddenBytes.body).toEqual({ error: 'Not Found', message: 'Map asset not found' });
+    expect(hiddenMeta.status).toBe(404);
+    expect(hiddenMeta.body).toEqual({ error: 'Not Found', message: 'Asset not found' });
     // The DM always has it.
     expect((await dm.get(`/api/assets?campaignId=${campaignId}&type=MAP`)).body.assets.map((a: { id: string }) => a.id)).toContain(spirit);
     expect((await dm.get(`/api/assets/maps/${spirit}`)).status).toBe(200);
@@ -308,6 +316,7 @@ describe('what the asset library tells a member', () => {
     const shown = await player.get(`/api/assets?campaignId=${campaignId}&type=MAP`);
     expect(shown.body.assets.map((a: { id: string }) => a.id)).toContain(spirit);
     expect((await player.get(`/api/assets/maps/${spirit}`)).status).toBe(200);
+    expect((await player.get(`/api/assets/${spirit}`)).status).toBe(200);
   });
 });
 

@@ -629,13 +629,15 @@ export interface AssetAccessFacts {
 }
 
 /**
- * Whether a user may read an asset's bytes.
+ * Whether a user may read an asset's metadata and its bytes.
  *
- * The single rule, used both by the route that serves an asset and by every
- * route that lets a user *point* at one. Those two were separate before, which
- * is how referencing a stranger's asset came to grant the right to read it:
- * only the serving side asked the question, and by then the reference already
- * existed and answered it in the affirmative.
+ * The single rule, used by the metadata GET, by the route that serves an
+ * asset, and by every route that lets a user *point* at one. Those were
+ * separate before, which is how referencing a stranger's asset came to grant
+ * the right to read it: only the serving side asked the question, and by then
+ * the reference already existed and answered it in the affirmative. Metadata
+ * and bytes must not disagree: an unreadable asset is 404 on both, like a
+ * missing row.
  */
 export async function canReadAsset(
   asset: AssetAccessFacts,

@@ -115,7 +115,9 @@ const ASSET_PUBLIC_SELECT = {
  * and neither allowed for an asset being *used* by a campaign rather than
  * uploaded into one — which is how a DM's own map, picked from their personal
  * library, 403'd for every player at the table. One place now, so the two
- * cannot answer differently again.
+ * cannot answer differently again. The metadata GET uses this same
+ * decision, and a refused read is 404 on both, matching a missing row, so
+ * the two cannot disagree and the reply cannot confirm a private id exists.
  *
  * Read only. Editing and deleting are decided by their own routes and are
  * untouched by this.
@@ -541,62 +543,26 @@ router.post(
  * Get asset metadata by ID
  * Requires: Authentication
  * Returns: Asset metadata (without file data)
+ *
+ * Who may read it is `canReadAsset`, the same rule as the file-serving
+ * routes. A missing row and an unreadable one both answer 404
+ * `{ error: 'Not Found', message: 'Asset not found' }`, so the reply cannot
+ * confirm a private id exists and cannot disagree with the bytes.
  */
 router.get('/:id', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const userId = req.session.userId!;
 
     const asset = await prisma.asset.findUnique({
       where: { id },
       select: ASSET_PUBLIC_SELECT,
     });
 
-    if (!asset) {
+    if (!asset || !(await canReadAssetFile(asset, req))) {
       return res.status(404).json({
         error: 'Not Found',
         message: 'Asset not found',
       });
-    }
-
-    const isAdmin = req.session.platformRole === 'ADMIN';
-
-    // USER-scoped assets: only owner or admin can access
-    if (asset.scope === 'USER' && asset.uploadedById !== userId && !isAdmin) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'You do not have access to this asset',
-      });
-    }
-
-    // TODO(assets): a CAMPAIGN asset whose campaign is gone passes this check, so
-    // anyone signed in reads its details; decide with canReadAsset, as the file
-    // routes do.
-    // CAMPAIGN-scoped assets: only campaign members can access
-    if (asset.scope === 'CAMPAIGN' && asset.campaignId && !isAdmin) {
-      const membership = await prisma.campaignMembership.findUnique({
-        where: {
-          userId_campaignId: {
-            userId,
-            campaignId: asset.campaignId,
-          },
-        },
-      });
-
-      if (!membership) {
-        return res.status(403).json({
-          error: 'Forbidden',
-          message: 'You do not have access to this asset',
-        });
-      }
-      // A map's spirit layer is shown to a player only once they have crossed
-      // over; the library entry follows the map.
-      if (membership.role !== 'DM' && (await spiritLayerAssetIdsHiddenFrom(userId, [asset.campaignId])).includes(asset.id)) {
-        return res.status(403).json({
-          error: 'Forbidden',
-          message: 'You do not have access to this asset',
-        });
-      }
     }
 
     return res.json({ asset });
@@ -721,6 +687,10 @@ router.delete('/:id', authenticated, async (req: AuthenticatedRequest, res: Resp
  * GET /api/assets/:id/download
  * Download an asset file
  * Requires: Authentication + access to asset
+ *
+ * The same `canReadAsset` decision as metadata and the inline serving
+ * routes. An unreadable asset answers 404 like a missing row, so the reply
+ * cannot confirm the id.
  */
 router.get('/:id/download', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -742,7 +712,7 @@ router.get('/:id/download', authenticated, async (req: AuthenticatedRequest, res
     // uses it or because a document was shared, so a member who could read a
     // file inline was refused when downloading the same bytes.
     if (!(await canReadAssetFile(asset, req))) {
-      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this asset' });
+      return res.status(404).json({ error: 'Not Found', message: 'Asset not found' });
     }
 
     // Check if file exists (normalize path for cross-platform compatibility)
@@ -1077,6 +1047,10 @@ router.get('/documents/:id', authenticated, async (req: AuthenticatedRequest, re
  * GET /api/assets/maps/:id
  * Serve a map image
  * Requires: Authentication + access to asset
+ *
+ * `canReadAsset` decides this, as it does the metadata GET. An unreadable
+ * map answers 404 like a missing row, before caching, so a 304 cannot leak
+ * that the id exists.
  */
 router.get('/maps/:id', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -1093,9 +1067,8 @@ router.get('/maps/:id', authenticated, async (req: AuthenticatedRequest, res: Re
       });
     }
 
-    // Check access permissions
     if (!(await canReadAssetFile(asset, req))) {
-      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this asset' });
+      return res.status(404).json({ error: 'Not Found', message: 'Map asset not found' });
     }
 
     // Check if file exists (normalize path for cross-platform compatibility)
@@ -1123,6 +1096,10 @@ router.get('/maps/:id', authenticated, async (req: AuthenticatedRequest, res: Re
  * GET /api/assets/tokens/:id
  * Serve a token image
  * Requires: Authentication + access to asset
+ *
+ * `canReadAsset` decides this, as it does the metadata GET. An unreadable
+ * token answers 404 like a missing row, before caching, so a 304 cannot leak
+ * that the id exists.
  */
 router.get('/tokens/:id', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -1139,9 +1116,8 @@ router.get('/tokens/:id', authenticated, async (req: AuthenticatedRequest, res: 
       });
     }
 
-    // Check access permissions
     if (!(await canReadAssetFile(asset, req))) {
-      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this asset' });
+      return res.status(404).json({ error: 'Not Found', message: 'Token asset not found' });
     }
 
     // Check if file exists (normalize path for cross-platform compatibility)

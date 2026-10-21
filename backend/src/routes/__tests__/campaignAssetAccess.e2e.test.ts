@@ -15,12 +15,15 @@
  * asset, you may read that asset. Nothing is re-scoped, because scope holds a
  * single campaignId and one asset is commonly shared by several campaigns.
  *
- * This widens READ only. Deleting somebody else's asset stays refused, and a
- * stranger to the campaign is refused exactly as before.
+ * This widens READ only. Deleting somebody else's asset stays refused (403
+ * for a caller who can read but cannot change). A stranger, and a member
+ * who cannot read, get 404 on both metadata and bytes, matching a missing
+ * row, so the two cannot disagree and the reply cannot confirm the id.
  *
  * Requires PostgreSQL at DATABASE_URL.
  */
 
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -40,6 +43,10 @@ import {
 } from '../../__tests__/helpers/db';
 
 const app = createTestApp();
+
+const ASSET_MISSING = { error: 'Not Found', message: 'Asset not found' };
+const MAP_MISSING = { error: 'Not Found', message: 'Map asset not found' };
+const TOKEN_MISSING = { error: 'Not Found', message: 'Token asset not found' };
 
 /** A tiny valid PNG, written to disk so the route has something to send. */
 const PNG = Buffer.from(
@@ -181,22 +188,43 @@ describe('assets used in a campaign', () => {
   });
 
   describe('a player in the campaign', () => {
-    // The reported bug: "Failed to load map image".
+    // The reported bug: "Failed to load map image". A USER-scoped map used
+    // as the current campaign map is readable as both metadata and bytes.
     it('can read the map image the campaign map uses', async () => {
       expect((await player.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(200);
+      expect((await player.get(`/api/assets/${mapAssetId}`)).status).toBe(200);
+      expect((await player.get(`/api/assets/${mapAssetId}/download`)).status).toBe(200);
     });
 
     // The other half: token art silently fell back to initial circles.
     it('can read the art of a token placed on a campaign map', async () => {
       expect((await player.get(`/api/assets/tokens/${tokenAssetId}`)).status).toBe(200);
+      expect((await player.get(`/api/assets/${tokenAssetId}`)).status).toBe(200);
     });
 
     it("can read the token art of a character in the campaign", async () => {
       expect((await player.get(`/api/assets/tokens/${characterAssetId}`)).status).toBe(200);
+      expect((await player.get(`/api/assets/${characterAssetId}`)).status).toBe(200);
     });
 
     it("cannot read an asset of the DM's that the campaign does not use", async () => {
-      expect((await player.get(`/api/assets/maps/${unusedAssetId}`)).status).toBe(403);
+      const missingId = randomUUID();
+      const missingMeta = await player.get(`/api/assets/${missingId}`);
+      const missingBytes = await player.get(`/api/assets/maps/${missingId}`);
+      expect(missingMeta.status).toBe(404);
+      expect(missingMeta.body).toEqual(ASSET_MISSING);
+      expect(missingBytes.status).toBe(404);
+      expect(missingBytes.body).toEqual(MAP_MISSING);
+
+      const meta = await player.get(`/api/assets/${unusedAssetId}`);
+      const bytes = await player.get(`/api/assets/maps/${unusedAssetId}`);
+      const download = await player.get(`/api/assets/${unusedAssetId}/download`);
+      expect(meta.status).toBe(404);
+      expect(meta.body).toEqual(ASSET_MISSING);
+      expect(bytes.status).toBe(404);
+      expect(bytes.body).toEqual(MAP_MISSING);
+      expect(download.status).toBe(404);
+      expect(download.body).toEqual(ASSET_MISSING);
     });
 
     // Reading is all this grants.
@@ -229,8 +257,8 @@ describe('assets used in a campaign', () => {
     });
 
     it('refuses an asset merely named by a map the requester made', async () => {
-      // Established first: with no legitimate route, the answer is 403.
-      expect((await stranger.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(403);
+      // Established first: with no legitimate route, the answer is 404.
+      expect((await stranger.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(404);
 
       const campaign = await createTestCampaign(strangerId, { name: `Stranger own ${Date.now()}` });
       strangerCampaignId = campaign.id;
@@ -245,7 +273,7 @@ describe('assets used in a campaign', () => {
 
       // Either the write is refused, or the read still is. Both are acceptable
       // outcomes; what must not happen is the asset becoming readable.
-      expect((await stranger.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(403);
+      expect((await stranger.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(404);
       expect([201, 400, 403]).toContain(created.status);
     });
 
@@ -266,21 +294,34 @@ describe('assets used in a campaign', () => {
 
   describe('someone outside the campaign', () => {
     it('is still refused the map image', async () => {
-      expect((await stranger.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(403);
+      const meta = await stranger.get(`/api/assets/${mapAssetId}`);
+      const bytes = await stranger.get(`/api/assets/maps/${mapAssetId}`);
+      expect(meta.status).toBe(404);
+      expect(meta.body).toEqual(ASSET_MISSING);
+      expect(bytes.status).toBe(404);
+      expect(bytes.body).toEqual(MAP_MISSING);
     });
 
     it('is still refused the token art', async () => {
-      expect((await stranger.get(`/api/assets/tokens/${tokenAssetId}`)).status).toBe(403);
+      const meta = await stranger.get(`/api/assets/${tokenAssetId}`);
+      const bytes = await stranger.get(`/api/assets/tokens/${tokenAssetId}`);
+      expect(meta.status).toBe(404);
+      expect(meta.body).toEqual(ASSET_MISSING);
+      expect(bytes.status).toBe(404);
+      expect(bytes.body).toEqual(TOKEN_MISSING);
     });
   });
 
   describe('the owner', () => {
     it('reads their own asset as before', async () => {
       expect((await dm.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(200);
+      expect((await dm.get(`/api/assets/${mapAssetId}`)).status).toBe(200);
     });
 
     it('reads their own unused asset as before', async () => {
       expect((await dm.get(`/api/assets/maps/${unusedAssetId}`)).status).toBe(200);
+      expect((await dm.get(`/api/assets/${unusedAssetId}`)).status).toBe(200);
+      expect((await dm.get(`/api/assets/${unusedAssetId}/download`)).status).toBe(200);
     });
   });
 
@@ -321,17 +362,27 @@ describe('assets used in a campaign', () => {
 
     it('is readable by the DM', async () => {
       expect((await dm.get(`/api/assets/maps/${preparedMapAssetId}`)).status).toBe(200);
+      expect((await dm.get(`/api/assets/${preparedMapAssetId}`)).status).toBe(200);
     });
 
     it('keeps its artwork and its token art from a player until the campaign shows it', async () => {
-      expect((await player.get(`/api/assets/maps/${preparedMapAssetId}`)).status).toBe(403);
-      expect((await player.get(`/api/assets/tokens/${preparedTokenAssetId}`)).status).toBe(403);
+      const hiddenMap = await player.get(`/api/assets/maps/${preparedMapAssetId}`);
+      const hiddenMeta = await player.get(`/api/assets/${preparedMapAssetId}`);
+      const hiddenToken = await player.get(`/api/assets/tokens/${preparedTokenAssetId}`);
+      expect(hiddenMap.status).toBe(404);
+      expect(hiddenMap.body).toEqual(MAP_MISSING);
+      expect(hiddenMeta.status).toBe(404);
+      expect(hiddenMeta.body).toEqual(ASSET_MISSING);
+      expect(hiddenToken.status).toBe(404);
+      expect(hiddenToken.body).toEqual(TOKEN_MISSING);
 
       await prisma.campaign.update({ where: { id: campaignId }, data: { currentMapId: preparedMapId } });
       expect((await player.get(`/api/assets/maps/${preparedMapAssetId}`)).status).toBe(200);
+      expect((await player.get(`/api/assets/${preparedMapAssetId}`)).status).toBe(200);
       expect((await player.get(`/api/assets/tokens/${preparedTokenAssetId}`)).status).toBe(200);
       // And the map it replaced is the DM's again.
-      expect((await player.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(403);
+      expect((await player.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(404);
+      expect((await player.get(`/api/assets/${mapAssetId}`)).status).toBe(404);
     });
   });
 
@@ -345,7 +396,62 @@ describe('assets used in a campaign', () => {
         },
       });
 
-      expect((await player.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(403);
+      expect((await player.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(404);
+      expect((await player.get(`/api/assets/${mapAssetId}`)).status).toBe(404);
+    });
+  });
+
+  describe('an orphaned CAMPAIGN asset (scope CAMPAIGN, campaignId null)', () => {
+    let orphanId: string;
+    let adminId: string;
+    let admin: ReturnType<typeof request.agent>;
+
+    beforeAll(async () => {
+      orphanId = await makeAsset('MAP', 'orphaned-campaign-map');
+      await prisma.asset.update({
+        where: { id: orphanId },
+        data: { scope: 'CAMPAIGN', campaignId: null },
+      });
+      const adminUser = await createTestUser({
+        email: `aa_ad_${Date.now()}@test.invalid`,
+        role: 'ADMIN',
+        isApproved: true,
+      });
+      adminId = adminUser.id;
+      admin = await login(adminUser.email);
+    });
+
+    afterAll(async () => {
+      await prisma.asset.deleteMany({ where: { id: orphanId } });
+      await cleanupUsers([adminId]);
+    });
+
+    it('is 404 on metadata and bytes for a stranger', async () => {
+      const meta = await stranger.get(`/api/assets/${orphanId}`);
+      const bytes = await stranger.get(`/api/assets/maps/${orphanId}`);
+      expect(meta.status).toBe(404);
+      expect(meta.body).toEqual(ASSET_MISSING);
+      expect(bytes.status).toBe(404);
+      expect(bytes.body).toEqual(MAP_MISSING);
+    });
+
+    it('is 404 on metadata and bytes for a campaign member who is not the uploader', async () => {
+      const meta = await player.get(`/api/assets/${orphanId}`);
+      const bytes = await player.get(`/api/assets/maps/${orphanId}`);
+      expect(meta.status).toBe(404);
+      expect(meta.body).toEqual(ASSET_MISSING);
+      expect(bytes.status).toBe(404);
+      expect(bytes.body).toEqual(MAP_MISSING);
+    });
+
+    it('is 200 on metadata and bytes for the uploader', async () => {
+      expect((await dm.get(`/api/assets/${orphanId}`)).status).toBe(200);
+      expect((await dm.get(`/api/assets/maps/${orphanId}`)).status).toBe(200);
+    });
+
+    it('is 200 on metadata and bytes for an admin', async () => {
+      expect((await admin.get(`/api/assets/${orphanId}`)).status).toBe(200);
+      expect((await admin.get(`/api/assets/maps/${orphanId}`)).status).toBe(200);
     });
   });
 });
