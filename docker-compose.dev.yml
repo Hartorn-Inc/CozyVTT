@@ -1,5 +1,7 @@
 # Development Docker Compose
-# Usage: docker compose -f docker-compose.dev.yml up
+# Usage (after `make setup`, from the repository root):
+#   docker compose --project-name "$(make print-project)" --project-directory . \
+#     --env-file .env -f docker-compose.dev.yml up -d
 #
 # Publishes every service on this computer only (127.0.0.1), for debugging:
 #   Frontend: http://localhost:3000  (Vite hot-reload)
@@ -13,10 +15,10 @@
 services:
   database:
     image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
-    container_name: cozyvtt-database
     restart: unless-stopped
     # Same read-only root as production so a crash-loop shows up locally.
-    # A leftover 15 volume will not start; `docker volume rm` it first.
+    # Compose scopes this dev volume to the per-checkout project, separate from
+    # production and from the pre-isolation dev project's volume.
     read_only: true
     tmpfs:
       - /tmp
@@ -30,7 +32,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-cozyvtt}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DATABASE_USER:-cozyvtt} -d ${DATABASE_NAME:-cozyvtt}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -39,7 +41,6 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: cozyvtt-backend
     restart: unless-stopped
     depends_on:
       database:
@@ -51,15 +52,22 @@ services:
       # example secrets, logs as JSON and hides error details.
       NODE_ENV: development
       PORT: 4000
-      SESSION_SECRET: ${SESSION_SECRET}
-      SETUP_TOKEN: ${SETUP_TOKEN:-}
-      CORS_ORIGIN: ${CORS_ORIGIN}
-      APP_URL: ${APP_URL:-http://localhost:3000}
-      SMTP_HOST: ${SMTP_HOST}
-      SMTP_PORT: ${SMTP_PORT}
-      SMTP_USER: ${SMTP_USER}
-      SMTP_PASS: ${SMTP_PASS}
-      SMTP_FROM: ${SMTP_FROM}
+      # Dev must use its own secret; the production SESSION_SECRET is ignored.
+      SESSION_SECRET: ${DEV_SESSION_SECRET:-}
+      SETUP_TOKEN: ${DEV_SETUP_TOKEN:-}
+      # Dev defaults to the Vite address. Set DEV_CORS_ORIGIN for a custom
+      # host or port; production continues to use CORS_ORIGIN.
+      CORS_ORIGIN: ${DEV_CORS_ORIGIN:-http://localhost:3000}
+      APP_URL: ${DEV_APP_URL:-http://localhost:3000}
+      # Bind application paths to the isolated mounts even if backend/.env
+      # contains production or manual-install overrides.
+      UPLOAD_DIR: /app/uploads
+      BACKUP_DIR: /app/backups
+      SMTP_HOST: ${DEV_SMTP_HOST:-}
+      SMTP_PORT: ${DEV_SMTP_PORT:-}
+      SMTP_USER: ${DEV_SMTP_USER:-}
+      SMTP_PASS: ${DEV_SMTP_PASS:-}
+      SMTP_FROM: ${DEV_SMTP_FROM:-}
       MAX_MAP_SIZE_MB: ${MAX_MAP_SIZE_MB}
       MAX_TOKEN_SIZE_MB: ${MAX_TOKEN_SIZE_MB}
       MAX_AUDIO_SIZE_MB: ${MAX_AUDIO_SIZE_MB}
@@ -68,7 +76,7 @@ services:
       # No bundled Nginx in dev — Vite proxies directly to the backend, so this
       # only affects the startup warning about proxy body caps.
       NGINX_MAX_BODY_SIZE: ${NGINX_MAX_BODY_SIZE:-}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_SECURE: ${DEV_SMTP_SECURE:-}
       RATE_LIMIT_MAX_REQUESTS: ${RATE_LIMIT_MAX_REQUESTS:-300}
       ASSET_UPLOAD_RATE_LIMIT: ${ASSET_UPLOAD_RATE_LIMIT:-30}
       CAMPAIGN_ARCHIVE_RATE_LIMIT: ${CAMPAIGN_ARCHIVE_RATE_LIMIT:-20}
@@ -80,16 +88,46 @@ services:
     volumes:
       - ./backend:/app
       - /app/node_modules
-      - ./backend/uploads:/app/uploads
+      # Keep development logs out of the broad source bind mount.
+      - /app/logs
+      - ./backend/uploads-dev:/app/uploads
       # Instance backups (full database dumps) live beside uploads, never inside it.
-      - ./backend/backups:/app/backups
+      - ./backend/backups-dev:/app/backups
     command: npm run dev
+
+  # `make setup` runs this profiled helper explicitly before the non-root
+  # backend starts. It has no application environment or source-tree mount,
+  # cannot reach a network, and can write only the two dev runtime directories.
+  # Make passes the host device:inode identities as positional command args.
+  backend-permissions:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    profiles:
+      - permissions
+    network_mode: none
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_READ_SEARCH
+    read_only: true
+    user: root
+    entrypoint: ["/usr/local/bin/permissions-check.sh"]
+    # The checker rejects nested symlinks and skips entries on a different
+    # device before chown; its host-side identity check still cannot prevent a
+    # later concurrent path replacement.
+    command: []
+    volumes:
+      - ./backend/uploads-dev:/app/uploads
+      - ./backend/backups-dev:/app/backups
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: cozyvtt-frontend
     restart: unless-stopped
     depends_on:
       - backend
