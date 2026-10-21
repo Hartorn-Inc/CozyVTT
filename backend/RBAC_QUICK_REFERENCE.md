@@ -373,20 +373,22 @@ when that member may see the spirit plane there (`getSpiritVisibility`), which
 is what the map itself does with it.
 
 The asset-serving routes (`/api/assets/maps/:id`, `/tokens/:id`,
-`/documents/:id`, `/audio/:id` and `/:id/download`) decide read access from the
-asset's **scope**; `/avatars/:userId` serves a user's avatar to anyone signed
-in. `GLOBAL` is readable by anyone signed in, `CAMPAIGN` by that
-campaign's members, and `USER` by its uploader. A `CAMPAIGN` asset with no
-campaign recorded (the foreign key nulls it when a campaign row goes) is read
-as a `USER` one, so a way of removing campaigns that forgets to turn their
-assets personal first cannot open them to everyone.
+`/documents/:id`, `/audio/:id` and `/:id/download`) and the metadata GET
+(`/:id`) decide read access from the same `canReadAsset` rule. `/avatars/:userId`
+serves a user's avatar to anyone signed in. `GLOBAL` is readable by anyone
+signed in, `CAMPAIGN` by that campaign's members, and `USER` by its uploader. A
+`CAMPAIGN` asset with no campaign recorded (the foreign key nulls it when a
+campaign row goes) is read as a `USER` one, so a way of removing campaigns that
+forgets to turn their assets personal first cannot open them to everyone. A
+refused read is `404`, not `403`, on metadata and on every serving route, so
+the two cannot disagree and no reply confirms a private id exists.
 
 Scope alone is not enough for maps and tokens, because an asset can be *used*
 somewhere its scope does not describe. A DM picking a map out of their own
 library — which the picker offers, listing personal assets with no campaign
 filter — leaves every player at that table 403ing on the battlemap. So
 `routes/assets.ts` funnels the two image routes, the audio route, the document
-route and `/:id/download` through one `canReadAssetFile`, which is
+route, `/:id/download` and the metadata GET through one `canReadAssetFile`, which is
 `canReadAsset` in `services/permissions.ts`. Beyond scope it asks two more
 questions: `assetUsedInUserCampaign(assetId, userId)`, true when a map layer, a
 token placed on a map, a character, a creature template, a token template, or

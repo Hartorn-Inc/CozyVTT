@@ -41,6 +41,9 @@ import {
 
 const app = createTestApp();
 
+const ASSET_MISSING = { error: 'Not Found', message: 'Asset not found' };
+const MAP_MISSING = { error: 'Not Found', message: 'Map asset not found' };
+
 /** A tiny valid PNG, written to disk so the route has something to send. */
 const PNG = Buffer.from(
   '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154' +
@@ -346,6 +349,60 @@ describe('assets used in a campaign', () => {
       });
 
       expect((await player.get(`/api/assets/maps/${mapAssetId}`)).status).toBe(404);
+    });
+  });
+
+  describe('an orphaned CAMPAIGN asset (scope CAMPAIGN, campaignId null)', () => {
+    let orphanId: string;
+    let adminId: string;
+    let admin: ReturnType<typeof request.agent>;
+
+    beforeAll(async () => {
+      orphanId = await makeAsset('MAP', 'orphaned-campaign-map');
+      await prisma.asset.update({
+        where: { id: orphanId },
+        data: { scope: 'CAMPAIGN', campaignId: null },
+      });
+      const adminUser = await createTestUser({
+        email: `aa_ad_${Date.now()}@test.invalid`,
+        role: 'ADMIN',
+        isApproved: true,
+      });
+      adminId = adminUser.id;
+      admin = await login(adminUser.email);
+    });
+
+    afterAll(async () => {
+      await prisma.asset.deleteMany({ where: { id: orphanId } });
+      await cleanupUsers([adminId]);
+    });
+
+    it('is 404 on metadata and bytes for a stranger', async () => {
+      const meta = await stranger.get(`/api/assets/${orphanId}`);
+      const bytes = await stranger.get(`/api/assets/maps/${orphanId}`);
+      expect(meta.status).toBe(404);
+      expect(meta.body).toEqual(ASSET_MISSING);
+      expect(bytes.status).toBe(404);
+      expect(bytes.body).toEqual(MAP_MISSING);
+    });
+
+    it('is 404 on metadata and bytes for a campaign member who is not the uploader', async () => {
+      const meta = await player.get(`/api/assets/${orphanId}`);
+      const bytes = await player.get(`/api/assets/maps/${orphanId}`);
+      expect(meta.status).toBe(404);
+      expect(meta.body).toEqual(ASSET_MISSING);
+      expect(bytes.status).toBe(404);
+      expect(bytes.body).toEqual(MAP_MISSING);
+    });
+
+    it('is 200 on metadata and bytes for the uploader', async () => {
+      expect((await dm.get(`/api/assets/${orphanId}`)).status).toBe(200);
+      expect((await dm.get(`/api/assets/maps/${orphanId}`)).status).toBe(200);
+    });
+
+    it('is 200 on metadata and bytes for an admin', async () => {
+      expect((await admin.get(`/api/assets/${orphanId}`)).status).toBe(200);
+      expect((await admin.get(`/api/assets/maps/${orphanId}`)).status).toBe(200);
     });
   });
 });
