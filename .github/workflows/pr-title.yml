@@ -16,6 +16,10 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, edited]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # Read the code, nothing more: no job here writes to the repository.
 permissions:
   contents: read
