@@ -26,6 +26,7 @@ import {
 import { extractAssetId, isExactAssetAddress, normalizeAssetUrl } from '../utils/asset-urls';
 import { toJson } from '../utils/prisma-json';
 import { holdOwnerCreates } from '../utils/ownerLimit';
+import { sheetWithoutKeeperNotes } from '../utils/keeperNotes';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -171,6 +172,22 @@ function validateSheet(
   };
 }
 
+/**
+ * Published templates are Instance-wide, so they always strip Keeper-only
+ * fields; presence is not a 400. Every send goes through
+ * `sheetWithoutKeeperNotes`, including a legacy row that already stored
+ * them — never `characterForReader` with keeper true, which would inject
+ * an empty box.
+ */
+function publishedTemplate<T extends { gameSystem: Parameters<typeof sheetWithoutKeeperNotes>[0]; data: unknown }>(
+  template: T
+): T {
+  return {
+    ...template,
+    data: sheetWithoutKeeperNotes(template.gameSystem, template.data),
+  };
+}
+
 // ============================================
 // LIST — GET /
 // Any authenticated user. Every template is visible to everyone.
@@ -238,7 +255,7 @@ router.get('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       return res.status(404).json({ error: 'Not Found', message: 'Character template not found' });
     }
 
-    return res.json(template);
+    return res.json(publishedTemplate(template));
   } catch (error) {
     logger.error('Error getting character template', { err: error });
     return res
@@ -271,6 +288,7 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         .status(400)
         .json({ error: 'Validation Error', message: sheet.message, validationErrors: sheet.issues });
     }
+    const publishedData = sheetWithoutKeeperNotes(gameSystem ?? null, sheet.data);
 
     const image = await resolveTemplateImage(tokenImageUrl);
     if ('error' in image) {
@@ -289,14 +307,14 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
           description: description ?? null,
           gameSystem: gameSystem ?? null,
           tokenImageUrl: image.url,
-          data: toJson(sheet.data),
+          data: toJson(publishedData),
           createdById: userId,
         },
         include: { createdBy: { select: AUTHOR_SELECT } },
       });
     });
 
-    return res.status(201).json(template);
+    return res.status(201).json(publishedTemplate(template));
   } catch (error) {
     if (error instanceof TemplateLimitReached) {
       return res.status(400).json({ error: 'Validation Error', message: TEMPLATE_LIMIT_REACHED });
@@ -348,7 +366,7 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
           validationErrors: sheet.issues,
         });
       }
-      sheetData = sheet.data;
+      sheetData = sheetWithoutKeeperNotes(existing.gameSystem, sheet.data);
     }
 
     let imageUrl: string | null | undefined;
@@ -371,7 +389,7 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       include: { createdBy: { select: AUTHOR_SELECT } },
     });
 
-    return res.json(updated);
+    return res.json(publishedTemplate(updated));
   } catch (error) {
     logger.error('Error updating character template', { err: error });
     return res

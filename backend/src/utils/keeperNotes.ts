@@ -9,6 +9,9 @@
  * different campaign has them cleared (`sheetWithoutKeeperNotes`): they were
  * the last campaign's Keeper's, and a player who moved their investigator
  * into a campaign they run would otherwise be its Keeper and read them.
+ * Published character templates always go through `sheetWithoutKeeperNotes`,
+ * never `characterForReader` with keeper true: they are Instance-wide, so no
+ * reader is a Keeper of them.
  *
  * The notes stay inside the stored sheet, so the schema, exports and imports
  * are unchanged. A database backup keeps them; a campaign export carries no

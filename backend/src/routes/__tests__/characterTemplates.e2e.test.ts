@@ -12,13 +12,17 @@ import request from 'supertest';
 import { GameSystem, AssetType, AssetScope } from '@prisma/client';
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import { getBlankCharacterTemplate } from '../../validators/game-systems';
+import { getBlankTemplate } from '../../utils/character-templates';
+import { toJson } from '../../utils/prisma-json';
 // The app's own GameSystem enum. Same string values as Prisma's, but a
 // distinct nominal type, and this is the one the validators are typed against.
 import { GameSystem as AppGameSystem } from '../../game-systems';
 import {
   prisma,
   createTestUser,
+  createTestCampaign,
   cleanupUsers,
+  cleanupCampaigns,
   TEST_PASSWORD,
 } from '../../__tests__/helpers/db';
 
@@ -494,6 +498,164 @@ describe('Character template routes', () => {
       expect(res.body.character.tokenImageUrl).toBe(`/api/assets/tokens/${globalAssetId}`);
 
       await prisma.character.delete({ where: { id: res.body.character.id } });
+    });
+  });
+
+  /**
+   * Published templates are Instance-wide, so Keeper's Notes never travel
+   * with them. Nested `notes` on wealth, weapons and contacts stay: they
+   * are not the Keeper's field.
+   */
+  describe("Keeper's Notes on published Call of Cthulhu templates", () => {
+    const SECRET = 'Secretly a cultist of Nyarlathotep, reveal in session 4';
+    const WEAPON_NOTES = '6-round cylinder';
+    const CONTACT_NOTES = 'Miskatonic librarian';
+    const WEALTH_NOTES = 'Keeps cash in a sock';
+
+    const characterIds: string[] = [];
+    const campaignIds: string[] = [];
+
+    const cocSheet = (extra: Record<string, unknown> = {}): Record<string, unknown> => {
+      const blank = getBlankTemplate(GameSystem.CALL_OF_CTHULHU_7E).data as Record<string, unknown>;
+      const wealth = (blank.wealth ?? {}) as Record<string, unknown>;
+      return {
+        ...blank,
+        investigatorName: 'Harvey Walters',
+        combat: { weapons: [{ name: 'Revolver', notes: WEAPON_NOTES }] },
+        contacts: [{ name: 'Armitage', notes: CONTACT_NOTES }],
+        wealth: { ...wealth, notes: WEALTH_NOTES },
+        ...extra,
+      };
+    };
+
+    const expectNestedNotesKept = (data: Record<string, unknown>) => {
+      expect(data).not.toHaveProperty('notes');
+      expect((data.combat as { weapons: Array<{ notes: string }> }).weapons[0].notes).toBe(WEAPON_NOTES);
+      expect((data.contacts as Array<{ notes: string }>)[0].notes).toBe(CONTACT_NOTES);
+      expect((data.wealth as { notes: string }).notes).toBe(WEALTH_NOTES);
+    };
+
+    afterEach(async () => {
+      if (characterIds.length > 0) {
+        await prisma.character.deleteMany({ where: { id: { in: characterIds } } });
+        characterIds.length = 0;
+      }
+      if (campaignIds.length > 0) {
+        await cleanupCampaigns(campaignIds);
+        campaignIds.length = 0;
+      }
+    });
+
+    it('strips notes on publish and does not 400 because they were present', async () => {
+      const res = await createTemplate(authorAgent, {
+        name: 'Published Investigator',
+        gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+        data: cocSheet({ notes: SECRET }),
+      });
+
+      expect(res.status).toBe(201);
+      expectNestedNotesKept(res.body.data as Record<string, unknown>);
+
+      const stored = await prisma.characterTemplate.findUniqueOrThrow({ where: { id: res.body.id } });
+      expectNestedNotesKept(stored.data as Record<string, unknown>);
+    });
+
+    it('strips notes on update and does not 400 because they were present', async () => {
+      const created = await createTemplate(authorAgent, {
+        name: 'Update Investigator',
+        gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+        data: cocSheet(),
+      });
+      expect(created.status).toBe(201);
+
+      const res = await authorAgent
+        .put(`/api/character-templates/${created.body.id}`)
+        .send({ data: cocSheet({ notes: SECRET }) });
+
+      expect(res.status).toBe(200);
+      expectNestedNotesKept(res.body.data as Record<string, unknown>);
+
+      const stored = await prisma.characterTemplate.findUniqueOrThrow({ where: { id: created.body.id } });
+      expectNestedNotesKept(stored.data as Record<string, unknown>);
+    });
+
+    it('omits notes on GET even when a legacy row stored them', async () => {
+      const seeded = await prisma.characterTemplate.create({
+        data: {
+          name: 'Legacy Investigator',
+          gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+          data: toJson(cocSheet({ notes: SECRET })),
+          createdById: authorId,
+        },
+      });
+
+      const stored = await prisma.characterTemplate.findUniqueOrThrow({ where: { id: seeded.id } });
+      expect((stored.data as { notes?: string }).notes).toBe(SECRET);
+
+      const res = await otherAgent.get(`/api/character-templates/${seeded.id}`);
+      expect(res.status).toBe(200);
+      expectNestedNotesKept(res.body.data as Record<string, unknown>);
+    });
+
+    it('creates a character from a published template without notes', async () => {
+      const published = await createTemplate(authorAgent, {
+        name: 'Use Investigator',
+        gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+        data: cocSheet({ notes: SECRET }),
+      });
+      expect(published.status).toBe(201);
+
+      const fetched = await otherAgent.get(`/api/character-templates/${published.body.id}`);
+      expect(fetched.status).toBe(200);
+      expect(fetched.body.data).not.toHaveProperty('notes');
+
+      const res = await otherAgent.post('/api/characters').send({
+        name: 'Copied Investigator',
+        gameSystem: fetched.body.gameSystem,
+        data: fetched.body.data,
+      });
+
+      expect(res.status).toBe(201);
+      characterIds.push(res.body.character.id);
+      expect(res.body.character.data).not.toHaveProperty('notes');
+
+      const stored = await prisma.character.findUniqueOrThrow({ where: { id: res.body.character.id } });
+      expect(stored.data as Record<string, unknown>).not.toHaveProperty('notes');
+    });
+
+    it('does not let a campaign DM inherit notes from a published template', async () => {
+      const published = await createTemplate(authorAgent, {
+        name: 'Keeper Leak Path',
+        gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+        data: cocSheet({ notes: SECRET }),
+      });
+      expect(published.status).toBe(201);
+
+      const campaign = await createTestCampaign(authorId, { gameSystem: GameSystem.CALL_OF_CTHULHU_7E });
+      campaignIds.push(campaign.id);
+      await prisma.campaignMembership.create({
+        data: { userId: authorId, campaignId: campaign.id, role: 'DM', characterIds: [] },
+      });
+
+      const fetched = await authorAgent.get(`/api/character-templates/${published.body.id}`);
+      expect(fetched.status).toBe(200);
+      expect(fetched.body.data).not.toHaveProperty('notes');
+
+      const res = await authorAgent.post('/api/characters').send({
+        name: 'Campaign Investigator',
+        campaignId: campaign.id,
+        gameSystem: fetched.body.gameSystem,
+        data: fetched.body.data,
+      });
+
+      expect(res.status).toBe(201);
+      characterIds.push(res.body.character.id);
+      // A sitting DM's create reply may carry an empty Keeper's Notes box;
+      // the leak is SECRET surviving into the stored sheet.
+      expect(res.body.character.data.notes).not.toBe(SECRET);
+
+      const stored = await prisma.character.findUniqueOrThrow({ where: { id: res.body.character.id } });
+      expect(stored.data as Record<string, unknown>).not.toHaveProperty('notes');
     });
   });
 });

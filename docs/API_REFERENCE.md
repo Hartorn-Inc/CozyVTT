@@ -871,7 +871,9 @@ its sheet (`data`), which a page of 100 would otherwise carry 100 times.
 ### `GET /api/character-templates/:id`
 
 One template, with its sheet in `data`. Fetch this before copying a template
-into a character or editing it.
+into a character or editing it. On a Call of Cthulhu sheet the top-level
+`notes` (Keeper's Notes) is omitted, even if a legacy row stored it:
+published templates are Instance-wide, so they never carry the field.
 
 ### `POST /api/character-templates`
 
@@ -893,7 +895,9 @@ into a character or editing it.
   is dropped. Fields from a sheet written before 1.3.0 are moved to where the
   sheet reads them first, as they are for a character. A flexible template's
   `data` must be an object laid out as a Flexible sheet, as a Flexible
-  character's must; anything else answers `400` with `validationErrors`.
+  character's must; anything else answers `400` with `validationErrors`. On a
+  Call of Cthulhu sheet the top-level `notes` (Keeper's Notes) is stripped
+  before store; sending it is not a `400`.
 - **`tokenImageUrl` must reference a `GLOBAL` asset.** A template is visible to
   everyone, so a `USER`- or `CAMPAIGN`-scoped image would 403 for other readers
   and show as broken. A non-global asset returns `400` with an explanation.
@@ -905,7 +909,9 @@ into a character or editing it.
 
 Accepts `name`, `description`, `tokenImageUrl`, `data`. An empty body returns
 `400`. `gameSystem` is fixed at creation, as it is for a character — the sheet
-data is only meaningful against the system it was built for.
+data is only meaningful against the system it was built for. A Call of Cthulhu
+update strips top-level `notes` (Keeper's Notes) the same way publish does;
+presence is not a `400`.
 
 ### `DELETE /api/character-templates/:id`
 
@@ -914,7 +920,8 @@ data is only meaningful against the system it was built for.
 There is no dedicated endpoint. The client reads the template and posts its
 `data`, `gameSystem` and `tokenImageUrl` to `POST /api/characters` — the
 resulting character belongs to whoever made the request, not to the template's
-author.
+author. A published Call of Cthulhu template never carries Keeper's Notes, so
+a character created from one cannot inherit them.
 
 ---
 
