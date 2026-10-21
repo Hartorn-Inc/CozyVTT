@@ -83,7 +83,8 @@
  * are copies of one rule.
  *
  * The Node.js major. It is written in `.nvmrc`, every Dockerfile stage built
- * on Node, every CI job that sets Node up, the `engines` field of both
+ * on Node, every CI job that sets Node up, the Cloud Agent install script,
+ * the `engines` field of both
  * projects, each project's `@types/node`, and the version the README and the
  * guides ask a reader to install. A move to a new major that misses one runs
  * CI, the images or a manual install on a different Node from the rest.
@@ -528,6 +529,7 @@ describe('the Node.js major', () => {
       (rel): [string, string[]] => [rel, found(rel, instructions(rel).join('\n'), /^FROM\s+node:(\S+)/gm)]
     ),
     ['.github/workflows/ci.yml', found('.github/workflows/ci.yml', ci, /^\s*node-version:\s*['"]?([^'"\s]+)/gm)],
+    ['.cursor/install.sh', found('.cursor/install.sh', read('.cursor/install.sh'), /^NODE_VERSION=["']([^"']+)["']/gm)],
     ['backend/package.json engines', [majorOf(pkg('backend/package.json').engines?.node ?? 'missing')]],
     ['frontend/package.json engines', [majorOf(pkg('frontend/package.json').engines?.node ?? 'missing')]],
     ...['backend', 'frontend'].flatMap((dir): [string, string[]][] => [
