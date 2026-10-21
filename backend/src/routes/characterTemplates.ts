@@ -26,6 +26,7 @@ import {
 import { extractAssetId, isExactAssetAddress, normalizeAssetUrl } from '../utils/asset-urls';
 import { toJson } from '../utils/prisma-json';
 import { holdOwnerCreates } from '../utils/ownerLimit';
+import { sheetWithoutKeeperNotes } from '../utils/keeperNotes';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -238,7 +239,12 @@ router.get('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       return res.status(404).json({ error: 'Not Found', message: 'Character template not found' });
     }
 
-    return res.json(template);
+    // Published templates are Instance-wide: never send Keeper's Notes, even
+    // from a row that still has the key.
+    return res.json({
+      ...template,
+      data: sheetWithoutKeeperNotes(template.gameSystem, template.data),
+    });
   } catch (error) {
     logger.error('Error getting character template', { err: error });
     return res
@@ -272,6 +278,11 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         .json({ error: 'Validation Error', message: sheet.message, validationErrors: sheet.issues });
     }
 
+    // A Call of Cthulhu sheet may include Keeper's Notes; Zod accepts the
+    // key. Strip it so a published template never stores it. Presence is
+    // not a 400.
+    const storedSheet = sheetWithoutKeeperNotes(gameSystem ?? null, sheet.data);
+
     const image = await resolveTemplateImage(tokenImageUrl);
     if ('error' in image) {
       return res.status(400).json({ error: 'Validation Error', message: image.error });
@@ -289,14 +300,17 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
           description: description ?? null,
           gameSystem: gameSystem ?? null,
           tokenImageUrl: image.url,
-          data: toJson(sheet.data),
+          data: toJson(storedSheet),
           createdById: userId,
         },
         include: { createdBy: { select: AUTHOR_SELECT } },
       });
     });
 
-    return res.status(201).json(template);
+    return res.status(201).json({
+      ...template,
+      data: sheetWithoutKeeperNotes(template.gameSystem, template.data),
+    });
   } catch (error) {
     if (error instanceof TemplateLimitReached) {
       return res.status(400).json({ error: 'Validation Error', message: TEMPLATE_LIMIT_REACHED });
@@ -348,7 +362,8 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
           validationErrors: sheet.issues,
         });
       }
-      sheetData = sheet.data;
+      // Same strip as publish: a present notes key is dropped, not refused.
+      sheetData = sheetWithoutKeeperNotes(existing.gameSystem, sheet.data);
     }
 
     let imageUrl: string | null | undefined;
@@ -371,7 +386,10 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       include: { createdBy: { select: AUTHOR_SELECT } },
     });
 
-    return res.json(updated);
+    return res.json({
+      ...updated,
+      data: sheetWithoutKeeperNotes(updated.gameSystem, updated.data),
+    });
   } catch (error) {
     logger.error('Error updating character template', { err: error });
     return res
