@@ -25,12 +25,16 @@
 
 import request from 'supertest';
 
-jest.mock('../../services/sessionStore', () => ({
-  destroyUserLoginSessions: jest.fn(async () => 1),
-  // Sign-in bookkeeping, not under test here; the real one is tested in
-  // services/__tests__/sessionStoreCap.test.ts.
-  capLoginSessions: jest.fn(async () => 0),
-}));
+jest.mock('../../services/sessionStore', () => {
+  const actual = jest.requireActual<typeof import('../../services/sessionStore')>('../../services/sessionStore');
+  return {
+    ...actual,
+    destroyUserLoginSessions: jest.fn(async () => 1),
+    // Sign-in bookkeeping, not under test here; the real one is tested in
+    // services/__tests__/sessionStoreCap.test.ts.
+    capLoginSessions: jest.fn(async () => 0),
+  };
+});
 
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import { destroyUserLoginSessions } from '../../services/sessionStore';
@@ -84,7 +88,7 @@ describe('revoking access ends the sessions already issued', () => {
   it('when an admin is demoted', async () => {
     const res = await acting.put(`/api/users/${targetId}`).send({ platformRole: 'USER' });
     expect(res.status).toBe(200);
-    expect(destroyed).toHaveBeenCalledWith(targetId);
+    expect(destroyed).toHaveBeenCalledWith(targetId, undefined, expect.anything());
   });
 
   it('when an account is deleted', async () => {
@@ -121,13 +125,42 @@ describe('a user recovering their own account', () => {
     expect(res.status).toBe(200);
 
     // The second argument keeps the device they are holding signed in.
-    expect(destroyed).toHaveBeenCalledWith(keeperId, expect.any(String));
+    expect(destroyed).toHaveBeenCalledWith(keeperId, expect.any(String), expect.anything());
 
     // Put the password back for the tests that follow.
     await kept.post('/api/auth/change-password').send({
       currentPassword: 'AnotherGoodPassword123!',
       newPassword: TEST_PASSWORD,
     });
+  });
+});
+
+describe('an administrator resetting someone else', () => {
+  it('ends every session of that user when their password is reset', async () => {
+    const target = await createTestUser({
+      email: `revoke-pwreset-${Date.now()}${Math.random().toString(36).slice(2, 8)}@test.cozyvtt.local`,
+    });
+    extra.push(target.id);
+    const res = await acting.post(`/api/users/${target.id}/reset-password`);
+    expect(res.status).toBe(200);
+    expect(destroyed).toHaveBeenCalledWith(target.id, undefined, expect.anything());
+    expect((await acting.get('/api/auth/me')).status).toBe(200);
+  });
+
+  it('ends every session of that user when their MFA is reset, and keeps the caller signed in', async () => {
+    const target = await createTestUser({
+      email: `revoke-mfareset-${Date.now()}${Math.random().toString(36).slice(2, 8)}@test.cozyvtt.local`,
+    });
+    extra.push(target.id);
+    await prisma.user.update({
+      where: { id: target.id },
+      data: { mfaEnabled: true, mfaSecret: 'JBSWY3DPEHPK3PXP', mfaBackupCodes: ['hash'] },
+    });
+    const res = await acting.post(`/api/admin/users/${target.id}/reset-mfa`);
+    expect(res.status).toBe(200);
+    expect(destroyed).toHaveBeenCalledWith(target.id, undefined, expect.anything());
+    expect(destroyed.mock.calls.every((call) => call[0] !== actingAdminId)).toBe(true);
+    expect((await acting.get('/api/auth/me')).status).toBe(200);
   });
 });
 

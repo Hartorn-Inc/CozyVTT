@@ -5,7 +5,12 @@ import { registerUser, authenticateUser, sanitizeUser, hashPassword, verifyPassw
 import { rememberMeMaxAge } from '../config/sessionDurations';
 import { validatePasswordStrength } from '../utils/validation';
 import { isSmtpConfigured, sendPasswordResetEmail } from '../services/email';
-import { destroyUserLoginSessions, capLoginSessions } from '../services/sessionStore';
+import {
+  destroyUserLoginSessions,
+  capLoginSessions,
+  isLoginSessionStoreUnavailable,
+  LOGIN_SESSION_STORE_UNAVAILABLE_BODY,
+} from '../services/sessionStore';
 import { voidOutstandingResetLinks, issueResetToken, findResetTokenRow, RESET_LINK_TTL_MS } from '../services/passwordResetTokens';
 import { endLiveSockets, announceRosterChange } from '../websocket/utils';
 import { generateBackupCodes, hashBackupCodes, verifyBackupCode } from '../utils/backupCodes';
@@ -35,6 +40,14 @@ import {
 
 /** 400 for a body `parseBody` refused. */
 const invalid = (res: Response, message: string) => res.status(400).json({ error: 'Validation Error', message });
+
+/** 503 when the login-session store cannot be confirmed; the mutation did not take. */
+const storeUnavailable = (res: Response, error: unknown): boolean => {
+  if (!isLoginSessionStoreUnavailable(error)) return false;
+  logger.error('Login-session store unavailable', { err: error });
+  res.status(503).json(LOGIN_SESSION_STORE_UNAVAILABLE_BODY);
+  return true;
+};
 
 /**
  * The bookkeeping every completed sign-in does, after the session has been
@@ -556,6 +569,12 @@ router.post('/reset-password', credentialLimiter, async (req: Request, res: Resp
         select: { email: true },
       });
       await voidOutstandingResetLinks(resetToken.userId, tx);
+      // A reset by link is how someone recovers an account they cannot or will
+      // not sign in to, so every sign-in opened with the old password ends,
+      // live connections included. Nobody is signed in here to keep. In the
+      // same transaction as the password write: a failed DELETE must not
+      // leave the new password in place.
+      await destroyUserLoginSessions(resetToken.userId, undefined, tx);
       return email;
     });
 
@@ -570,16 +589,13 @@ router.post('/reset-password', credentialLimiter, async (req: Request, res: Resp
     // old one; a locked account opens with its new password.
     accountLoginLimiter.forget(accountLoginKey(accountEmail));
 
-    // A reset by link is how someone recovers an account they cannot or will
-    // not sign in to, so every sign-in opened with the old password ends,
-    // live connections included. Nobody is signed in here to keep.
-    await destroyUserLoginSessions(resetToken.userId);
     await endLiveSockets(resetToken.userId, 'Your password was reset. Sign in again.');
 
     return res.status(200).json({
       message: 'Password has been reset successfully',
     });
   } catch (error) {
+    if (storeUnavailable(res, error)) return;
     logger.error('Error in reset-password', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',
@@ -631,14 +647,23 @@ router.post('/change-password', requireAuth, passwordCheckLimiter, async (req: R
       });
     }
 
-    // Hash and update
+    // Hash and update. Changing a password is how someone recovers an account
+    // they think is compromised, so the sessions opened with the old one have
+    // to end. This one is kept, so the person doing it is not signed out of
+    // the device they are holding. The write and the DELETE are one
+    // transaction: a store failure must not leave the new password in place.
     const passwordHash = await hashPassword(newPassword);
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash,
-        mustChangePassword: false,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          mustChangePassword: false,
+        },
+      });
+      // A reset link issued before the change would undo it.
+      await voidOutstandingResetLinks(user.id, tx);
+      await destroyUserLoginSessions(user.id, req.sessionID, tx);
     });
 
     // Lift the gate for this session immediately (see middleware/passwordChange.ts)
@@ -648,20 +673,13 @@ router.post('/change-password', requireAuth, passwordCheckLimiter, async (req: R
     // old one; a locked account opens with its new password.
     accountLoginLimiter.forget(accountLoginKey(user.email));
 
-    // A reset link issued before the change would undo it.
-    await voidOutstandingResetLinks(user.id);
-
-    // Changing a password is how someone recovers an account they think is
-    // compromised, so the sessions opened with the old one have to end. This
-    // one is kept, so the person doing it is not signed out of the device they
-    // are holding.
-    await destroyUserLoginSessions(user.id, req.sessionID);
     await endLiveSockets(user.id, 'Your password was changed on another device. Sign in again.', { exceptSessionId: req.sessionID });
 
     return res.status(200).json({
       message: 'Password changed successfully',
     });
   } catch (error) {
+    if (storeUnavailable(res, error)) return;
     logger.error('Error in change-password', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',
@@ -723,6 +741,7 @@ router.delete('/account', requireAuth, passwordCheckLimiter, async (req: Request
 
     return res.status(200).json({ message: 'Account deleted successfully' });
   } catch (error) {
+    if (storeUnavailable(res, error)) return;
     logger.error('Error deleting account', { err: error });
     return res.status(500).json({ error: 'Internal Server Error', message: 'Failed to delete account' });
   }
@@ -833,19 +852,21 @@ router.post('/mfa/verify', requireAuth, mfaSetupLimiter, async (req: Request, re
     const plainCodes = generateBackupCodes();
     const hashedCodes = await hashBackupCodes(plainCodes);
 
-    // Enable MFA and save hashed backup codes
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        mfaEnabled: true,
-        mfaBackupCodes: hashedCodes,
-      },
+    // Enable MFA and save hashed backup codes. Turning the second factor on
+    // is a change to how the account is protected, often made because
+    // something looked wrong, so the sessions opened without it end. This one
+    // is kept, as when MFA is turned off. The write and the DELETE are one
+    // transaction: a store failure must not leave MFA on.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          mfaEnabled: true,
+          mfaBackupCodes: hashedCodes,
+        },
+      });
+      await destroyUserLoginSessions(userId, req.sessionID, tx);
     });
-
-    // Turning the second factor on is a change to how the account is
-    // protected, often made because something looked wrong, so the sessions
-    // opened without it end. This one is kept, as when MFA is turned off.
-    await destroyUserLoginSessions(userId, req.sessionID);
     await endLiveSockets(userId, 'Two-factor authentication was turned on from another device. Sign in again.', { exceptSessionId: req.sessionID });
 
     return res.status(200).json({
@@ -853,6 +874,7 @@ router.post('/mfa/verify', requireAuth, mfaSetupLimiter, async (req: Request, re
       backupCodes: plainCodes,
     });
   } catch (error) {
+    if (storeUnavailable(res, error)) return;
     logger.error('Error in MFA verify', { err: error });
     return res.status(500).json({ error: 'Internal Server Error', message: 'Failed to verify MFA token' });
   }
@@ -1052,25 +1074,27 @@ router.post('/mfa/disable', requireAuth, credentialLimiter, async (req: Request,
       return res.status(401).json({ error: 'Invalid Code', message: 'Invalid authentication code' });
     }
 
-    // Disable MFA
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        mfaEnabled: false,
-        mfaSecret: null,
-        mfaBackupCodes: [],
-      },
+    // Disable MFA. Turning the second factor off is a change to how the
+    // account is protected, so the sessions opened while it was on end with
+    // it. This one is kept, as with a password change. The write and the
+    // DELETE are one transaction: a store failure must not leave MFA off.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          mfaEnabled: false,
+          mfaSecret: null,
+          mfaBackupCodes: [],
+        },
+      });
+      await destroyUserLoginSessions(user.id, req.sessionID, tx);
     });
     forgetTotpSteps(userId);
-
-    // Turning the second factor off is a change to how the account is
-    // protected, so the sessions opened while it was on end with it. This one
-    // is kept, as with a password change.
-    await destroyUserLoginSessions(user.id, req.sessionID);
     await endLiveSockets(user.id, 'Two-factor authentication was turned off on another device. Sign in again.', { exceptSessionId: req.sessionID });
 
     return res.status(200).json({ message: 'MFA disabled successfully' });
   } catch (error) {
+    if (storeUnavailable(res, error)) return;
     logger.error('Error disabling MFA', { err: error });
     return res.status(500).json({ error: 'Internal Server Error', message: 'Failed to disable MFA' });
   }

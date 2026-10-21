@@ -9,6 +9,10 @@
 
 import type express from 'express';
 import logger from '../utils/logger';
+import {
+  isLoginSessionStoreUnavailable,
+  LOGIN_SESSION_STORE_UNAVAILABLE_BODY,
+} from '../services/sessionStore';
 
 /**
  * Anything a route throws or rejects with reaches this, an Error or not:
@@ -38,6 +42,7 @@ export function errorHandler(
   const stack = 'stack' in fields && typeof fields.stack === 'string' ? fields.stack : undefined;
   const tooLarge = rawStatus === 413 || parserType === 'entity.too.large';
   const notJson = parserType === 'entity.parse.failed';
+  const storeUnavailable = isLoginSessionStoreUnavailable(err);
   // TODO(accounts): body-parser's own 415s (`charset.unsupported`,
   // `encoding.unsupported`) fall through to the 500 below. Answer them 415 as
   // the caller's mistake, like the two cases above.
@@ -52,6 +57,8 @@ export function errorHandler(
       method: req.method,
       path: req.path,
     });
+  } else if (storeUnavailable) {
+    logger.error('Login-session store unavailable', { err });
   } else {
     logger.error('Unhandled error', { message, stack });
   }
@@ -76,6 +83,14 @@ export function errorHandler(
       error: 'Bad Request',
       message: 'The request body was not valid JSON.',
     });
+    return;
+  }
+
+  // A login-session store get/set/destroy that failed: the action is not
+  // confirmed, so 503 rather than 500. A missing or revoked session is not
+  // this path — express-session then has no row and requireAuth answers 401.
+  if (storeUnavailable) {
+    res.status(503).json(LOGIN_SESSION_STORE_UNAVAILABLE_BODY);
     return;
   }
 

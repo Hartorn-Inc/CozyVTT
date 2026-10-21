@@ -15,6 +15,7 @@
 
 import type { Pool } from 'pg';
 import { captureLogs } from '../../__tests__/helpers/logCapture';
+import { CONNECT_TIMEOUT_MS, databaseConnectionSettings } from '../prismaClient';
 
 jest.setTimeout(20000);
 
@@ -36,6 +37,14 @@ const { Client } = jest.requireActual<typeof import('pg')>('pg');
 const pool = mockPools[0];
 
 afterAll(() => pool.end());
+
+it('is constructed from databaseConnectionSettings for the configured schema', () => {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error('This test needs DATABASE_URL');
+  const expected = databaseConnectionSettings(url);
+  expect(pool.options.options).toBe(expected.pool.options);
+  expect(pool.options.connectionTimeoutMillis).toBe(CONNECT_TIMEOUT_MS);
+});
 
 /** The database url without the Prisma-only setting the test setup adds. */
 function databaseUrl(): string {

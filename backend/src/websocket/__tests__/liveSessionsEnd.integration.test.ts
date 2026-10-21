@@ -142,7 +142,7 @@ describe('the account holder', () => {
       const res = await request(app).post('/api/auth/reset-password').send({ token, newPassword: 'Recovered-Str0ng-one!' });
       expect(res.status).toBe(200);
 
-      expect(destroyed).toHaveBeenCalledWith(user.id);
+      expect(destroyed).toHaveBeenCalledWith(user.id, undefined, expect.anything());
       expect((await told).message).toMatch(/password/i);
       expect(await dropped).toBe('io server disconnect');
     } finally {

@@ -20,6 +20,7 @@ import { requireAdminMfa } from './middleware/adminMfa';
 import { bodyParsers } from './middleware/bodyParsers';
 import { originCheck } from './middleware/originCheck';
 import { errorHandler } from './middleware/errorHandler';
+import { wrapLoginSessionStore } from './services/sessionStore';
 import { refuseWhileDatabaseIsReplaced } from './middleware/restoreGate';
 import setupRoutes from './routes/setup';
 import authRoutes from './routes/auth';
@@ -153,7 +154,13 @@ export function createApp(options: AppOptions): express.Express {
   // SESSION MANAGEMENT
   // ============================================
 
-  app.use(session(options.session));
+  // Each request loads the current login session from the store (0 s stale).
+  // A store get/set/destroy/touch failure is tagged so the error handler
+  // answers 503 rather than treating the session as missing (401) or succeeding.
+  const sessionSettings = options.session.store
+    ? { ...options.session, store: wrapLoginSessionStore(options.session.store) }
+    : options.session;
+  app.use(session(sessionSettings));
 
   // ============================================
   // SETUP WIZARD GATE

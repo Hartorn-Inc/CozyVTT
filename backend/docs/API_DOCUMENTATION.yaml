@@ -166,8 +166,9 @@ info:
     ## Responses every route can give
     These are not repeated on each operation:
     - **401** `{ error: 'Unauthorized', message }` from any route that needs a
-      session, when there is none or when the MFA step of a sign-in is still
-      pending. A sign-in made more than `REMEMBER_ME_MAX_AGE` ago (30 days by
+      session, when there is none, when the MFA step of a sign-in is still
+      pending, or when the login session has been revoked (the cookie is
+      present but its row is gone). A sign-in made more than `REMEMBER_ME_MAX_AGE` ago (30 days by
       default) is ended by the first such route it reaches, and that answer
       adds `code: SIGN_IN_EXPIRED`.
     - **403** `{ error: 'Forbidden', message: 'You are not a member of this campaign' }`
@@ -185,7 +186,9 @@ info:
     - **503** `{ error: 'Service Unavailable', message }` with `Retry-After: 60`
       from every `/api` route while a backup restore replaces the database,
       checked before the session is read (see `POST /api/admin/backups/restore`).
-      `/health` is not refused.
+      `/health` is not refused. If the login-session store cannot be confirmed,
+      the action answers 503 `{ error: 'Service Unavailable', message }` and is
+      not a success. A dead or revoked login session is 401, not 503.
 
     ## Forced password changes
     Accounts an admin created, or whose password an admin reset, are flagged
@@ -1003,6 +1006,8 @@ paths:
               example:
                 error: Internal Server Error
                 message: An unexpected error occurred
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/auth/change-password:
     post:
@@ -1055,7 +1060,10 @@ paths:
                 error: Validation Error
                 message: Password must contain at least one number
         '401':
-          description: Not authenticated, or the current password is incorrect.
+          description: >-
+            Not authenticated, including a revoked or dead login session (the
+            cookie is present but its row is gone), or the current password is
+            incorrect.
           content:
             application/json:
               schema:
@@ -1088,6 +1096,8 @@ paths:
               example:
                 error: Rate Limited
                 message: Too many wrong passwords, please try again later
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   # ============================================
   # MFA
@@ -1216,7 +1226,9 @@ paths:
                 error: Bad Request
                 message: No MFA setup in progress. Call /mfa/setup first.
         '401':
-          description: Not authenticated, or the verification code is invalid or already used.
+          description: >-
+            Not authenticated, including a revoked or dead login session, or
+            the verification code is invalid or already used.
           content:
             application/json:
               schema:
@@ -1235,6 +1247,8 @@ paths:
                 message: User not found
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/auth/mfa/verify-login:
     post:
@@ -1367,9 +1381,10 @@ paths:
                 message: MFA is not enabled
         '401':
           description: >-
-            Not authenticated, the password is incorrect (`Authentication
-            Failed`), or the TOTP code is invalid or already used
-            (`Invalid Code`). The password is checked first.
+            Not authenticated, including a revoked or dead login session, the
+            password is incorrect (`Authentication Failed`), or the TOTP code
+            is invalid or already used (`Invalid Code`). The password is
+            checked first.
           content:
             application/json:
               schema:
@@ -1397,6 +1412,8 @@ paths:
                 message: User not found
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/auth/mfa/backup-codes:
     post:
@@ -1595,6 +1612,8 @@ paths:
                 message: Too many wrong passwords, please try again later
         '500':
           $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/auth/registration-status:
     get:
@@ -1739,6 +1758,8 @@ paths:
                 properties:
                   user:
                     $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           description: >-
             A non-admin asked for an id other than their own, whether or not
@@ -1866,7 +1887,9 @@ paths:
                 error: Bad Request
                 message: Email already in use
         '401':
-          description: Not authenticated, or the current password given for an email change is incorrect
+          description: >-
+            Not authenticated, including a revoked or dead login session, or
+            the current password given for an email change is incorrect
           content:
             application/json:
               schema:
@@ -1919,6 +1942,8 @@ paths:
               example:
                 error: Internal Server Error
                 message: Failed to update user
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
     delete:
       tags:
@@ -1974,6 +1999,8 @@ paths:
               example:
                 error: Bad Request
                 message: You cannot delete your own account
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -2010,6 +2037,8 @@ paths:
                               userId: { type: string, format: uuid }
                               displayName: { type: string }
                               role: { type: string, enum: [PLAYER, SPECTATOR] }
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/users/{id}/reset-password:
     post:
@@ -2057,10 +2086,14 @@ paths:
               example:
                 error: Bad Request
                 message: You cannot reset your own password from here. Use Change password on your profile, which asks for your current password.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/users/{id}/preferences:
     get:
@@ -9936,13 +9969,14 @@ paths:
       summary: Reset MFA for a locked-out user
       description: >-
         Disables TOTP and clears backup codes for a user who is locked out, turning MFA
-        off for the account. The user signs in with their password alone next time,
-        and MFA stays off until they set it up again themselves. An administrator is
-        held to the administrator two-factor policy (see the introduction): the reset
-        gives them 7 days, then every endpoint but enrolment answers 403
-        `MFA_ENROLMENT_REQUIRED`. Refused with 400 for the caller's own id, since
-        turning off one's own MFA asks for the password. Written to the admins'
-        activity log as a WARNING.
+        off for the account. Ends every login session and live connection of that
+        user; the administrator who asked stays signed in. The user signs in with
+        their password alone next time, and MFA stays off until they set it up again
+        themselves. An administrator is held to the administrator two-factor policy
+        (see the introduction): the reset gives them 7 days, then every endpoint but
+        enrolment answers 403 `MFA_ENROLMENT_REQUIRED`. Refused with 400 for the
+        caller's own id, since turning off one's own MFA asks for the password.
+        Written to the admins' activity log as a WARNING.
       operationId: adminResetUserMfa
       security:
         - cookieAuth: []
@@ -9970,6 +10004,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/admin/smtp/test:
     post:
@@ -12924,7 +12960,8 @@ components:
 
     Unauthorized:
       description: >-
-        Unauthorized - Not authenticated or MFA pending. A sign-in made more
+        Unauthorized - Not authenticated, MFA pending, or a revoked/dead login
+        session (the cookie is present but its row is gone). A sign-in made more
         than `REMEMBER_ME_MAX_AGE` ago (30 days by default) is ended here, and
         the answer carries `code: SIGN_IN_EXPIRED` with the message 'Your
         sign-in has reached its 30-day limit. Sign in again.' (the day count
@@ -13031,3 +13068,15 @@ components:
           example:
             error: Internal Server Error
             message: An unexpected error occurred
+
+    LoginSessionStoreUnavailable:
+      description: >-
+        The login-session store cannot be confirmed. The action did not
+        succeed. A dead or revoked login session is 401, not this answer.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Service Unavailable
+            message: The sign-in store cannot be reached. Try again in a minute.

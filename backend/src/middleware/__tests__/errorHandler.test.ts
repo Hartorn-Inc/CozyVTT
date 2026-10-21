@@ -13,6 +13,10 @@ import request from 'supertest';
 import { bodyParsers } from '../bodyParsers';
 import { errorHandler } from '../errorHandler';
 import { captureLogs, objectField } from '../../__tests__/helpers/logCapture';
+import {
+  LoginSessionStoreUnavailable,
+  LOGIN_SESSION_STORE_UNAVAILABLE_BODY,
+} from '../../services/sessionStore';
 
 const SECRET = 'hunter2-not-for-the-log';
 
@@ -22,6 +26,9 @@ function app(): express.Express {
   a.post('/api/auth/login', (_req, res) => res.json({ ok: true }));
   a.get('/boom', () => {
     throw new Error('kaboom');
+  });
+  a.get('/store-down', () => {
+    throw new LoginSessionStoreUnavailable(new Error('ECONNREFUSED'));
   });
   a.get('/thrown-words', () => {
     throw 'plain words';
@@ -106,6 +113,19 @@ describe('any other error', () => {
     const logged = entries.find((e) => e.level === 'error');
     expect(String(logged?.message)).toContain('kaboom');
     expect(String(logged?.stack ?? objectField(logged ?? {}, 'err').stack)).toContain('Error: kaboom');
+  });
+});
+
+describe('a tagged login-session store error', () => {
+  it('is answered 503 JSON without leaking the cause, and is not a revoked empty session', async () => {
+    const logs = captureLogs();
+    const res = await request(app()).get('/store-down');
+    const entries = await logs.stop();
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual(LOGIN_SESSION_STORE_UNAVAILABLE_BODY);
+    expect(JSON.stringify(res.body)).not.toContain('ECONNREFUSED');
+    expect(entries.some((e) => e.level === 'error')).toBe(true);
   });
 });
 

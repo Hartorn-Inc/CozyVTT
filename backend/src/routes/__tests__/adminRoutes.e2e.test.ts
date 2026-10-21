@@ -303,6 +303,8 @@ describe('POST /api/admin/users/:id/reset-mfa', () => {
     expect(stored.mfaEnabled).toBe(false);
     expect(stored.mfaSecret).toBeNull();
     expect(stored.mfaBackupCodes).toEqual([]);
+    // Resetting someone else's MFA must not sign the administrator out.
+    expect((await admin.get('/api/auth/me')).status).toBe(200);
     expect((await admin.post(`/api/admin/users/${locked.id}/reset-mfa`)).status).toBe(400);
   });
 });

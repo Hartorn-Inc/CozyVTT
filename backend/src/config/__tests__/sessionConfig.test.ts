@@ -16,6 +16,7 @@ import express from 'express';
 import session from 'express-session';
 import request from 'supertest';
 import type loggerInstance from '../../utils/logger';
+import { databaseConnectionSettings } from '../prismaClient';
 
 type SessionModule = typeof import('../session');
 type Logger = typeof loggerInstance;
@@ -148,6 +149,21 @@ describe('the session settings', () => {
     const { sessionConfig } = loadWith({});
     expect(sessionConfig.saveUninitialized).toBe(false);
     expect(sessionConfig.resave).toBe(false);
+  });
+
+  it('builds the store from databaseConnectionSettings, in the configured schema', () => {
+    const url = 'postgresql://u:p@db.example:5432/cozy?schema=tenant_one&sslmode=require';
+    const expected = databaseConnectionSettings(url);
+    const mod = loadWith({ DATABASE_URL: url });
+    expect(mod.loginSessionSchemaName).toBe(expected.schema);
+    expect(mod.loginSessionSchemaName).toBe('tenant_one');
+    expect(mod.sessionPool.options.options).toBe(expected.pool.options);
+    expect(mod.sessionPool.options.connectionString).toBe(expected.pool.connectionString);
+  });
+
+  it('still loads when DATABASE_URL is missing', () => {
+    const mod = loadWith({ DATABASE_URL: undefined });
+    expect(mod.loginSessionSchemaName).toBe('public');
   });
 });
 

@@ -5,21 +5,25 @@ import logger from '../utils/logger';
 import { rememberMeMaxAge } from './sessionDurations';
 import { sessionOptions } from './sessionOptions';
 import { sessionSecretProblem, INSECURE_SESSION_SECRETS } from './sessionSecret';
+import { databaseConnectionSettings } from './prismaClient';
 
 export { rememberMeMaxAge };
 
 const PgSession = connectPgSimple(session);
 
 // PostgreSQL connection pool for session storage. Exported so a clean
-// shutdown can close it.
-// TODO(accounts): pg ignores `?schema=` in DATABASE_URL, so with a schema
-// other than public this pool reads and writes public.session, while the raw
-// session queries made through Prisma (services/sessionStore.ts, the admin
-// activity route) follow that schema's search_path. Build this pool from
-// databaseConnectionSettings in prismaClient.ts, so both use one schema.
-export const sessionPool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+// shutdown can close it. Built from the same DATABASE_URL reading as Prisma
+// (databaseConnectionSettings), including `?schema=` as search_path, so the
+// connect-pg-simple table and the raw session queries in
+// services/sessionStore.ts are the same table. Importing this file does not
+// connect; a missing DATABASE_URL still constructs a pool.
+const databaseUrl = process.env.DATABASE_URL;
+const loginSessionDatabase = databaseUrl ? databaseConnectionSettings(databaseUrl) : undefined;
+
+/** PostgreSQL schema the login-session table lives in (`public` unless `?schema=` says otherwise). */
+export const loginSessionSchemaName = loginSessionDatabase?.schema ?? 'public';
+
+export const sessionPool = new Pool(loginSessionDatabase?.pool ?? { connectionString: databaseUrl });
 
 // node-postgres emits 'error' on the pool when an idle connection drops, as
 // every one does when PostgreSQL stops or restarts. An 'error' event with no
@@ -56,12 +60,15 @@ if (secretProblem) {
 }
 
 // Session configuration: the behaviour and cookie in config/sessionOptions.ts,
-// kept in PostgreSQL and signed with SESSION_SECRET.
+// kept in PostgreSQL and signed with SESSION_SECRET. schemaName is what
+// connect-pg-simple 10 uses for the table; pg itself ignores `?schema=` in
+// the address, so the name has to be passed here.
 export const sessionConfig: session.SessionOptions = {
   ...sessionOptions,
   store: new PgSession({
     pool: sessionPool,
     tableName: 'session',
+    schemaName: loginSessionSchemaName,
     createTableIfMissing: true,
   }),
   secret: SESSION_SECRET && !INSECURE_SESSION_SECRETS.includes(SESSION_SECRET)

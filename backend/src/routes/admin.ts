@@ -31,6 +31,11 @@ import { voidOutstandingResetLinks, issueResetToken } from '../services/password
 import { writeAdminLog } from '../services/systemLog';
 import { toJson } from '../utils/prisma-json';
 import { restartAdminMfaGrace } from '../services/adminMfaPolicy';
+import {
+  destroyUserLoginSessions,
+  isLoginSessionStoreUnavailable,
+  LOGIN_SESSION_STORE_UNAVAILABLE_BODY,
+} from '../services/sessionStore';
 import { buildDumpArgs, buildRestoreArgs, prepareDumpForRestore, pgConnection, type PreparedDump } from '../utils/pgRestore';
 import { SERVER_BUILT_PATH, UPLOAD_LIMITS } from '../utils/fileUtils';
 import { sessionMaxAge, rememberMeMaxAge } from '../config/sessionDurations';
@@ -45,7 +50,7 @@ import {
 } from '../services/restoreState';
 import { resolveBackupDir, ensureBackupDir } from '../utils/backupDir';
 import { MULTIPART_FIELD_LIMITS } from '../utils/multipartLimits';
-import { endEveryLiveSocket, getSocketInstance } from '../websocket/utils';
+import { endEveryLiveSocket, endLiveSockets, getSocketInstance } from '../websocket/utils';
 import { clearAllState as clearAllCombatState } from '../websocket/initiativeState';
 import { forgetSetupComplete } from '../middleware/setup';
 import { backupsInProgress } from '../services/backupsInProgress';
@@ -662,13 +667,18 @@ router.post('/users/:id/reset-mfa', async (req, res) => {
       return res.status(400).json({ error: 'Bad Request', message: 'MFA is not enabled for this user' });
     }
 
-    await prisma.user.update({
-      where: { id },
-      data: {
-        mfaEnabled: false,
-        mfaSecret: null,
-        mfaBackupCodes: [],
-      },
+    // Clearing MFA and ending every login session of the target (not the
+    // caller) are one transaction: a failed DELETE must not leave MFA off.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          mfaEnabled: false,
+          mfaSecret: null,
+          mfaBackupCodes: [],
+        },
+      });
+      await destroyUserLoginSessions(id, undefined, tx);
     });
 
     // The activity-log line for the reset; its time also starts the account's
@@ -680,8 +690,14 @@ router.post('/users/:id/reset-mfa', async (req, res) => {
       message: `Reset MFA for user ${target.email}`,
     });
 
+    await endLiveSockets(id, 'An administrator reset your two-factor authentication. Sign in again.');
+
     return res.json({ message: 'MFA has been reset. The user signs in with their password alone until they turn it on again; an administrator is asked to set it up again within 7 days.' });
   } catch (error) {
+    if (isLoginSessionStoreUnavailable(error)) {
+      logger.error('Login-session store unavailable', { err: error });
+      return res.status(503).json(LOGIN_SESSION_STORE_UNAVAILABLE_BODY);
+    }
     logger.error('Error resetting MFA', { err: error });
     return res.status(500).json({ error: 'Internal Server Error', message: 'Failed to reset MFA' });
   }

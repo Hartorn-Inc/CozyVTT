@@ -7,7 +7,11 @@ import { toJson } from '../utils/prisma-json';
 import { sanitizeUser, hashPassword, verifyPassword } from '../services/auth';
 import { validateEmail, sanitizeInput } from '../utils/validation';
 import { isSmtpConfigured, sendPasswordResetEmail, sendEmailChangedNotice } from '../services/email';
-import { destroyUserLoginSessions } from '../services/sessionStore';
+import {
+  destroyUserLoginSessions,
+  isLoginSessionStoreUnavailable,
+  LOGIN_SESSION_STORE_UNAVAILABLE_BODY,
+} from '../services/sessionStore';
 import { voidOutstandingResetLinks, issueResetToken, RESET_LINK_TTL_MS } from '../services/passwordResetTokens';
 import { isOnlyAdmin } from '../services/platformAdmins';
 import { inSerializableTransaction } from '../utils/serializable';
@@ -288,11 +292,15 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
     // role to USER reads the account again inside a serializable transaction
     // and decides there whether it takes the admin role away, which must leave
     // the instance an admin (services/platformAdmins): the read above can be
-    // behind a promotion that landed since.
+    // behind a promotion that landed since. A role that actually changes also
+    // ends every login session in that same transaction: the role is carried
+    // in the session, and a failed DELETE must not leave the new role in place.
     type Written =
       | { kind: 'written'; before: User; row: User }
       | { kind: 'only-admin' }
       | { kind: 'gone' };
+    const roleChanges = (before: User) =>
+      updateData.platformRole !== undefined && updateData.platformRole !== before.platformRole;
     const written: Written = updateData.platformRole === 'USER'
       ? await inSerializableTransaction(async (tx): Promise<Written> => {
         const current = await tx.user.findUnique({ where: { id } });
@@ -300,13 +308,15 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
         if (current.platformRole === 'ADMIN' && await isOnlyAdmin(id, tx)) return { kind: 'only-admin' };
         const row = await tx.user.update({ where: { id }, data: updateData });
         if (emailChangedFrom !== null) await voidOutstandingResetLinks(id, tx);
+        if (roleChanges(current)) await destroyUserLoginSessions(id, undefined, tx);
         return { kind: 'written', before: current, row };
       })
-      : emailChangedFrom === null
+      : emailChangedFrom === null && !roleChanges(existingUser)
         ? { kind: 'written', before: existingUser, row: await prisma.user.update({ where: { id }, data: updateData }) }
         : await prisma.$transaction(async (tx): Promise<Written> => {
           const row = await tx.user.update({ where: { id }, data: updateData });
-          await voidOutstandingResetLinks(id, tx);
+          if (emailChangedFrom !== null) await voidOutstandingResetLinks(id, tx);
+          if (roleChanges(existingUser)) await destroyUserLoginSessions(id, undefined, tx);
           return { kind: 'written', before: existingUser, row };
         });
     if (written.kind === 'gone') {
@@ -365,7 +375,8 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
     // The session carries platformRole from the moment it was created and
     // nothing re-reads it, so a demotion would otherwise leave the person
     // holding admin until they signed out. Compared against what was stored, so
-    // setting the role to what it already was signs nobody out.
+    // setting the role to what it already was signs nobody out. Login sessions
+    // were already ended in the write transaction above when the role changed.
     //
     // globalAssetManager and templateEditor are deliberately not session fields
     // and are read from the database where they are used, so changing one
@@ -388,7 +399,6 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
           context: { targetUserId: id },
         });
       }
-      await destroyUserLoginSessions(id);
       await endLiveSockets(id, 'Your platform role changed. Sign in again.');
     }
 
@@ -397,6 +407,10 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
       user: sanitizeUser(updatedUser),
     });
   } catch (error) {
+    if (isLoginSessionStoreUnavailable(error)) {
+      logger.error('Login-session store unavailable', { err: error });
+      return res.status(503).json(LOGIN_SESSION_STORE_UNAVAILABLE_BODY);
+    }
     // Another account took the new address after the check above.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return res.status(400).json({ error: 'Bad Request', message: 'Email already in use' });
@@ -588,6 +602,10 @@ router.delete('/:id', requireAuth, requireAdmin, async (req: Request<{ id: strin
       deletedUserAssetCount: userAssetCount,
     });
   } catch (error) {
+    if (isLoginSessionStoreUnavailable(error)) {
+      logger.error('Login-session store unavailable', { err: error });
+      return res.status(503).json(LOGIN_SESSION_STORE_UNAVAILABLE_BODY);
+    }
     logger.error('Error deleting user', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',
@@ -636,26 +654,28 @@ router.post('/:id/reset-password', requireAuth, requireAdmin, async (req: Reques
     // Hash the temporary password
     const passwordHash = await hashPassword(temporaryPassword);
 
-    // Update user's password and set mustChangePassword flag
-    await prisma.user.update({
-      where: { id },
-      data: {
-        passwordHash,
-        mustChangePassword: true,
-      },
+    // Update user's password and set mustChangePassword flag. End any
+    // sessions the user already has open in the same transaction — otherwise
+    // they keep full access on the old session and the forced-change gate
+    // would only take effect at their next login, and a failed DELETE must
+    // not leave the temporary password in place.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          passwordHash,
+          mustChangePassword: true,
+        },
+      });
+      // A reset link issued before this would replace the temporary password.
+      await voidOutstandingResetLinks(id, tx);
+      await destroyUserLoginSessions(id, undefined, tx);
     });
-
-    // A reset link issued before this would replace the temporary password.
-    await voidOutstandingResetLinks(id);
 
     // The wrong passwords counted against the account were guesses at the
     // old one; a locked account opens with the temporary password.
     accountLoginLimiter.forget(accountLoginKey(user.email));
 
-    // End any sessions the user already has open — otherwise they keep full
-    // access on the old session and the forced-change gate would only take
-    // effect at their next login
-    await destroyUserLoginSessions(id);
     await endLiveSockets(id, 'An administrator reset your password. Sign in again.');
 
     await writeSystemLog({
@@ -672,6 +692,10 @@ router.post('/:id/reset-password', requireAuth, requireAdmin, async (req: Reques
       notice: 'This temporary password will only be displayed once. The user will be required to change it on next login, and any active sessions have been signed out.',
     });
   } catch (error) {
+    if (isLoginSessionStoreUnavailable(error)) {
+      logger.error('Login-session store unavailable', { err: error });
+      return res.status(503).json(LOGIN_SESSION_STORE_UNAVAILABLE_BODY);
+    }
     logger.error('Error resetting password', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',
