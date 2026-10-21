@@ -1394,15 +1394,17 @@ you changed them):
 ```bash
 (umask 077; docker compose exec -T database \
   pg_dump -U cozyvtt -d cozyvtt --no-owner --no-privileges \
-    --exclude-table-data=public.session \
+    '--exclude-table-data=*.session' \
   | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz)
 ```
 
 The `umask 077` in brackets makes the file readable by you alone, as the script's are: it holds every password hash and MFA secret on the instance. (Password reset and invitation links are stored hashed, so a backup holds no working link.)
 
-`--exclude-table-data=public.session` leaves the login sessions out, as the
-dashboard and the script do, so restoring the file cannot sign back in someone
-who was signed out after it was made.
+`--exclude-table-data=*.session` leaves login-session rows out of every
+schema, as the dashboard and the script do, because the store follows
+`?schema=`. A restore also empties whatever `session` tables an older backup
+carried. Restoring the file cannot sign back in someone who was signed out
+after it was made.
 
 To restore it, use `restore.sh` from the section above, which accepts this file
 too. Piping this file straight into `psql` does not replace anything on an

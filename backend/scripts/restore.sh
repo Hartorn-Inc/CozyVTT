@@ -80,7 +80,7 @@ RESTRICT_KEY=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
 # The same statement as RESTORE_TRAILER in backend/src/utils/pgRestore.ts;
 # keepInStep.test.ts fails if they differ. A very old backup has no session table.
 RESTORE_TRAILER=$(cat <<'SQL'
-DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; END $$;
+DO $$ DECLARE r record; BEGIN FOR r IN SELECT n.nspname AS s FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'session' AND c.relkind = 'r' LOOP EXECUTE format('DELETE FROM %I.session', r.s); END LOOP; END $$;
 SQL
 )
 

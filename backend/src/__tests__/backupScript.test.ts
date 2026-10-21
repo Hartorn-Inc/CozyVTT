@@ -96,6 +96,18 @@ describeOnPosix('backup.sh', () => {
     expect(result.status).toBe(0);
     const [password, ...args] = (await fs.readFile(seen, 'utf8')).trimEnd().split('\n');
     expect(password).toBe('p@ss%w0rd');
-    expect(args).toEqual(expect.arrayContaining(['-h', 'db.internal', '-p', '5432', '-U', 'cozy+admin', '-d', 'cozyvtt']));
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '-h',
+        'db.internal',
+        '-p',
+        '5432',
+        '-U',
+        'cozy+admin',
+        '-d',
+        'cozyvtt',
+        '--exclude-table-data=*.session',
+      ])
+    );
   });
 });

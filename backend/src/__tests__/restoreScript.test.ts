@@ -72,7 +72,9 @@ describeOnPosix('restore.sh', () => {
     expect(result.status).toBe(0);
     const text = await fs.readFile(loaded, 'utf8');
     expect(text).toMatch(/^u1$/m);
-    expect(text.trimEnd().split('\n').pop()).toMatch(/DELETE FROM public\.session/);
+    expect(text.trimEnd().split('\n').pop()).toMatch(
+      /FOR r IN SELECT n\.nspname AS s FROM pg_class c JOIN pg_namespace n ON n\.oid = c\.relnamespace WHERE c\.relname = 'session' AND c\.relkind = 'r' LOOP EXECUTE format\('DELETE FROM %I\.session', r\.s\); END LOOP/
+    );
   });
 
   it('loads nothing when the working file comes out cut short, even if awk says it succeeded', async () => {
