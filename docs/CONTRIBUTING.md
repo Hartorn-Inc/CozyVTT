@@ -2,7 +2,7 @@
 
 Thank you for your interest! CozyVTT is built with a very specific, "comfy" vision in mind. As the sole maintainer balancing this with limited hobby time, I have to be protective of the codebase and the project's direction.
 
-**I am not accepting unsolicited ("cold") Pull Requests at this time.**
+**I am not accepting unsolicited ("cold") Pull Requests at this time.** GitHub restricts **opening** pull requests to collaborators (write, maintain, or admin). AGPL forks remain allowed. Automation that implements or reviews work (`ready-for-agent`, `@cursor`, `/review`, `codex-review`) is collaborator-only. The `codex-review` label starts a no-secret request, then review with the OpenRouter key runs from `dev` via `workflow_run`; restrict Environment `codex-review` to branch `dev` only (a human GitHub setting, not `refs/pull/*/merge`). See [ADR 0017](adr/0017-cloud-agent-advisory-codex-review.md).
 
 ---
 

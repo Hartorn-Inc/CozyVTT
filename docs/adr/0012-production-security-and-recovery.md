@@ -1,0 +1,5 @@
+# Production is Compose on one amd64 host, with Operator-held backup keys and least-privilege Postgres
+
+Supported production is the repo's Docker Compose stack on one Linux amd64 host (this Instance: the Operator's machine plus a Cloudflare Tunnel overlay). The repository owns image digests, lockfiles, and CI action SHAs; an override may change ports, volumes, and bundled nginx, not stack tags. Backend egress is deny-by-default (configured SMTP, on-demand Open5e). Postgres: a bootstrap superuser only, then a non-superuser schema owner that also migrates; the first start after upgrade must create that role or refuse to boot. **Instance backups** are encrypted with `BACKUP_ENCRYPTION_KEY` (never `SESSION_SECRET`); missing key still boots but refuses new backups; restore still reads legacy plaintext and previous keys. High and Critical CVEs block npm and runtime images. We rejected serverless/PaaS (Neon, scale-to-zero), 1 GB always-free micros and ARM as gates, a third migrator role, shrinking restore to Cloudflare's 100 MB, S3-synced backups, and staying superuser for a dual-mode release.
+
+**Status**: accepted
