@@ -87,7 +87,8 @@
  * projects, each project's `@types/node`, and the version the README and the
  * guides ask a reader to install. A move to a new major that misses one runs
  * CI, the images or a manual install on a different Node from the rest.
- * `.nvmrc` holds the major alone and the others are compared with it.
+ * `.nvmrc` names the version (a `v` prefix and `.minor.patch` are allowed)
+ * and the others are compared with its major.
  *
  * The npm settings the images install with. Each project's `.npmrc` turns
  * on strict-allow-scripts, which fails an install at a package with an
@@ -501,10 +502,10 @@ describe('the .dockerignore of each image', () => {
 });
 
 describe('the Node.js major', () => {
-  const expected = read('.nvmrc').trim();
-
   /** The leading major of a version or range ("26", "26.x", ">=26.0.0", "^26.6.5"), or the text itself when it has none. */
   const majorOf = (version: string): string => /^\D{0,2}(\d+)/.exec(version)?.[1] ?? version;
+
+  const expected = majorOf(read('.nvmrc').trim());
 
   /** Every match of `pattern` in a file, as majors; a file the pattern no longer matches fails the check. */
   function found(rel: string, text: string, pattern: RegExp): string[] {
@@ -539,8 +540,8 @@ describe('the Node.js major', () => {
     ['docs/DEPLOYMENT.md, what node --version prints', found('docs/DEPLOYMENT.md', read('docs/DEPLOYMENT.md'), /prints `v(\d+)`/g)],
   ];
 
-  it('is a major alone in .nvmrc, and an even one, which is what gets long-term support', () => {
-    expect(expected).toMatch(/^\d+$/);
+  it('is an even LTS major in .nvmrc (optional v prefix and optional .minor.patch), which is what gets long-term support', () => {
+    expect(read('.nvmrc').trim()).toMatch(/^v?\d+(?:\.\d+\.\d+)?$/);
     expect(Number(expected) % 2).toBe(0);
   });
 

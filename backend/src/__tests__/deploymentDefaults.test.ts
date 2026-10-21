@@ -21,8 +21,8 @@
  * The images. nginx:alpine named whatever nginx was newest on the day of the
  * pull, so two installs of one CozyVTT version could run different nginx
  * releases under the same configuration. Both nginx images are pinned to one
- * stable line, the same in each. `npm ci --only=production` is a deprecated
- * spelling of `--omit=dev`.
+ * stable line, the same in each, with a digest. `npm ci --only=production` is
+ * a deprecated spelling of `--omit=dev`.
  *
  * The bundled nginx. It sent everything as it was: every JSON answer the
  * backend gives (map tokens, walls, lights, fog, the roster) went out
@@ -132,7 +132,7 @@ describe('the images', () => {
   it('pin nginx to one stable line, the same for the proxy and the frontend', () => {
     const nginx = [...images('docker-compose.yml'), ...images('frontend/Dockerfile.prod')].filter((i) => /^nginx[:@]/.test(i));
     expect(nginx).toHaveLength(2);
-    for (const image of nginx) expect(image).toMatch(/^nginx:1\.\d*[02468]-alpine$/);
+    for (const image of nginx) expect(image).toMatch(/^nginx:1\.\d*[02468]-alpine@sha256:[0-9a-f]{64}$/);
     expect(new Set(nginx).size).toBe(1);
   });
 
