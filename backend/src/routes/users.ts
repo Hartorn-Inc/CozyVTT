@@ -7,7 +7,7 @@ import { toJson } from '../utils/prisma-json';
 import { sanitizeUser, hashPassword, verifyPassword } from '../services/auth';
 import { validateEmail, sanitizeInput } from '../utils/validation';
 import { isSmtpConfigured, sendPasswordResetEmail, sendEmailChangedNotice } from '../services/email';
-import { destroyUserLoginSessions } from '../services/sessionStore';
+import { destroyUserLoginSessions, rethrowIfLoginSessionStoreUnavailable } from '../services/sessionStore';
 import { voidOutstandingResetLinks, issueResetToken, RESET_LINK_TTL_MS } from '../services/passwordResetTokens';
 import { isOnlyAdmin } from '../services/platformAdmins';
 import { inSerializableTransaction } from '../utils/serializable';
@@ -293,6 +293,7 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
       | { kind: 'written'; before: User; row: User }
       | { kind: 'only-admin' }
       | { kind: 'gone' };
+    const roleIsChanging = updateData.platformRole !== undefined && updateData.platformRole !== existingUser.platformRole;
     const written: Written = updateData.platformRole === 'USER'
       ? await inSerializableTransaction(async (tx): Promise<Written> => {
         const current = await tx.user.findUnique({ where: { id } });
@@ -300,13 +301,17 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
         if (current.platformRole === 'ADMIN' && await isOnlyAdmin(id, tx)) return { kind: 'only-admin' };
         const row = await tx.user.update({ where: { id }, data: updateData });
         if (emailChangedFrom !== null) await voidOutstandingResetLinks(id, tx);
+        if (updateData.platformRole !== current.platformRole) {
+          await destroyUserLoginSessions(id, undefined, tx);
+        }
         return { kind: 'written', before: current, row };
       })
-      : emailChangedFrom === null
+      : emailChangedFrom === null && !roleIsChanging
         ? { kind: 'written', before: existingUser, row: await prisma.user.update({ where: { id }, data: updateData }) }
         : await prisma.$transaction(async (tx): Promise<Written> => {
           const row = await tx.user.update({ where: { id }, data: updateData });
-          await voidOutstandingResetLinks(id, tx);
+          if (emailChangedFrom !== null) await voidOutstandingResetLinks(id, tx);
+          if (roleIsChanging) await destroyUserLoginSessions(id, undefined, tx);
           return { kind: 'written', before: existingUser, row };
         });
     if (written.kind === 'gone') {
@@ -388,7 +393,6 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
           context: { targetUserId: id },
         });
       }
-      await destroyUserLoginSessions(id);
       await endLiveSockets(id, 'Your platform role changed. Sign in again.');
     }
 
@@ -397,6 +401,7 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
       user: sanitizeUser(updatedUser),
     });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     // Another account took the new address after the check above.
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
       return res.status(400).json({ error: 'Bad Request', message: 'Email already in use' });
@@ -588,6 +593,7 @@ router.delete('/:id', requireAuth, requireAdmin, async (req: Request<{ id: strin
       deletedUserAssetCount: userAssetCount,
     });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     logger.error('Error deleting user', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',
@@ -636,26 +642,27 @@ router.post('/:id/reset-password', requireAuth, requireAdmin, async (req: Reques
     // Hash the temporary password
     const passwordHash = await hashPassword(temporaryPassword);
 
-    // Update user's password and set mustChangePassword flag
-    await prisma.user.update({
-      where: { id },
-      data: {
-        passwordHash,
-        mustChangePassword: true,
-      },
+    // Update the password and end every login session in the same
+    // transaction: if the store cannot be confirmed, the temporary password
+    // is not kept. Otherwise they keep full access on the old session and
+    // the forced-change gate would only take effect at their next login.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          passwordHash,
+          mustChangePassword: true,
+        },
+      });
+      // A reset link issued before this would replace the temporary password.
+      await voidOutstandingResetLinks(id, tx);
+      await destroyUserLoginSessions(id, undefined, tx);
     });
-
-    // A reset link issued before this would replace the temporary password.
-    await voidOutstandingResetLinks(id);
 
     // The wrong passwords counted against the account were guesses at the
     // old one; a locked account opens with the temporary password.
     accountLoginLimiter.forget(accountLoginKey(user.email));
 
-    // End any sessions the user already has open — otherwise they keep full
-    // access on the old session and the forced-change gate would only take
-    // effect at their next login
-    await destroyUserLoginSessions(id);
     await endLiveSockets(id, 'An administrator reset your password. Sign in again.');
 
     await writeSystemLog({
@@ -672,6 +679,7 @@ router.post('/:id/reset-password', requireAuth, requireAdmin, async (req: Reques
       notice: 'This temporary password will only be displayed once. The user will be required to change it on next login, and any active sessions have been signed out.',
     });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     logger.error('Error resetting password', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',

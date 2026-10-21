@@ -22,12 +22,16 @@ jest.mock('express-rate-limit', () => ({
   default: () => (_req: Request, _res: Response, next: NextFunction) => next(),
 }));
 
-jest.mock('../../services/sessionStore', () => ({
-  destroyUserLoginSessions: jest.fn(async () => 1),
-  // Sign-in bookkeeping, not under test here; the real one is tested in
-  // services/__tests__/sessionStoreCap.test.ts.
-  capLoginSessions: jest.fn(async () => 0),
-}));
+jest.mock('../../services/sessionStore', () => {
+  const actual = jest.requireActual('../../services/sessionStore') as typeof import('../../services/sessionStore');
+  return {
+    ...actual,
+    destroyUserLoginSessions: jest.fn(async () => 1),
+    // Sign-in bookkeeping, not under test here; the real one is tested in
+    // services/__tests__/sessionStoreCap.test.ts.
+    capLoginSessions: jest.fn(async () => 0),
+  };
+});
 
 import request from 'supertest';
 import { generateSync } from 'otplib';
@@ -129,7 +133,7 @@ describe('POST /api/auth/mfa/verify', () => {
     const res = await agent.post('/api/auth/mfa/verify').send({ token });
     expect(res.status).toBe(200);
 
-    expect(destroyed).toHaveBeenCalledWith(user.id, expect.any(String));
+    expect(destroyed).toHaveBeenCalledWith(user.id, expect.any(String), expect.anything());
     // The device that turned it on is still signed in.
     expect((await agent.get('/api/auth/me')).status).toBe(200);
   });

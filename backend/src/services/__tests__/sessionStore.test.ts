@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { destroyUserLoginSessions } from '../sessionStore';
+import { isLoginSessionBlocked } from '../revokedLoginSessions';
 
 const mine: string[] = [];
 
@@ -54,6 +55,10 @@ it('removes the sessions signed in as the user and those waiting at the two-fact
   expect(await exists(pending)).toBe(false);
   expect(await exists(otherSignedIn)).toBe(true);
   expect(await exists(otherPending)).toBe(true);
+  expect(isLoginSessionBlocked(signedIn)).toBe(true);
+  expect(isLoginSessionBlocked(pending)).toBe(true);
+  expect(isLoginSessionBlocked(otherSignedIn)).toBe(false);
+  expect(isLoginSessionBlocked(otherPending)).toBe(false);
 });
 
 it('keeps the one session it is asked to keep, and still ends the pending ones', async () => {
@@ -67,4 +72,7 @@ it('keeps the one session it is asked to keep, and still ends the pending ones',
   expect(await exists(keep)).toBe(true);
   expect(await exists(another)).toBe(false);
   expect(await exists(pending)).toBe(false);
+  expect(isLoginSessionBlocked(keep)).toBe(false);
+  expect(isLoginSessionBlocked(another)).toBe(true);
+  expect(isLoginSessionBlocked(pending)).toBe(true);
 });

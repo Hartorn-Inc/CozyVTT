@@ -5,21 +5,118 @@ import logger from '../utils/logger';
 import { rememberMeMaxAge } from './sessionDurations';
 import { sessionOptions } from './sessionOptions';
 import { sessionSecretProblem, INSECURE_SESSION_SECRETS } from './sessionSecret';
+import { databaseConnectionSettings } from './prismaClient';
+import { isLoginSessionBlocked } from '../services/revokedLoginSessions';
 
 export { rememberMeMaxAge };
 
 const PgSession = connectPgSimple(session);
 
+/**
+ * Same name and sentence as LoginSessionStoreUnavailable in
+ * services/sessionStore.ts. This file does not import that module: loading it
+ * would open a Prisma client every time the session settings are loaded
+ * (sessionConfig.test.ts does that in isolation). errorHandler maps either
+ * object by `name`.
+ */
+function asError(err: unknown): Error {
+  return err instanceof Error ? err : new Error('Login session store failed');
+}
+
+function loginSessionStoreUnavailable(err: unknown): Error {
+  const failure = asError(err);
+  if (failure.name === 'LoginSessionStoreUnavailable') return failure;
+  logger.error('Login session store could not be confirmed', { err: failure });
+  const wrapped = new Error('The login session could not be confirmed. Try again in a moment.');
+  wrapped.name = 'LoginSessionStoreUnavailable';
+  return wrapped;
+}
+
+/**
+ * connect-pg-simple's published `touch` omits the error argument it actually
+ * passes. One hop through `unknown` so a store failure is 503 the same way
+ * get/set/destroy are.
+ */
+type PgStoreTouch = (
+  sid: string,
+  sess: session.SessionData,
+  callback: (err?: unknown) => void,
+) => void;
+
+/**
+ * A store callback error becomes LoginSessionStoreUnavailable so a discrete
+ * HTTP action that cannot load the store is 503, not 500. A missing session
+ * still calls back with no error, and requireAuth answers 401. A `set` for a
+ * sid destroyUserLoginSessions just deleted is a successful no-op, so an
+ * in-flight request cannot UPSERT the row back.
+ */
+export function wrapPgSessionStore<T extends session.Store>(store: T): T {
+  const get = store.get.bind(store);
+  const set = store.set.bind(store);
+  const destroy = store.destroy.bind(store);
+  const touch = typeof store.touch === 'function'
+    ? store.touch.bind(store)
+    : undefined;
+
+  store.get = (sid, callback) => {
+    get(sid, (err, sess) => {
+      if (err) callback(loginSessionStoreUnavailable(err));
+      else callback(err, sess);
+    });
+  };
+  store.set = (sid, sess, callback) => {
+    if (isLoginSessionBlocked(sid)) {
+      if (callback) callback();
+      return;
+    }
+    set(sid, sess, (err) => {
+      if (!callback) return;
+      if (err) callback(loginSessionStoreUnavailable(err));
+      else callback(err);
+    });
+  };
+  store.destroy = (sid, callback) => {
+    destroy(sid, (err) => {
+      if (!callback) return;
+      if (err) callback(loginSessionStoreUnavailable(err));
+      else callback(err);
+    });
+  };
+  if (touch) {
+    const touchWithErr = touch as unknown as PgStoreTouch;
+    store.touch = (sid, sess, callback) => {
+      if (isLoginSessionBlocked(sid)) {
+        if (callback) callback();
+        return;
+      }
+      touchWithErr(sid, sess, (err) => {
+        if (!callback) return;
+        // Published touch types omit the error argument the store passes.
+        const done = callback as unknown as (error?: Error) => void;
+        if (err) done(loginSessionStoreUnavailable(err));
+        else done();
+      });
+    };
+  }
+
+  return store;
+}
+
 // PostgreSQL connection pool for session storage. Exported so a clean
 // shutdown can close it.
-// TODO(accounts): pg ignores `?schema=` in DATABASE_URL, so with a schema
-// other than public this pool reads and writes public.session, while the raw
-// session queries made through Prisma (services/sessionStore.ts, the admin
-// activity route) follow that schema's search_path. Build this pool from
-// databaseConnectionSettings in prismaClient.ts, so both use one schema.
-export const sessionPool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
+// Built from databaseConnectionSettings so login sessions live in the
+// configured schema with Prisma's raw session SQL (services/sessionStore.ts).
+// Instances on public keep their rows; a custom ?schema= gets a new empty
+// session table in that schema (one sign-out). When DATABASE_URL is unset,
+// the pool is the same connectionString-only construction as before.
+const databaseUrl = process.env.DATABASE_URL;
+const sessionDatabase = databaseUrl ? databaseConnectionSettings(databaseUrl) : undefined;
+
+export const sessionPool = sessionDatabase
+  ? new Pool(sessionDatabase.pool)
+  : new Pool({
+    connectionString: databaseUrl,
+  });
 
 // node-postgres emits 'error' on the pool when an idle connection drops, as
 // every one does when PostgreSQL stops or restarts. An 'error' event with no
@@ -59,11 +156,12 @@ if (secretProblem) {
 // kept in PostgreSQL and signed with SESSION_SECRET.
 export const sessionConfig: session.SessionOptions = {
   ...sessionOptions,
-  store: new PgSession({
+  store: wrapPgSessionStore(new PgSession({
     pool: sessionPool,
     tableName: 'session',
     createTableIfMissing: true,
-  }),
+    ...(sessionDatabase ? { schemaName: sessionDatabase.schema } : {}),
+  })),
   secret: SESSION_SECRET && !INSECURE_SESSION_SECRETS.includes(SESSION_SECRET)
     ? SESSION_SECRET
     : 'dev-only-insecure-secret-do-not-use-in-production',

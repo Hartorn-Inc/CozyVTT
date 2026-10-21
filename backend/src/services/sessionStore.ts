@@ -1,5 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
+import logger from '../utils/logger';
+import { blockLoginSessions, unblockLoginSessions } from './revokedLoginSessions';
 
 /**
  * Login-session helpers.
@@ -9,6 +11,37 @@ import { prisma } from '../config/database';
  * which tracks in-game campaign sessions. The same raw-SQL access pattern is
  * used by the admin activity endpoint's online-users list.
  */
+
+/**
+ * The login-session store could not be confirmed, so the mutation must not
+ * report success. errorHandler answers 503; the sentence is for the person
+ * and does not describe the database.
+ */
+export class LoginSessionStoreUnavailable extends Error {
+  constructor() {
+    super('The login session could not be confirmed. Try again in a moment.');
+    this.name = 'LoginSessionStoreUnavailable';
+  }
+}
+
+/** Whether a failure is (or wraps) an unconfirmable login-session store. */
+export function isLoginSessionStoreUnavailable(error: unknown, depth = 0): boolean {
+  if (error instanceof LoginSessionStoreUnavailable) return true;
+  if (error instanceof Error && error.name === 'LoginSessionStoreUnavailable') return true;
+  if (depth < 5 && typeof error === 'object' && error !== null && 'cause' in error) {
+    return isLoginSessionStoreUnavailable(error.cause, depth + 1);
+  }
+  return false;
+}
+
+/**
+ * Routes that catch every error and answer 500 rethrow this one so
+ * errorHandler can answer 503 instead.
+ */
+export function rethrowIfLoginSessionStoreUnavailable(error: unknown): void {
+  if (!isLoginSessionStoreUnavailable(error)) return;
+  throw error instanceof LoginSessionStoreUnavailable ? error : new LoginSessionStoreUnavailable();
+}
 
 /**
  * End every login session belonging to a user, the sign-ins waiting at the
@@ -35,19 +68,38 @@ export async function destroyUserLoginSessions(
   exceptSessionId?: string,
   db: Prisma.TransactionClient = prisma
 ): Promise<number> {
-  // Not caught: a revocation that did not take must fail the request that
-  // asked for it, so the person is told, instead of reporting success while
-  // the old sessions keep their role until they expire.
-  return exceptSessionId
-    ? db.$executeRaw`
-        DELETE FROM session
-        WHERE (sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId})
-          AND sid <> ${exceptSessionId}
-      `
-    : db.$executeRaw`
-        DELETE FROM session
-        WHERE sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId}
-      `;
+  // A revocation that did not take must fail the request that asked for it,
+  // so the person is told, instead of reporting success while the old
+  // sessions keep their role until they expire. Store or SQL failures become
+  // LoginSessionStoreUnavailable (503), not a swallowed zero.
+  // One DELETE … RETURNING so a row inserted between a SELECT and a DELETE
+  // cannot be removed without being blocked. exceptSessionId stays in the
+  // WHERE, so it is not returned and not blocked. If this helper fails after
+  // blocking, those sids are unblocked so a rolled-back DELETE can be written
+  // again.
+  let sids: string[] = [];
+  try {
+    const rows = exceptSessionId
+      ? await db.$queryRaw<{ sid: string }[]>`
+          DELETE FROM session
+          WHERE (sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId})
+            AND sid <> ${exceptSessionId}
+          RETURNING sid
+        `
+      : await db.$queryRaw<{ sid: string }[]>`
+          DELETE FROM session
+          WHERE sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId}
+          RETURNING sid
+        `;
+    sids = rows.map((row) => row.sid);
+    blockLoginSessions(sids);
+    return sids.length;
+  } catch (err) {
+    unblockLoginSessions(sids);
+    if (err instanceof LoginSessionStoreUnavailable) throw err;
+    logger.error('Login session revocation failed', { err });
+    throw new LoginSessionStoreUnavailable();
+  }
 }
 
 /**

@@ -206,7 +206,7 @@ Real-time gameplay logic lives in the per-domain `websocket/handlers/*` modules;
 9. On `/api`, the general rate limiter (`RATE_LIMIT_MAX_REQUESTS` a minute per address, 300 by default; express-rate-limit counts an IPv6 address by its /56 network)
 10. On `/api`, the password-change gate, then the administrator MFA gate
 11. The routers: setup, config, auth, users, admin, campaigns (with macros and documents), characters, character templates, invitations, assets, and the maps, creatures and token templates nested under `/api/campaigns/:campaignId`
-12. A JSON 404 for anything no router answered, then `errorHandler`: 413 for a body over the limit and 400 for one that is not valid JSON, and a JSON 500 for anything else a route throws or a promise it returns rejects with, Error or not; when the answer has already started, it logs the error and leaves Express to end the connection
+12. A JSON 404 for anything no router answered, then `errorHandler`: 413 for a body over the limit and 400 for one that is not valid JSON, a JSON 503 when the login-session store cannot be confirmed, and a JSON 500 for anything else a route throws or a promise it returns rejects with, Error or not; when the answer has already started, it logs the error and leaves Express to end the connection
 
 Inside a router, each route names its own guards (`middleware/compose.ts`; the admin router mounts its two for every route) and any limiter of its own, then checks its body with Zod.
 
@@ -646,7 +646,7 @@ erDiagram
 
 ### Session Authentication
 
-CozyVTT uses **express-session** with **connect-pg-simple** to store sessions in PostgreSQL, through a `pg` pool of its own (`sessionPool` in `config/session.ts`), apart from the Prisma client's. This means sessions survive server restarts and scale to multiple processes.
+CozyVTT uses **express-session** with **connect-pg-simple** to store sessions in PostgreSQL, through a `pg` pool of its own (`sessionPool` in `config/session.ts`), apart from the Prisma client's. The session pool is built from `databaseConnectionSettings` so login sessions live in the configured schema with Prisma's raw session SQL. This means sessions survive server restarts. Login-session revocation in this cycle supports one backend process.
 
 ```mermaid
 sequenceDiagram

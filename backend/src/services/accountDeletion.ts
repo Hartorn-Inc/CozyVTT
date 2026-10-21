@@ -122,9 +122,11 @@ export async function deleteAccount(userId: string): Promise<AccountDeletion> {
     const personal = await tx.asset.findMany({ where: { uploadedById: userId, scope: 'USER' }, select: { id: true, type: true } });
     // Their sign-ins end with the row, in the same transaction: the guards
     // read the session, so a deleted admin's other device would otherwise
-    // keep the role until the session expired.
-    await destroyUserLoginSessions(userId, undefined, tx);
+    // keep the role until the session expired. Destroy last so a later
+    // failure (the user delete) cannot roll the DELETE back while the
+    // in-memory block stays. Sessions are not FK-bound to User.
     await tx.user.delete({ where: { id: userId } });
+    await destroyUserLoginSessions(userId, undefined, tx);
     return { deleted: true, campaignIds, personal };
   });
 }

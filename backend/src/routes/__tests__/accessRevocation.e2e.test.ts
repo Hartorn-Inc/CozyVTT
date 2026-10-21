@@ -25,12 +25,16 @@
 
 import request from 'supertest';
 
-jest.mock('../../services/sessionStore', () => ({
-  destroyUserLoginSessions: jest.fn(async () => 1),
-  // Sign-in bookkeeping, not under test here; the real one is tested in
-  // services/__tests__/sessionStoreCap.test.ts.
-  capLoginSessions: jest.fn(async () => 0),
-}));
+jest.mock('../../services/sessionStore', () => {
+  const actual = jest.requireActual('../../services/sessionStore') as typeof import('../../services/sessionStore');
+  return {
+    ...actual,
+    destroyUserLoginSessions: jest.fn(async () => 1),
+    // Sign-in bookkeeping, not under test here; the real one is tested in
+    // services/__tests__/sessionStoreCap.test.ts.
+    capLoginSessions: jest.fn(async () => 0),
+  };
+});
 
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import { destroyUserLoginSessions } from '../../services/sessionStore';
@@ -84,7 +88,7 @@ describe('revoking access ends the sessions already issued', () => {
   it('when an admin is demoted', async () => {
     const res = await acting.put(`/api/users/${targetId}`).send({ platformRole: 'USER' });
     expect(res.status).toBe(200);
-    expect(destroyed).toHaveBeenCalledWith(targetId);
+    expect(destroyed).toHaveBeenCalledWith(targetId, undefined, expect.anything());
   });
 
   it('when an account is deleted', async () => {
@@ -121,12 +125,30 @@ describe('a user recovering their own account', () => {
     expect(res.status).toBe(200);
 
     // The second argument keeps the device they are holding signed in.
-    expect(destroyed).toHaveBeenCalledWith(keeperId, expect.any(String));
+    expect(destroyed).toHaveBeenCalledWith(keeperId, expect.any(String), expect.anything());
 
     // Put the password back for the tests that follow.
     await kept.post('/api/auth/change-password').send({
       currentPassword: 'AnotherGoodPassword123!',
       newPassword: TEST_PASSWORD,
+    });
+  });
+});
+
+describe('an administrator resetting MFA', () => {
+  it('ends every login session of that user', async () => {
+    await prisma.user.update({
+      where: { id: keeperId },
+      data: { mfaEnabled: true, mfaSecret: 'JBSWY3DPEHPK3PXP', mfaBackupCodes: ['hash'] },
+    });
+
+    const res = await acting.post(`/api/admin/users/${keeperId}/reset-mfa`);
+    expect(res.status).toBe(200);
+    expect(destroyed).toHaveBeenCalledWith(keeperId, undefined, expect.anything());
+
+    await prisma.user.update({
+      where: { id: keeperId },
+      data: { mfaEnabled: false, mfaSecret: null, mfaBackupCodes: [] },
     });
   });
 });

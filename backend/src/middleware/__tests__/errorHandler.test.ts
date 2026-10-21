@@ -12,6 +12,7 @@ import express from 'express';
 import request from 'supertest';
 import { bodyParsers } from '../bodyParsers';
 import { errorHandler } from '../errorHandler';
+import { LoginSessionStoreUnavailable } from '../../services/sessionStore';
 import { captureLogs, objectField } from '../../__tests__/helpers/logCapture';
 
 const SECRET = 'hunter2-not-for-the-log';
@@ -34,6 +35,9 @@ function app(): express.Express {
     res.status(200).write('partial');
     await Promise.resolve();
     throw new Error('late failure');
+  });
+  a.get('/login-session-store-down', () => {
+    throw new LoginSessionStoreUnavailable();
   });
   a.use(errorHandler);
   // What the handler passes on, and Express's own handler after it.
@@ -93,6 +97,19 @@ describe('a request body over the size limit', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ level: 'warn', type: 'entity.too.large', status: 413 });
     expect(logs.lines.join('')).not.toContain('hunter2');
+  });
+});
+
+describe('an unconfirmable login-session store', () => {
+  it('is answered 503 Service Unavailable, not 500, and without Retry-After', async () => {
+    const res = await request(app()).get('/login-session-store-down');
+
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({
+      error: 'Service Unavailable',
+      message: 'The login session could not be confirmed. Try again in a moment.',
+    });
+    expect(res.headers['retry-after']).toBeUndefined();
   });
 });
 

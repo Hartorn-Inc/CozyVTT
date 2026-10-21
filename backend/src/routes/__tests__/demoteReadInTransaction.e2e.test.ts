@@ -102,7 +102,7 @@ it('treats an account promoted after the read as demoted: signs it out and write
   const res = await agent.put(`/api/users/${target.id}`).send({ platformRole: 'USER' });
 
   expect(res.status).toBe(200);
-  expect(endedSignIns).toHaveBeenCalledWith(target.id);
+  expect(endedSignIns).toHaveBeenCalledWith(target.id, undefined, expect.anything());
   jest.restoreAllMocks();
   expect((await prisma.user.findUnique({ where: { id: target.id } }))?.platformRole).toBe('USER');
   const logged = await prisma.systemLog.findFirst({
