@@ -119,7 +119,7 @@ describe('buildDumpArgs', () => {
   });
 
   it('leaves the login sessions out, so a restore cannot bring back a sign-in that was ended since', () => {
-    expect(buildDumpArgs('postgresql://x', '/tmp/db.sql')).toContain('--exclude-table-data=public.session');
+    expect(buildDumpArgs('postgresql://x', '/tmp/db.sql')).toContain('--exclude-table-data=*.session');
   });
 });
 
@@ -554,11 +554,13 @@ describe('prepareDumpForRestore', () => {
 
   it('ends by emptying the login sessions an older backup carried, inside the same transaction', () => {
     // Every backup made before sessions were left out holds the session
-    // table's rows, and a restore would revive each one that had not yet
-    // expired, sign-ins ended since included. The table may be missing from
-    // a very old backup, so the purge checks for it first.
-    expect(RESTORE_TRAILER.join('\n')).toMatch(/to_regclass\('public\.session'\)/);
-    expect(RESTORE_TRAILER.join('\n')).toMatch(/DELETE FROM public\.session/);
+    // table's rows (public, or the schema `?schema=` names), and a restore
+    // would revive each one that had not yet expired, sign-ins ended since
+    // included. The table may be missing from a very old backup, so the
+    // purge walks every schema that has a `session` table.
+    expect(RESTORE_TRAILER).toEqual([
+      "DO $$ DECLARE r record; BEGIN FOR r IN SELECT n.nspname AS s FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'session' AND c.relkind = 'r' LOOP EXECUTE format('DELETE FROM %I.session', r.s); END LOOP; END $$;",
+    ]);
   });
 
   it('runs the schema replacement inside the same transaction as the dump', () => {

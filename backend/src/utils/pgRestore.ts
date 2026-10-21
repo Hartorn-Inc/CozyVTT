@@ -34,17 +34,20 @@ export const RESTORE_PREAMBLE = ['DROP SCHEMA public CASCADE;', 'CREATE SCHEMA p
 /**
  * Statements run after the dump, in the same transaction.
  *
- * Login sessions live in `public.session`, beside the app's tables. New
- * backups leave its rows out (see buildDumpArgs), but every backup made
- * before that carries them, and a restore would bring back each sign-in
- * that had not yet expired, ones ended since by a password change or an
- * account removal included. So a restore ends by emptying the table, which
- * a very old backup may not have at all, hence the check. The restore
- * script (backend/scripts/restore.sh) appends the same statement, and
- * keepInStep.test.ts fails if the two differ.
+ * Login sessions live in `session` in whichever schema `DATABASE_URL`
+ * `?schema=` names (`public` unless it says otherwise), beside the app's
+ * tables. New backups leave those rows out in every schema (see
+ * buildDumpArgs), but every backup made before that carries them — old
+ * ones in `public.session`, newer ones in the configured schema — and a
+ * restore would bring back each sign-in that had not yet expired, ones
+ * ended since by a password change or an account removal included. So a
+ * restore ends by emptying every schema's `session` table; a very old
+ * backup may have none. The restore script (backend/scripts/restore.sh)
+ * appends the same statement, and keepInStep.test.ts fails if the two
+ * differ.
  */
 export const RESTORE_TRAILER = [
-  "DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; END $$;",
+  "DO $$ DECLARE r record; BEGIN FOR r IN SELECT n.nspname AS s FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'session' AND c.relkind = 'r' LOOP EXECUTE format('DELETE FROM %I.session', r.s); END LOOP; END $$;",
 ];
 
 /**
@@ -333,9 +336,10 @@ export function buildDumpArgs(dbUrl: string, sqlPath: string): string[] {
     '--if-exists',
     '--no-owner',
     '--no-privileges',
-    // The login sessions: a backup that carried them would sign every
-    // sign-in of the day back in when restored (see RESTORE_TRAILER).
-    '--exclude-table-data=public.session',
+    // The login sessions in every schema: a backup that carried them
+    // would sign every sign-in of the day back in when restored (see
+    // RESTORE_TRAILER). `*.session` covers `public` and `?schema=`.
+    '--exclude-table-data=*.session',
   ];
 }
 
