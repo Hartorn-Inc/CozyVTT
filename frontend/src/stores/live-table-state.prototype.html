@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Live-table state — throwaway prototype</title>
+  <style>
+    :root {
+      --ink: #2b2118;
+      --muted: #6b5748;
+      --paper: #f7f1e8;
+      --card: #fffaf3;
+      --line: #e2d4c4;
+      --accent: #b4532a;
+      --accent-ink: #8a3416;
+      --ok: #2f6f4e;
+      --warn: #9a6700;
+      --bad: #a32d2d;
+      --chip: #efe4d6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font: 16px/1.45 "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+    }
+    main { max-width: 1100px; margin: 0 auto; padding: 28px 20px 80px; }
+    h1 { font-size: 1.7rem; margin: 0 0 8px; letter-spacing: -0.02em; }
+    .lede, .note { color: var(--muted); }
+    .lede { margin: 0 0 18px; max-width: 62ch; }
+    .note { font-size: 0.92rem; }
+    .banner {
+      background: #f3e0d4;
+      border: 1px solid #e8c8b0;
+      border-radius: 12px;
+      padding: 12px 14px;
+      margin: 0 0 22px;
+      max-width: 70ch;
+    }
+    .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 0 0 16px; }
+    button, .tab {
+      font: inherit;
+      cursor: pointer;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--card);
+      color: var(--ink);
+      padding: 8px 12px;
+    }
+    button:hover, .tab:hover { border-color: var(--accent); }
+    button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; }
+    .tab[aria-selected="true"] { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+    .mode { display: flex; gap: 8px; flex-wrap: wrap; }
+    .mode label {
+      display: flex; gap: 8px; align-items: flex-start;
+      background: var(--card); border: 1px solid var(--line);
+      border-radius: 12px; padding: 10px 12px; max-width: 36rem; cursor: pointer;
+    }
+    .mode label.picked { border-color: var(--accent); box-shadow: 0 0 0 2px #b4532a33; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 16px; }
+    @media (min-width: 900px) { .grid { grid-template-columns: 1.1fr 0.9fr; } }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 16px;
+    }
+    .card h2 { margin: 0 0 10px; font-size: 1.05rem; }
+    .fields { display: grid; gap: 8px; }
+    .field { display: grid; grid-template-columns: 9.5rem 1fr; gap: 8px; font-size: 0.95rem; }
+    .field b { font-weight: 600; color: var(--muted); }
+    .flash { background: #fff3c4; border-radius: 6px; padding: 0 4px; }
+    .buckets { display: grid; gap: 8px; }
+    .bucket { background: var(--paper); border-radius: 10px; padding: 8px 10px; font-size: 0.9rem; }
+    .bucket strong { display: block; margin-bottom: 4px; }
+    .toast { color: var(--bad); }
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+    .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .chip { background: var(--chip); border-radius: 999px; padding: 2px 10px; font-size: 0.85rem; }
+    .freeplay, .steps { display: flex; flex-wrap: wrap; gap: 8px; }
+    .scenario { color: var(--muted); margin: 0 0 12px; max-width: 62ch; }
+    .changed { margin: 0 0 12px; min-height: 1.4em; color: var(--accent-ink); }
+    code { font-family: ui-monospace, monospace; font-size: 0.86em; }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <p class="note">Throwaway prototype. Not production. Open this file in a browser.</p>
+    <h1>Who owns the table when something arrives late?</h1>
+    <p class="lede">
+      What should a member at a live session observe when a REST load races a
+      socket update, when the current map changes, when chat never arrives, and
+      when hide or export fails? Compare today’s tangle with a strict split
+      between campaign wiring, the REST cache, and the live-table store.
+    </p>
+    <div class="banner">
+      Recommended: <strong>Split</strong>. Context keeps identity and clocks
+      (which campaign, which current map, this join). React Query owns REST
+      documents. The live-table store owns tokens and chat. Stale REST and
+      foreign-map socket events are dropped. Failed writes stay on screen and
+      say so. This matches the documented one-datum rule and the reconnect
+      clocks already decided for visibility. Zustand-owns-REST and
+      React-Query-owns-token-frames are not modelled: the first fights every
+      list page; the second cannot take a token slide at sixty frames a second.
+    </div>
+
+    <h2 class="sr-only">Ownership</h2>
+    <div class="mode" id="modes"></div>
+
+    <p class="changed" id="changed" aria-live="polite"></p>
+
+    <div class="grid">
+      <section class="card" aria-labelledby="see-heading">
+        <h2 id="see-heading">What you see</h2>
+        <div class="fields" id="visible"></div>
+      </section>
+      <section class="card" aria-labelledby="own-heading">
+        <h2 id="own-heading">Who owns each datum</h2>
+        <div class="buckets" id="owners"></div>
+      </section>
+    </div>
+
+    <section class="card" style="margin-top:16px">
+      <h2>Free play</h2>
+      <p class="note">Any order. Each button is a real action on the model.</p>
+      <div class="freeplay" id="freeplay"></div>
+    </section>
+
+    <section class="card" style="margin-top:16px">
+      <h2>Walkthroughs</h2>
+      <div class="row" id="tabs" role="tablist" aria-label="Scenarios"></div>
+      <p class="scenario" id="scenario"></p>
+      <div class="steps" id="steps"></div>
+    </section>
+  </main>
+
+  <script>
+    /* ==== Pure model. No DOM. Liftable. =================================== */
+    var TableModel = (function () {
+      var CELLAR = {
+        campaignId: "cellar",
+        campaignName: "The cellar",
+        mapId: "cellar-floor",
+        mapName: "Cellar floor",
+        tokens: [
+          { id: "lantern", name: "Lantern", x: 2, y: 3 },
+          { id: "rat", name: "Rat", x: 5, y: 1 }
+        ]
+      };
+      var VAULT = {
+        campaignId: "cellar",
+        campaignName: "The cellar",
+        mapId: "cellar-vault",
+        mapName: "Cellar vault",
+        tokens: [{ id: "chest", name: "Chest", x: 4, y: 4 }]
+      };
+      var MOOR = {
+        campaignId: "moor",
+        campaignName: "The moor",
+        mapId: "moor-road",
+        mapName: "Moor road",
+        tokens: [{ id: "coach", name: "Coach", x: 1, y: 1 }]
+      };
+
+      function snapshot(doc, extra) {
+        return Object.assign({
+          campaignId: doc.campaignId,
+          campaignName: doc.campaignName,
+          mapId: doc.mapId,
+          mapName: doc.mapName,
+          tokens: doc.tokens.map(function (t) { return Object.assign({}, t); })
+        }, extra || {});
+      }
+
+      function createState(mode) {
+        var doc = CELLAR;
+        return {
+          mode: mode,
+          role: "DM",
+          connection: "connected",
+          routeCampaignId: doc.campaignId,
+          joinGeneration: 1,
+          restGeneration: 1,
+          campaignId: doc.campaignId,
+          campaignName: doc.campaignName,
+          currentMapId: doc.mapId,
+          currentMapName: doc.mapName,
+          tokens: doc.tokens.map(function (t) { return Object.assign({}, t); }),
+          loadingTable: false,
+          restError: null,
+          pendingRest: null,
+          pendingMapRest: null,
+          chat: [],
+          chatSeq: 1,
+          hideMenuOpen: false,
+          toasts: [],
+          lastNote: "Opened The cellar on Cellar floor."
+        };
+      }
+
+      function note(state, text) {
+        return Object.assign({}, state, { lastNote: text });
+      }
+
+      function dropToast(state, text) {
+        return Object.assign({}, state, {
+          toasts: state.toasts.concat([text]),
+          lastNote: text
+        });
+      }
+
+      function applyDoc(state, doc, reason) {
+        return Object.assign({}, state, {
+          campaignId: doc.campaignId,
+          campaignName: doc.campaignName,
+          currentMapId: doc.mapId,
+          currentMapName: doc.mapName,
+          tokens: doc.tokens.map(function (t) { return Object.assign({}, t); }),
+          loadingTable: false,
+          restError: null,
+          pendingRest: null,
+          lastNote: reason
+        });
+      }
+
+      function restMatches(state, payload) {
+        if (state.mode !== "split") return true;
+        if (payload.generation !== state.restGeneration) return false;
+        if (payload.campaignId !== state.routeCampaignId) return false;
+        return true;
+      }
+
+      function socketMatches(state, payload) {
+        if (payload.mapId && payload.mapId !== state.currentMapId) return false;
+        if (payload.campaignId && payload.campaignId !== state.campaignId) return false;
+        if (payload.joinGeneration && payload.joinGeneration !== state.joinGeneration) return false;
+        return true;
+      }
+
+      function reduce(state, action) {
+        var type = action.type;
+        if (type === "SET_MODE") return createState(action.mode);
+
+        if (type === "OPEN_MOOR") {
+          var nextRest = state.restGeneration + 1;
+          var opening = {
+            routeCampaignId: MOOR.campaignId,
+            restGeneration: nextRest,
+            loadingTable: true,
+            restError: null,
+            pendingRest: snapshot(MOOR, { generation: nextRest })
+          };
+          if (state.mode === "split") {
+            return Object.assign({}, state, opening, {
+              campaignId: MOOR.campaignId,
+              campaignName: "The moor",
+              currentMapId: "",
+              currentMapName: "Waiting",
+              tokens: [],
+              lastNote: "Route is The moor. REST is in flight. Cellar tokens are not shown on another campaign."
+            });
+          }
+          return Object.assign({}, state, opening, {
+            lastNote: "Route is The moor, but the table still shows The cellar until a reply lands — whichever reply lands last wins."
+          });
+        }
+
+        if (type === "SLOW_CELLAR_ARRIVES") {
+          var cellar = snapshot(CELLAR, { generation: state.restGeneration - 1, campaignId: "cellar" });
+          if (!restMatches(state, { generation: cellar.generation, campaignId: cellar.campaignId })) {
+            return note(state, "Dropped the late cellar REST reply. Generation or campaign did not match.");
+          }
+          return applyDoc(state, CELLAR, "Late cellar REST reply overwrote the table.");
+        }
+
+        if (type === "MOOR_ARRIVES") {
+          var pending = state.pendingRest;
+          if (!pending) return note(state, "No moor reply was in flight.");
+          if (!restMatches(state, pending)) {
+            return note(state, "Dropped the moor REST reply. It was no longer the generation for this route.");
+          }
+          return applyDoc(state, MOOR, "The moor REST reply filled the table.");
+        }
+
+        if (type === "TOKEN_SLIDE") {
+          var payload = {
+            campaignId: action.campaignId || state.campaignId,
+            mapId: action.mapId || state.currentMapId,
+            joinGeneration: action.joinGeneration || state.joinGeneration,
+            tokenId: action.tokenId || (state.tokens[0] && state.tokens[0].id),
+            x: action.x != null ? action.x : 8,
+            y: action.y != null ? action.y : 2
+          };
+          if (state.mode === "split" && !socketMatches(state, payload)) {
+            return note(state, "Dropped a live move. It was not for the current map or this join.");
+          }
+          if (state.mode === "tangle" && payload.mapId !== state.currentMapId) {
+            var movedAnyway = state.tokens.map(function (t) {
+              return t.id === payload.tokenId ? Object.assign({}, t, { x: payload.x, y: payload.y }) : t;
+            });
+            return Object.assign({}, state, {
+              tokens: movedAnyway,
+              lastNote: "Tangle applied the move in the live store while the context map is a different picture."
+            });
+          }
+          var tokens = state.tokens.map(function (t) {
+            return t.id === payload.tokenId ? Object.assign({}, t, { x: payload.x, y: payload.y }) : t;
+          });
+          var slid = tokens.filter(function (t) { return t.id === payload.tokenId; })[0];
+          return Object.assign({}, state, {
+            tokens: tokens,
+            lastNote: (slid ? slid.name : "A token") + " slid on the current map."
+          });
+        }
+
+        if (type === "SWITCH_TO_VAULT") {
+          var nextGen = state.restGeneration + 1;
+          var base = {
+            currentMapId: VAULT.mapId,
+            currentMapName: VAULT.mapName,
+            restGeneration: nextGen,
+            pendingMapRest: snapshot(VAULT, { generation: nextGen }),
+            hideMenuOpen: false,
+            lastNote: state.mode === "split"
+              ? "Current-map clock is Cellar vault. Tokens wait for that map’s REST picture."
+              : "Context map is Cellar vault, but the live store still holds Cellar floor tokens until something replaces them."
+          };
+          if (state.mode === "split") {
+            return Object.assign({}, state, base, { tokens: [], loadingTable: true });
+          }
+          return Object.assign({}, state, base);
+        }
+
+        if (type === "VAULT_MAP_ARRIVES") {
+          var mapPending = state.pendingMapRest;
+          if (!mapPending) return note(state, "No vault map reply was in flight.");
+          if (state.mode === "split" && mapPending.generation !== state.restGeneration) {
+            return note(state, "Dropped a late map REST reply.");
+          }
+          if (state.mode === "split" && mapPending.mapId !== state.currentMapId) {
+            return note(state, "Dropped a map REST reply for a map that is not current.");
+          }
+          return Object.assign({}, state, {
+            tokens: VAULT.tokens.map(function (t) { return Object.assign({}, t); }),
+            loadingTable: false,
+            pendingMapRest: null,
+            lastNote: "Vault map REST filled the live tokens."
+          });
+        }
+
+        if (type === "LATE_FLOOR_MOVE") {
+          return reduce(state, {
+            type: "TOKEN_SLIDE",
+            campaignId: "cellar",
+            mapId: "cellar-floor",
+            tokenId: "lantern",
+            x: 9,
+            y: 9
+          });
+        }
+
+        if (type === "SEND_CHAT") {
+          var line = {
+            id: "c" + state.chatSeq,
+            text: "Do you hear that?",
+            status: "sending"
+          };
+          return Object.assign({}, state, {
+            chatSeq: state.chatSeq + 1,
+            chat: state.chat.concat([line]),
+            lastNote: "Chat is on the screen as sending. The socket has not acknowledged it."
+          });
+        }
+
+        if (type === "DROP_CONNECTION") {
+          return Object.assign({}, state, {
+            connection: "disconnected",
+            lastNote: "Disconnected. The last-known table stays on screen."
+          });
+        }
+
+        if (type === "CHAT_NEVER_ACKS") {
+          if (state.mode === "tangle") {
+            return note(state, "Nothing changes. The line stays sending forever.");
+          }
+          var failed = state.chat.map(function (c) {
+            return c.status === "sending" ? Object.assign({}, c, { status: "failed" }) : c;
+          });
+          return Object.assign({}, state, {
+            chat: failed,
+            lastNote: "No acknowledgement. The line is failed. Retry is offered."
+          });
+        }
+
+        if (type === "RETRY_CHAT") {
+          if (state.connection !== "connected") {
+            return dropToast(state, "Cannot retry until the session is connected.");
+          }
+          var retried = state.chat.map(function (c) {
+            return c.status === "failed" ? Object.assign({}, c, { status: "sent" }) : c;
+          });
+          return Object.assign({}, state, {
+            chat: retried,
+            lastNote: "Retry delivered. The line is sent."
+          });
+        }
+
+        if (type === "OPEN_HIDE_MENU") {
+          return Object.assign({}, state, { hideMenuOpen: true, lastNote: "Hide menu is open." });
+        }
+
+        if (type === "HIDE_REFUSED") {
+          if (state.mode === "tangle") {
+            return Object.assign({}, state, {
+              hideMenuOpen: false,
+              lastNote: "The menu closed. The Rat is still visible. Nobody was told the hide failed."
+            });
+          }
+          return Object.assign({}, state, {
+            hideMenuOpen: true,
+            toasts: state.toasts.concat(["The table refused to hide the Rat."]),
+            lastNote: "Hide failed. The menu stayed open and the refusal is visible."
+          });
+        }
+
+        if (type === "EXPORT_REFUSED") {
+          if (state.mode === "tangle") {
+            return note(state, "A file named map.json appeared. It is the error body. Nobody was told.");
+          }
+          return dropToast(state, "Export failed. Nothing was downloaded.");
+        }
+
+        if (type === "SAVE_SETTINGS") {
+          if (state.mode === "tangle") {
+            return Object.assign({}, state, {
+              loadingTable: true,
+              lastNote: "Settings save reloads the whole campaign. The live table is replaced by a spinner."
+            });
+          }
+          return Object.assign({}, state, {
+            campaignName: state.campaignName + " (renamed)",
+            lastNote: "Campaign document patched in the REST cache. Tokens and connection did not blink."
+          });
+        }
+
+        if (type === "SETTINGS_RELOAD_LANDS") {
+          if (!state.loadingTable) return note(state, "The table was not waiting on a settings reload.");
+          return Object.assign({}, state, {
+            loadingTable: false,
+            lastNote: "Reload finished. Token pictures were fetched again and the settings tab reset."
+          });
+        }
+
+        if (type === "RECONNECT") {
+          return Object.assign({}, state, {
+            connection: "connecting",
+            joinGeneration: state.joinGeneration + 1,
+            lastNote: "Rejoining. Last frame stays. Catch-up has not finished."
+          });
+        }
+
+        if (type === "CATCHUP_FAIL") {
+          return Object.assign({}, state, {
+            connection: "disconnected",
+            restError: "Catch-up failed",
+            lastNote: "Catch-up itself failed. The last frame stays. Retry is offered. No toast for ignored stale events."
+          });
+        }
+
+        if (type === "CATCHUP_OK") {
+          return Object.assign({}, state, {
+            connection: "connected",
+            restError: null,
+            lastNote: "Catch-up filled tokens from the authoritative map. Delayed events from another join stay dropped."
+          });
+        }
+
+        if (type === "RETRY_LOAD") {
+          if (!state.restError && !state.loadingTable) {
+            return note(state, "Nothing to retry.");
+          }
+          return Object.assign({}, state, {
+            loadingTable: true,
+            restError: null,
+            connection: state.connection === "disconnected" ? "connecting" : state.connection,
+            lastNote: "Retrying. The table is still the last frame."
+          });
+        }
+
+        return state;
+      }
+
+      return {
+        CELLAR: CELLAR,
+        VAULT: VAULT,
+        MOOR: MOOR,
+        createState: createState,
+        reduce: reduce
+      };
+    })();
+  </script>
+
+  <script>
+    /* ==== Page shell. ===================================================== */
+    var state = TableModel.createState("split");
+    var walkIndex = 0;
+    var stepIndex = 0;
+
+    var WALKS = [
+      {
+        id: "stale-campaign",
+        title: "Wrong campaign",
+        blurb: "You leave The cellar for The moor. The cellar’s slow REST reply arrives first. Watch whether it is allowed to paint.",
+        steps: [
+          { label: "Open The moor", type: "OPEN_MOOR" },
+          { label: "Late cellar reply arrives", type: "SLOW_CELLAR_ARRIVES" },
+          { label: "The moor reply arrives", type: "MOOR_ARRIVES" }
+        ]
+      },
+      {
+        id: "map-switch",
+        title: "Current map changes",
+        blurb: "The DM changes the current map. A token.moved from the old map arrives late. Split must ignore it; tangle can slide a token that is not on this picture.",
+        steps: [
+          { label: "Switch to Cellar vault", type: "SWITCH_TO_VAULT" },
+          { label: "Late Cellar floor move arrives", type: "LATE_FLOOR_MOVE" },
+          { label: "Vault map REST arrives", type: "VAULT_MAP_ARRIVES" }
+        ]
+      },
+      {
+        id: "chat",
+        title: "Chat never arrives",
+        blurb: "A member sends chat as the connection dies. Tangle leaves sending forever. Split fails the line and offers retry after reconnect.",
+        steps: [
+          { label: "Send chat", type: "SEND_CHAT" },
+          { label: "Connection drops", type: "DROP_CONNECTION" },
+          { label: "No acknowledgement", type: "CHAT_NEVER_ACKS" },
+          { label: "Reconnect succeeds", type: "CATCHUP_OK" },
+          { label: "Retry the line", type: "RETRY_CHAT" }
+        ]
+      },
+      {
+        id: "failures",
+        title: "Hide and export fail",
+        blurb: "The server refuses a hide and an export. Tangle closes the menu and may download the error. Split keeps the menu and names the failure.",
+        steps: [
+          { label: "Open hide menu", type: "OPEN_HIDE_MENU" },
+          { label: "Hide is refused", type: "HIDE_REFUSED" },
+          { label: "Export is refused", type: "EXPORT_REFUSED" }
+        ]
+      },
+      {
+        id: "settings-reconnect",
+        title: "Settings save and catch-up",
+        blurb: "Saving settings must not remount the table. A brief disconnect keeps the last frame. Only a failed catch-up is an error.",
+        steps: [
+          { label: "Save campaign settings", type: "SAVE_SETTINGS" },
+          { label: "Settings reload lands", type: "SETTINGS_RELOAD_LANDS" },
+          { label: "Connection drops", type: "DROP_CONNECTION" },
+          { label: "Rejoin", type: "RECONNECT" },
+          { label: "Catch-up fails", type: "CATCHUP_FAIL" },
+          { label: "Retry catch-up", type: "RETRY_LOAD" },
+          { label: "Catch-up succeeds", type: "CATCHUP_OK" }
+        ]
+      }
+    ];
+
+    var FREE = [
+      { label: "Open The moor", type: "OPEN_MOOR" },
+      { label: "Late cellar REST arrives", type: "SLOW_CELLAR_ARRIVES" },
+      { label: "Moor REST arrives", type: "MOOR_ARRIVES" },
+      { label: "Lantern slides here", type: "TOKEN_SLIDE" },
+      { label: "Switch to Cellar vault", type: "SWITCH_TO_VAULT" },
+      { label: "Late floor move arrives", type: "LATE_FLOOR_MOVE" },
+      { label: "Vault REST arrives", type: "VAULT_MAP_ARRIVES" },
+      { label: "Send chat", type: "SEND_CHAT" },
+      { label: "Drop connection", type: "DROP_CONNECTION" },
+      { label: "Chat never acknowledged", type: "CHAT_NEVER_ACKS" },
+      { label: "Retry chat", type: "RETRY_CHAT" },
+      { label: "Open hide menu", type: "OPEN_HIDE_MENU" },
+      { label: "Hide refused", type: "HIDE_REFUSED" },
+      { label: "Export refused", type: "EXPORT_REFUSED" },
+      { label: "Save settings", type: "SAVE_SETTINGS" },
+      { label: "Settings reload lands", type: "SETTINGS_RELOAD_LANDS" },
+      { label: "Rejoin", type: "RECONNECT" },
+      { label: "Catch-up fails", type: "CATCHUP_FAIL" },
+      { label: "Catch-up succeeds", type: "CATCHUP_OK" },
+      { label: "Retry load", type: "RETRY_LOAD" }
+    ];
+
+    function dispatch(action) {
+      state = TableModel.reduce(state, action);
+      render();
+    }
+
+    function tokenText() {
+      if (state.loadingTable && state.mode === "tangle") return "Spinner over the table";
+      if (state.loadingTable && state.mode === "split" && state.tokens.length === 0) {
+        return "Waiting for this map’s picture";
+      }
+      if (!state.tokens.length) return "No tokens on this picture";
+      return state.tokens.map(function (t) {
+        return t.name + " at " + t.x + "," + t.y;
+      }).join(" · ");
+    }
+
+    function chatText() {
+      if (!state.chat.length) return "None";
+      return state.chat.map(function (c) {
+        return "“" + c.text + "” (" + c.status + ")";
+      }).join(" · ");
+    }
+
+    function field(label, value, flash) {
+      return '<div class="field"><b>' + label + '</b><span class="' +
+        (flash ? "flash" : "") + '">' + value + "</span></div>";
+    }
+
+    function renderVisible() {
+      var html = "";
+      html += field("Route", state.routeCampaignId === "moor" ? "The moor" : "The cellar");
+      html += field("Campaign on screen", state.campaignName);
+      html += field("Current map", state.currentMapName);
+      html += field("Connection", state.connection);
+      html += field("You", state.role);
+      html += field("Table", state.loadingTable ? "Loading overlay on" : "Live");
+      html += field("Tokens", tokenText());
+      html += field("Chat", chatText());
+      html += field("Hide menu", state.hideMenuOpen ? "Open" : "Closed");
+      html += field("REST error", state.restError || "None");
+      html += field("Join clock", String(state.joinGeneration));
+      html += field("REST generation", String(state.restGeneration));
+      html += '<div class="field"><b>Notices</b><span class="' +
+        (state.toasts.length ? "toast" : "") + '">' +
+        (state.toasts.length ? state.toasts.join(" · ") : "None") +
+        "</span></div>";
+      document.getElementById("visible").innerHTML = html;
+    }
+
+    function renderOwners() {
+      var tangle = state.mode === "tangle";
+      var ctx = tangle
+        ? "Campaign row, current map document, loading spinner, vibe, session. Also copies tokens into the live store on every REST map load."
+        : "Campaign id, role, session paused/live, current-map id, join clock. Not the map picture. Not tokens.";
+      var rest = tangle
+        ? "Used for lists elsewhere. Campaign page still hand-rolls getCampaign / getMap into context, so a slow reply can overwrite the new route."
+        : "Campaign document, map metadata, characters, assets. Keyed by id plus generation. Retry and error live here. A settings save patches this document only.";
+      var live = tangle
+        ? "Token positions. Can disagree with the context map after a switch or a late REST load. Chat sending has no acknowledgement."
+        : "Tokens, initiative, chat lines. Written from the socket. Ignores another map or an older join. Last frame stays on disconnect.";
+      document.getElementById("owners").innerHTML =
+        '<div class="bucket"><strong>Campaign wiring (Context)</strong>' + ctx + "</div>" +
+        '<div class="bucket"><strong>REST cache (React Query)</strong>' + rest + "</div>" +
+        '<div class="bucket"><strong>Live-table store (Zustand)</strong>' + live + "</div>";
+    }
+
+    function renderModes() {
+      var html = "";
+      [
+        {
+          id: "tangle",
+          title: "Tangle (today)",
+          body: "Context owns the campaign and the current map document, and copies tokens into Zustand. Last REST reply wins. Chat can stay sending. Failed hide closes the menu. Settings save remounts the table."
+        },
+        {
+          id: "split",
+          title: "Split (recommended)",
+          body: "Context owns identity and clocks. React Query owns REST documents. Zustand owns tokens and chat. Stale or foreign events are dropped. Failures stay visible. Settings save does not blink the table."
+        }
+      ].forEach(function (m) {
+        html += '<label class="' + (state.mode === m.id ? "picked" : "") + '">' +
+          '<input type="radio" name="mode" value="' + m.id + '"' +
+          (state.mode === m.id ? " checked" : "") + " />" +
+          "<span><strong>" + m.title + "</strong><br /><span class='note'>" +
+          m.body + "</span></span></label>";
+      });
+      document.getElementById("modes").innerHTML = html;
+      document.getElementById("modes").querySelectorAll("input").forEach(function (input) {
+        input.addEventListener("change", function () {
+          walkIndex = walkIndex;
+          stepIndex = 0;
+          dispatch({ type: "SET_MODE", mode: input.value });
+        });
+      });
+    }
+
+    function renderFree() {
+      var wrap = document.getElementById("freeplay");
+      wrap.innerHTML = "";
+      FREE.forEach(function (item) {
+        var b = document.createElement("button");
+        b.textContent = item.label;
+        b.addEventListener("click", function () { dispatch({ type: item.type }); });
+        wrap.appendChild(b);
+      });
+    }
+
+    function renderTabs() {
+      var tabs = document.getElementById("tabs");
+      tabs.innerHTML = "";
+      WALKS.forEach(function (w, i) {
+        var b = document.createElement("button");
+        b.className = "tab";
+        b.setAttribute("role", "tab");
+        b.setAttribute("aria-selected", i === walkIndex ? "true" : "false");
+        b.textContent = w.title;
+        b.addEventListener("click", function () {
+          walkIndex = i;
+          stepIndex = 0;
+          state = TableModel.createState(state.mode);
+          state.lastNote = "Walkthrough reset: " + w.title + ".";
+          render();
+        });
+        tabs.appendChild(b);
+      });
+    }
+
+    function renderSteps() {
+      var walk = WALKS[walkIndex];
+      document.getElementById("scenario").textContent = walk.blurb;
+      var steps = document.getElementById("steps");
+      steps.innerHTML = "";
+      walk.steps.forEach(function (s, i) {
+        var b = document.createElement("button");
+        b.textContent = (i + 1) + ". " + s.label;
+        if (i !== stepIndex) b.disabled = true;
+        if (i < stepIndex) b.className = "primary";
+        b.addEventListener("click", function () {
+          if (i !== stepIndex) return;
+          state = TableModel.reduce(state, { type: s.type });
+          stepIndex += 1;
+          render();
+        });
+        steps.appendChild(b);
+      });
+    }
+
+    function render() {
+      document.getElementById("changed").textContent = state.lastNote;
+      renderModes();
+      renderVisible();
+      renderOwners();
+      renderFree();
+      renderTabs();
+      renderSteps();
+    }
+
+    render();
+  </script>
+</body>
+</html>
