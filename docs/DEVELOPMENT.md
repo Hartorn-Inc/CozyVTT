@@ -91,7 +91,7 @@ cozyvtt/
 ├── docs/                  User and developer documentation
 ├── Examples/              Example character sheets for each game system, as JSON
 ├── nginx/                 The bundled reverse proxy's configuration
-├── scripts/               The doc, nginx and coverage checks (Python)
+├── scripts/               The doc, nginx, coverage and commit-title checks (Python)
 ├── docker-compose.yml     Production Docker stack (default)
 ├── docker-compose.dev.yml Development Docker stack (hot-reload, exposed ports)
 └── .env.example           Environment variable template
@@ -841,7 +841,8 @@ Some of those deserve a note:
   `python3 scripts/websocket-events.py --write`. Both fail on a route or
   event declared in a form they cannot read, so nothing is left out of them
   unnoticed; `python3 -m unittest discover -s scripts/tests` tests that, and
-  tests `nginx-check.py` and `coverage-summary.py` too.
+  tests `nginx-check.py`, `coverage-summary.py` and
+  `conventional-commit-title.py` too.
 
 `.github/workflows/ci.yml` runs the same commands on pushes to `dev` and `main`
 and on pull requests into them (a push to any other branch runs nothing). It
@@ -896,7 +897,9 @@ when to remove the entry: Tailwind CSS 4, TypeScript 7 and TypeScript 6.1
 moves with the Node major. Node and nginx move to a new
 major or stable line by hand, and PostgreSQL's major version never through
 Renovate, since a 19 tag on the parent mount would init empty `19/docker`
-beside unread 18 data. A new release
+beside unread 18 data. Renovate uses semantic commits, so its dependency
+pull requests are titled `chore(deps): …`; production dependency bumps may
+be `fix(deps): …`. A new release
 waits before Dependabot proposes it (`cooldown`): an npm package 3 days for a
 patch, 7 for a minor and 14 for a major, an action or base image 7 days, so
 a hijacked publish is usually pulled first. Security updates do not wait.
@@ -904,10 +907,15 @@ Dependabot alerts for published advisories are on. Its automatic security pull r
 turned on in the repository's settings once 1.5.3 is on `main`; GitHub opens
 those against `main` whatever `target-branch` says.
 
-A pull request into `main` cannot merge until the Frontend, Backend, Docs,
-Dependency advisories, and Production images, nginx and smoke tests jobs pass
-(a ruleset in the repository's settings). Pushes to `dev` are not blocked: CI
-reports there.
+A pull request into `dev` or `main` cannot merge until every required check
+passes, including Frontend, Backend, Docs, Dependency advisories, Production
+images, nginx and smoke tests, Zizmor, and `PR title` (a ruleset in the
+repository's settings). Direct pushes to those branches are blocked. Job
+`PR title` (`.github/workflows/pr-title.yml`) checks that the pull request
+title is a conventional commit (`type(scope)?: description`); it also runs
+when the title is edited, without rebuilding the rest of CI. On a push it
+succeeds without checking, because a skipped required job would block the
+merge.
 
 ### Before a release: rehearse the upgrade
 
@@ -1067,18 +1075,26 @@ CI runs on pushes to `dev` and `main` and on pull requests into them; a branch o
 
 ### Commit Messages
 
+Pull request titles and the squash or rebase commits they land use the
+conventional form `type(scope)?: description`. Types are `feat`, `fix`,
+`docs`, `style`, `refactor`, `perf`, `test`, `chore`, `ci`, `build` and
+`revert`; the optional scope is lowercase; `!` before `:` marks a breaking
+change. Job `PR title` (`.github/workflows/pr-title.yml`) checks the pull
+request title against that form. Renovate's dependency pull requests are
+`chore(deps): …`; production dependency bumps may be `fix(deps): …`.
+
 Use the imperative mood, present tense:
 
 ```
-Add initiative tracker to campaign page
-Fix token position not persisting after map switch
-Update README with Docker instructions
+feat: add initiative tracker to campaign page
+fix: persist token position after map switch
+docs: update README with Docker instructions
 ```
 
 For larger changes, use a short subject and a body:
 
 ```
-Add spirit layer token visibility filtering
+feat: add spirit layer token visibility filtering
 
 Server now filters spirit tokens per-client when broadcasting map.changed.
 Players only receive tokens they have permission to see based on their
