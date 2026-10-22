@@ -11,6 +11,7 @@ import { broadcastToCampaign } from '../websocket/utils';
 import logger from '../utils/logger';
 import { acceptInvitationSchema } from '../validators/invitations';
 import { systemsCompatible } from '../utils/gameSystemCompatibility';
+import { CampaignGoneError, lockCampaignGameSystem } from '../utils/gameSystemMatchWrite';
 import { clearKeeperNotes } from '../utils/keeperNotes';
 
 const router = Router();
@@ -127,7 +128,9 @@ router.post('/:id/accept', authenticated, async (req: AuthenticatedRequest, res:
         });
       }
 
-      // The same rule as assigning a character from the Characters page.
+      // The same rule as assigning a Character from the Characters page:
+      // a Campaign with no game system accepts any Character; a typed
+      // Campaign refuses a Flexible sheet and any other system.
       const incompatibleCharacter = characters.find(
         (c) => !systemsCompatible(c.gameSystem, invitation.campaign.gameSystem)
       );
@@ -143,8 +146,30 @@ router.post('/:id/accept', authenticated, async (req: AuthenticatedRequest, res:
     // the writes themselves: the invitation is accepted only while it is still
     // pending, and a character is brought only while it is still in no
     // campaign. Either failing undoes the rest.
+    //
+    // Campaign.gameSystem can also change (PUT) after the outside
+    // compatibility check. When characters are brought, lock that row and
+    // re-check before accepting the invitation, so a mismatch leaves it
+    // PENDING. An accept with no characters does not take the lock, so it
+    // does not block a campaign PUT.
     const result = await prisma
       .$transaction(async (tx) => {
+        if (characterIds.length > 0) {
+          const locked = await lockCampaignGameSystem(tx, invitation.campaignId);
+          const brought = await tx.character.findMany({
+            where: { id: { in: characterIds }, userId },
+            select: { name: true, gameSystem: true },
+          });
+          const incompatibleCharacter = brought.find(
+            (c) => !systemsCompatible(c.gameSystem, locked)
+          );
+          if (incompatibleCharacter) {
+            throw new AcceptRefused(
+              `Character "${incompatibleCharacter.name}" is not compatible with campaign game system`
+            );
+          }
+        }
+
         const accepted = await tx.campaignInvitation.updateMany({
           where: { id: invitationId, status: 'PENDING' },
           data: { status: 'ACCEPTED' },
@@ -183,10 +208,11 @@ router.post('/:id/accept', authenticated, async (req: AuthenticatedRequest, res:
         return membership;
       })
       .catch((error: unknown) => {
-        if (error instanceof AcceptRefused) return error;
+        if (error instanceof AcceptRefused || error instanceof CampaignGoneError) return error;
         throw error;
       });
     if (result instanceof AcceptRefused) return res.status(400).json({ message: result.message });
+    if (result instanceof CampaignGoneError) return res.status(404).json({ message: result.message });
 
     // Broadcast roster.updated to campaign members
     try {

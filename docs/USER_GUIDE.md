@@ -327,7 +327,7 @@ A character has to belong to a campaign before it shows up in that campaign's ro
 - **When you create it** — pick the campaign in the new character dialog. The character joins the roster straight away.
 - **Afterwards** — open a character card's menu on the Characters page, choose **Assign to Campaign** (**Reassign Campaign** for a character already in one), and pick the campaign.
 
-You can only choose a campaign you are already a member of.
+You can only choose a campaign you are already a member of. A D&D 5e Campaign takes D&D 5e Characters (not Flexible sheets or other game systems); a Campaign with no game system takes any Character.
 
 *GIF pending — Assigning a character to a campaign.*
 

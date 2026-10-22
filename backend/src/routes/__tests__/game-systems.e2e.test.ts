@@ -361,9 +361,10 @@ describe('Game Systems - E2E Tests', () => {
       pf2eCharacterId = character.id;
     });
 
-    it('should allow assigning character to campaign (no strict validation)', async () => {
-      // Note: In the current implementation, we allow mismatched systems
-      // This is intentional to support multi-system campaigns
+    it('can persist an existing mismatch in the database (Prisma bypasses assign)', async () => {
+      // Existing mismatches can exist in the database: this writes through
+      // Prisma, bypassing POST /api/characters/:id/assign, which refuses a
+      // Pathfinder Character into a D&D Campaign. GET still loads them.
       const character = await prisma.character.update({
         where: { id: pf2eCharacterId },
         data: { campaignId: dnd5eCampaignId },

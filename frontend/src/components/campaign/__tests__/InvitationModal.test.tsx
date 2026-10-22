@@ -1,11 +1,11 @@
 /**
  * Which characters the invitation offers to bring along.
  *
- * The same rule the server applies when the invitation is accepted, and when
- * a character is assigned from the Characters page: a character joins only a
- * campaign of its own game system, and a Flexible character only a Flexible
- * campaign. The dialog offered Flexible characters to every campaign and
- * every character to a Flexible one, which the server now refuses.
+ * ADR 0015: a typed Campaign offers only unassigned Characters of that Game
+ * system (a Flexible sheet is refused); a Campaign with no game system offers
+ * any unassigned Character. The same rule the server applies when the
+ * invitation is accepted, and when a Character is assigned from the Characters
+ * page.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -52,12 +52,49 @@ beforeEach(() => {
   });
 });
 
+const openInvitation = async (gameSystem: GameSystem | null) => {
+  render(
+    <InvitationModal
+      invitation={invitationTo(gameSystem)}
+      onClose={vi.fn()}
+      onAccept={vi.fn()}
+      onDecline={vi.fn()}
+    />
+  );
+  await screen.findByText('Select Characters (Optional)');
+  await vi.waitFor(() => expect(screen.queryByText('Loading characters...')).toBeNull());
+};
+
 describe('InvitationModal', () => {
   it('offers a D&D 5e campaign only unassigned D&D 5e characters', async () => {
     expect(await offered(GameSystem.DND_5E)).toEqual(['Dwarf']);
   });
 
-  it('offers a Flexible campaign only unassigned Flexible characters', async () => {
-    expect(await offered(null)).toEqual(['Wanderer']);
+  it('offers a Campaign with no game system every unassigned Character', async () => {
+    expect(await offered(null)).toEqual(['Dwarf', 'Wanderer', 'Oracle']);
+  });
+
+  it('explains a typed campaign empty list and still lets the player Accept', async () => {
+    listCharacters.mockResolvedValue({
+      characters: [character('Wanderer', null), character('Oracle', GameSystem.PATHFINDER_2E)],
+    });
+    await openInvitation(GameSystem.DND_5E);
+    expect(screen.queryByText('Wanderer')).toBeNull();
+    expect(screen.queryByText('Oracle')).toBeNull();
+    expect(
+      screen.getByText(/Only unassigned D&D 5th Edition Characters are offered, not Flexible sheets/)
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Accept Invitation' })).toBeEnabled();
+  });
+
+  it('shows a load error instead of an empty compatible list', async () => {
+    listCharacters.mockRejectedValue({
+      response: { data: { message: 'Characters could not be loaded.' } },
+    });
+    await openInvitation(GameSystem.DND_5E);
+    expect(screen.getByRole('alert')).toHaveTextContent('Characters could not be loaded.');
+    expect(screen.queryByText(/No compatible characters available/)).toBeNull();
+    expect(screen.queryByText(/not Flexible sheets/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Accept Invitation' })).toBeEnabled();
   });
 });

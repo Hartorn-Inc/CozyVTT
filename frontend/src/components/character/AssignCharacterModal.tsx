@@ -9,6 +9,7 @@ import type { CharacterSummary, Campaign } from '@/types';
 import api from '@/services/api';
 import GameSystemBadge from '@/components/common/GameSystemBadge';
 import { Button, Modal } from '@/components/ui';
+import { getGameSystemLabel } from '@/constants/game-systems';
 import { apiErrorMessage } from '@/utils/errors';
 import { systemsCompatible } from '@/utils/gameSystemCompatibility';
 
@@ -20,6 +21,16 @@ interface AssignCharacterModalProps {
   onConfirm: (characterId: string, campaignId: string | null) => Promise<void>;
 }
 
+/** Unassign when there is no current Campaign, or when that Campaign is a mismatch. */
+function defaultCampaignId(
+  character: CharacterSummary | null,
+  currentCampaign: Campaign | null | undefined
+): string | null {
+  if (!character || !currentCampaign) return null;
+  if (!systemsCompatible(character.gameSystem, currentCampaign.gameSystem)) return null;
+  return currentCampaign.id;
+}
+
 export default function AssignCharacterModal({
   isOpen,
   character,
@@ -29,7 +40,7 @@ export default function AssignCharacterModal({
 }: AssignCharacterModalProps) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(
-    currentCampaign?.id || null
+    defaultCampaignId(character, currentCampaign)
   );
   const [loading, setLoading] = useState(false);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
@@ -39,9 +50,9 @@ export default function AssignCharacterModal({
   useEffect(() => {
     if (isOpen) {
       fetchCampaigns();
-      setSelectedCampaignId(currentCampaign?.id || null);
+      setSelectedCampaignId(defaultCampaignId(character, currentCampaign));
     }
-  }, [isOpen, currentCampaign]);
+  }, [isOpen, currentCampaign, character]);
 
   const fetchCampaigns = async () => {
     setLoadingCampaigns(true);
@@ -76,16 +87,16 @@ export default function AssignCharacterModal({
   const handleClose = () => {
     if (!loading) {
       setError('');
-      setSelectedCampaignId(currentCampaign?.id || null);
+      setSelectedCampaignId(defaultCampaignId(character, currentCampaign));
       onClose();
     }
   };
 
   if (!character) return null;
 
-  // Filter compatible campaigns — game systems must match exactly:
-  // flexible character → only flexible (null) campaigns
-  // typed character → only campaigns with the same game system
+  // Filter compatible campaigns — ADR 0015:
+  // typed Character → same-system Campaigns AND Campaigns with no game system
+  // Flexible sheet → only Campaigns with no game system
   const compatibleCampaigns = campaigns.filter((campaign) => systemsCompatible(character.gameSystem, campaign.gameSystem));
 
   // Check if selected campaign is compatible
@@ -157,53 +168,13 @@ export default function AssignCharacterModal({
                     <div className="flex items-center justify-center py-8">
                       <Loader2 className="w-6 h-6 text-brand-ink animate-spin" />
                     </div>
-                  ) : compatibleCampaigns.length === 0 ? (
-                    <div className="bg-warm-amber/10 border border-warm-amber/30 rounded-lg p-4">
-                      <div className="flex items-start gap-3">
-                        <AlertCircle className="w-5 h-5 text-warm-amber flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="text-sm text-stone-gray">
-                            No compatible campaigns found. Create a campaign with the same
-                            game system as this character.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
                   ) : (
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {/* Unassign Option */}
-                      <label
-                        className={`flex items-start p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                          selectedCampaignId === null
-                            ? 'border-moss-green bg-moss-green/5'
-                            : 'border-ink/10 hover:border-moss-green/50'
-                        } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
-                      >
-                        <input
-                          type="radio"
-                          name="campaign"
-                          value=""
-                          checked={selectedCampaignId === null}
-                          onChange={() => setSelectedCampaignId(null)}
-                          disabled={loading}
-                          className="mt-1 mr-3"
-                        />
-                        <div className="flex-1">
-                          <div className="font-semibold text-ink">
-                            Unassigned
-                          </div>
-                          <p className="text-sm text-ink-muted mt-1">
-                            Remove character from any campaign
-                          </p>
-                        </div>
-                      </label>
-
-                      {/* Campaign Options */}
-                      {compatibleCampaigns.map((campaign) => (
+                      {/* Unassign: always when already in a Campaign, or when any compatible join target exists */}
+                      {(currentCampaign || compatibleCampaigns.length > 0) && (
                         <label
-                          key={campaign.id}
                           className={`flex items-start p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                            selectedCampaignId === campaign.id
+                            selectedCampaignId === null
                               ? 'border-moss-green bg-moss-green/5'
                               : 'border-ink/10 hover:border-moss-green/50'
                           } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -211,40 +182,88 @@ export default function AssignCharacterModal({
                           <input
                             type="radio"
                             name="campaign"
-                            value={campaign.id}
-                            checked={selectedCampaignId === campaign.id}
-                            onChange={() => setSelectedCampaignId(campaign.id)}
+                            value=""
+                            checked={selectedCampaignId === null}
+                            onChange={() => setSelectedCampaignId(null)}
                             disabled={loading}
                             className="mt-1 mr-3"
                           />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span className="font-semibold text-ink truncate">
-                                {campaign.name}
-                              </span>
-                              <GameSystemBadge gameSystem={campaign.gameSystem} size="sm" />
+                          <div className="flex-1">
+                            <div className="font-semibold text-ink">
+                              Unassigned
                             </div>
-                            {campaign.description && (
-                              <p className="text-sm text-ink-muted line-clamp-2">
-                                {campaign.description}
-                              </p>
-                            )}
+                            <p className="text-sm text-ink-muted mt-1">
+                              Remove character from any campaign
+                            </p>
                           </div>
                         </label>
-                      ))}
+                      )}
+
+                      {compatibleCampaigns.length === 0 ? (
+                        <div className="bg-warm-amber/10 border border-warm-amber/30 rounded-lg p-4">
+                          <div className="flex items-start gap-3">
+                            <AlertCircle className="w-5 h-5 text-warm-amber flex-shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-sm text-stone-gray">
+                                {currentCampaign
+                                  ? character.gameSystem
+                                    ? 'No compatible Campaigns found. You can unassign this Character now. Creating a Campaign with the same Game system as this Character, or a Campaign with no game system, is optional.'
+                                    : 'No compatible Campaigns found. You can unassign this Character now. A Flexible sheet can only join a Campaign with no game system — creating one is optional.'
+                                  : character.gameSystem
+                                    ? 'No compatible Campaigns found. Create a Campaign with the same Game system as this Character, or a Campaign with no game system.'
+                                    : 'No compatible Campaigns found. A Flexible sheet can only join a Campaign with no game system.'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        compatibleCampaigns.map((campaign) => (
+                          <label
+                            key={campaign.id}
+                            className={`flex items-start p-4 rounded-lg border-2 cursor-pointer transition-all ${
+                              selectedCampaignId === campaign.id
+                                ? 'border-moss-green bg-moss-green/5'
+                                : 'border-ink/10 hover:border-moss-green/50'
+                            } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          >
+                            <input
+                              type="radio"
+                              name="campaign"
+                              value={campaign.id}
+                              checked={selectedCampaignId === campaign.id}
+                              onChange={() => setSelectedCampaignId(campaign.id)}
+                              disabled={loading}
+                              className="mt-1 mr-3"
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2 mb-1">
+                                <span className="font-semibold text-ink truncate">
+                                  {campaign.name}
+                                </span>
+                                <GameSystemBadge gameSystem={campaign.gameSystem} size="sm" />
+                              </div>
+                              {campaign.description && (
+                                <p className="text-sm text-ink-muted line-clamp-2">
+                                  {campaign.description}
+                                </p>
+                              )}
+                            </div>
+                          </label>
+                        ))
+                      )}
                     </div>
                   )}
                 </div>
 
                 {/* Game System Compatibility Info */}
-                {character.gameSystem && (
-                  <div className="bg-moss-green/10 border border-moss-green/30 rounded-lg p-3">
-                    <p className="text-xs text-stone-gray">
-                      <strong className="text-brand-ink">Note:</strong> Only showing campaigns
-                      that use {character.gameSystem}.
-                    </p>
-                  </div>
-                )}
+                <div className="bg-moss-green/10 border border-moss-green/30 rounded-lg p-3">
+                  <p className="text-xs text-stone-gray">
+                    <strong className="text-brand-ink">Note:</strong>{' '}
+                    {character.gameSystem
+                      ? `Only showing Campaigns that use ${getGameSystemLabel(character.gameSystem, true)}. Campaigns with no game system are included.`
+                      : 'A Flexible sheet can only join a Campaign with no game system.'}
+                  </p>
+                </div>
               </div>
 
       {/* Actions */}
