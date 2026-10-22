@@ -18,7 +18,6 @@ import {
   Target,
   Zap,
   Skull,
-  Edit,
   Dices,
 } from 'lucide-react';
 import ProficiencyIndicator, {
@@ -40,7 +39,8 @@ import type {
   SheetChrome,
 } from '../../../types/game-systems';
 import { isHexColor } from '@/utils/styleAllowlists';
-import { customHeaderFill, customHeaderTextClass, CUSTOM_HEADER_CONTROL_SURFACE } from '@/utils/themeColor';
+import { SheetHeader } from '../SheetHeader';
+import { PF2E_COLOR_PRESETS, PF2E_DEFAULT_HEX } from './colorPresets';
 
 interface Pathfinder2eCharacterViewProps {
   character: Character;
@@ -73,17 +73,6 @@ const formatSpellRank = (rank: number): string => {
   return rank + (suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]);
 };
 
-// Pathfinder 2e color presets (matching editor)
-const COLOR_PRESETS = [
-  { name: 'Pathfinder Blue', from: 'from-blue-700', to: 'to-blue-900', accent: 'blue-700', hex: '#1d4ed8' },
-  { name: 'Golden', from: 'from-amber-600', to: 'to-amber-800', accent: 'amber-600', hex: '#d97706' },
-  { name: 'Emerald', from: 'from-emerald-700', to: 'to-emerald-900', accent: 'emerald-700', hex: '#047857' },
-  { name: 'Royal Purple', from: 'from-purple-700', to: 'to-purple-900', accent: 'purple-700', hex: '#7e22ce' },
-  { name: 'Crimson', from: 'from-rose-700', to: 'to-rose-900', accent: 'rose-700', hex: '#be123c' },
-  { name: 'Teal', from: 'from-teal-700', to: 'to-teal-900', accent: 'teal-700', hex: '#0f766e' },
-  { name: 'Indigo', from: 'from-indigo-700', to: 'to-indigo-900', accent: 'indigo-700', hex: '#4338ca' },
-  { name: 'Slate', from: 'from-slate-700', to: 'to-slate-900', accent: 'slate-700', hex: '#334155' },
-];
 
 export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps> = ({
   character,
@@ -91,7 +80,7 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
   onRoll,
 }) => {
   const data = projectCharacterData(character.gameSystem, character.data) as PF2eCharacterData & SheetChrome;
-  const [selectedColor, setSelectedColor] = useState(COLOR_PRESETS[0]);
+  const [selectedColor, setSelectedColor] = useState(PF2E_COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');
   const [rollPopup, setRollPopup] = useState<RollPopupState | null>(null);
@@ -122,7 +111,7 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
   // Load saved color preference from character data
   useEffect(() => {
     if (data.themeColor) {
-      const savedColor = COLOR_PRESETS.find(c => c.name === data.themeColor);
+      const savedColor = PF2E_COLOR_PRESETS.find(c => c.name === data.themeColor);
       if (savedColor) {
         setSelectedColor(savedColor);
         setIsCustomColor(false);
@@ -135,11 +124,6 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
 
   // Render character header with name, class, level, and basic info
   const renderHeader = () => {
-    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
-
-    // Passing custom hex keeps white name text. Stored pale hex uses dark
-    // text so the view is readable; the next save is still refused.
-    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-white';
     const chipClass = isCustomColor
       ? 'px-3 py-1 rounded-full text-sm border border-current'
       : 'px-3 py-1 bg-white/10 rounded-full text-sm';
@@ -147,40 +131,34 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
       ? 'px-3 py-1 rounded-full text-sm font-medium border border-current'
       : 'px-3 py-1 bg-white/20 rounded-full text-sm font-medium';
 
-    const headerClasses = isCustomColor
-      ? `${headerTextColor} p-6 rounded-t-lg relative`
-      : `bg-gradient-to-r ${selectedColor.from} ${selectedColor.to} ${headerTextColor} p-6 rounded-t-lg relative`;
-
     return (
-      <div className={headerClasses} style={headerStyle}>
-        {/* Edit Button */}
-        {onEdit && (
-          <button
-            onClick={onEdit}
-            className={`absolute top-4 right-4 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 font-medium ${
-              isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'
-            }`}
-            title="Edit character"
-          >
-            <Edit className="w-4 h-4" />
-            <span>Edit</span>
-          </button>
-        )}
-
-      <div className="flex items-start justify-between pr-24">
-        <div className="flex items-start space-x-4">
-          {/* Token Image */}
-          {character.tokenImageUrl && (
-            <img
-              src={character.tokenImageUrl}
-              alt={data.characterName}
-              className="w-24 h-24 rounded-full border-4 border-white/20 object-cover"
-            />
-          )}
-
-          {/* Character Info */}
-          <div>
-            <h2 className="text-3xl font-bold mb-2">{data.characterName}</h2>
+      <SheetHeader
+        variant="gradient"
+        mode="view"
+        presets={PF2E_COLOR_PRESETS}
+        selectedPreset={selectedColor}
+        isCustomColor={isCustomColor}
+        customColorHex={customColorHex}
+        defaultHex={PF2E_DEFAULT_HEX}
+        token={{
+          sizeClass: 'w-24 h-24',
+          preview: character.tokenImageUrl ?? null,
+          alt: data.characterName,
+          circleClass: 'border-4 border-white/20',
+          emptyClass: 'bg-stone-800',
+          placeholder: null,
+          hover: 'none',
+          showEmpty: false,
+        }}
+        name={{
+          value: data.characterName || '',
+          placeholder: 'Character Name',
+          headingClassName: 'mb-2',
+          emptyDisplay: 'Unnamed Character',
+        }}
+        onEdit={onEdit}
+        meta={
+          <>
             <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
               <span className={chipStrongClass}>
                 Level {data.level} {data.class}
@@ -209,23 +187,23 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
                 Player: {data.playerName}
               </div>
             )}
-          </div>
-        </div>
-
-        <div className="text-right">
-          <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
-          <div className="text-2xl font-bold">{data.experiencePoints || 0}</div>
-          {data.heroPoints !== undefined && (
-            <div className="mt-2">
-              <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
-              <div className="text-xl font-bold">
-                {data.heroPoints} / 3
+          </>
+        }
+        trailing={
+          <div className="text-right">
+            <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
+            <div className="text-2xl font-bold">{data.experiencePoints || 0}</div>
+            {data.heroPoints !== undefined && (
+              <div className="mt-2">
+                <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
+                <div className="text-xl font-bold">
+                  {data.heroPoints} / 3
+                </div>
               </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+            )}
+          </div>
+        }
+      />
     );
   };
 

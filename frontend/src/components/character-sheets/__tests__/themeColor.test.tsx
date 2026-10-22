@@ -240,13 +240,44 @@ describe('Pathfinder custom header chips', () => {
   });
 });
 
-describe.each(STORED_CUSTOM_COLOURS)('Call of Cthulhu 7e view palette control for %s', (themeColor) => {
-  it('sits on a transparent current-color surface', () => {
-    render(<CallOfCthulhu7eCharacterView character={cocCharacter({ themeColor })} />);
-    const button = paletteButton();
-    expect(button.className).not.toContain('bg-white/20');
-    expect(button.className).not.toContain('bg-white/30');
-    expect(button.className).toContain('bg-transparent');
-    expect(button.className).toContain('border-current');
+describe('Call of Cthulhu 7e view has no palette', () => {
+  it('does not render a colour picker and still paints a stored custom colour', () => {
+    render(
+      <CallOfCthulhu7eCharacterView character={cocCharacter({ themeColor: '#14532d' })} />,
+    );
+    expect(screen.queryByTitle('Change theme color')).toBeNull();
+    expect(screen.queryByLabelText('Custom colour hex code')).toBeNull();
+    const header = document.querySelector('[style*="background"]');
+    expect(header?.getAttribute('style') ?? '').toMatch(
+      /background:\s*(#14532d|rgb\(20,\s*83,\s*45\))/i,
+    );
+  });
+});
+
+describe('view Edit control', () => {
+  it('shows Edit on D&D, Pathfinder, and Call of Cthulhu views when onEdit is passed', () => {
+    const onEdit = vi.fn();
+    const { unmount: unmountDnD } = render(
+      <DnD5eCharacterView character={dndCharacter()} onEdit={onEdit} />,
+    );
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    unmountDnD();
+
+    const { unmount: unmountPf } = render(
+      <Pathfinder2eCharacterView character={pf2eCharacter()} onEdit={onEdit} />,
+    );
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    unmountPf();
+
+    render(<CallOfCthulhu7eCharacterView character={cocCharacter()} onEdit={onEdit} />);
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+  });
+
+  it('shows Call of Cthulhu Edit without a palette button', () => {
+    render(
+      <CallOfCthulhu7eCharacterView character={cocCharacter()} onEdit={vi.fn()} />,
+    );
+    expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+    expect(screen.queryByTitle('Change theme color')).toBeNull();
   });
 });

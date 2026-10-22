@@ -290,6 +290,22 @@ describe('Character template routes', () => {
   });
 
   describe('visibility', () => {
+    it('lists published templates in the list envelope, not the starter registry', async () => {
+      const res = await otherAgent.get('/api/character-templates?limit=100');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(
+        expect.objectContaining({
+          templates: expect.any(Array),
+          total: expect.any(Number),
+          limit: expect.any(Number),
+          offset: expect.any(Number),
+        }),
+      );
+      expect(res.body.data).toBeUndefined();
+      expect(res.body.name).toBeUndefined();
+      expect(res.body.description).toBeUndefined();
+    });
+
     it('shows one user\'s template to another', async () => {
       await createTemplate(authorAgent, { name: 'Shared Template' });
 

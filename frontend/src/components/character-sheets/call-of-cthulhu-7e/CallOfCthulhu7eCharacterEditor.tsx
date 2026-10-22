@@ -12,10 +12,7 @@ import {
   Swords,
   Package,
   BookText,
-  Save,
-  X,
   Upload,
-  Palette,
 } from 'lucide-react';
 import { Character } from '../../../types';
 import type { CharacterData } from '../../../types';
@@ -62,15 +59,9 @@ import { LIMIT_NOTE_CLASS } from './limitNoteClass';
 import {
   toStoredHexColor,
   customHeaderColourError,
-  customHeaderFill,
-  customHeaderTextClass,
-  customHeaderPlaceholderClass,
-  CUSTOM_HEADER_FIELD_SURFACE,
-  CUSTOM_HEADER_CONTROL_SURFACE,
-  CUSTOM_HEADER_FIELD_BORDER,
-  CUSTOM_HEADER_FIELD_FOCUS,
-  THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
+import { SheetHeader, type ColorPreset } from '../SheetHeader';
+import { COC7E_COLOR_PRESETS, COC7E_DEFAULT_HEX } from './colorPresets';
 import { omitUnnamedRows } from '@/utils/sheetNamedRows';
 import { setCoC7eSkillField } from './skillEdits';
 import { cocDodgeBase, settleDodge } from './dodge';
@@ -83,7 +74,7 @@ import {
   cocHalfAndFifth,
 } from './derivedStats';
 import { parsePossessions, formatPossessions } from './possessions';
-import { SHEET_LIST_MAX, SHEET_NAME_MAX } from '@/constants/sheetLimits';
+import { SHEET_LIST_MAX } from '@/constants/sheetLimits';
 import { assetNameFrom } from '@/utils/assetName';
 
 interface CallOfCthulhu7eCharacterEditorProps {
@@ -115,19 +106,6 @@ const TABS: Tab[] = [
   { id: 'backstory', label: 'Backstory', icon: BookText },
 ];
 
-// Call of Cthulhu color presets - Vintage 1920s aesthetic (same as view)
-const COLOR_PRESETS = [
-  { name: 'Dark Forest', from: 'from-green-900', to: 'to-green-800', accent: 'green-800', border: 'amber-600', hex: '#14532d' },
-  { name: 'Noir Shadow', from: 'from-slate-900', to: 'to-slate-800', accent: 'slate-800', border: 'amber-500', hex: '#0f172a' },
-  { name: 'Deep Sepia', from: 'from-sepia-900', to: 'to-sepia-800', accent: 'sepia-800', border: 'sepia-400', hex: '#2E2419' },
-  { name: 'Midnight Blue', from: 'from-blue-950', to: 'to-blue-900', accent: 'blue-900', border: 'amber-600', hex: '#172554' },
-  { name: 'Burgundy Wine', from: 'from-red-950', to: 'to-red-900', accent: 'red-900', border: 'amber-500', hex: '#450a0a' },
-  { name: 'Victorian Purple', from: 'from-purple-950', to: 'to-purple-900', accent: 'purple-900', border: 'amber-600', hex: '#3b0764' },
-  { name: 'Emerald Mist', from: 'from-emerald-900', to: 'to-emerald-800', accent: 'emerald-800', border: 'amber-600', hex: '#064e3b' },
-  { name: 'Charcoal Gray', from: 'from-gray-900', to: 'to-gray-800', accent: 'gray-800', border: 'amber-500', hex: '#111827' },
-  { name: 'Teal Shadow', from: 'from-teal-950', to: 'to-teal-900', accent: 'teal-900', border: 'amber-600', hex: '#042f2e' },
-  { name: 'Amber Dusk', from: 'from-amber-900', to: 'to-amber-800', accent: 'amber-800', border: 'amber-400', hex: '#78350f' },
-];
 
 /**
  * Calculate damage bonus and build from STR + SIZ
@@ -167,12 +145,10 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const [isSaving, setIsSaving] = useState(false);
-  const [themeColor, setThemeColor] = useState(COLOR_PRESETS[0]);
+  const [themeColor, setThemeColor] = useState(COC7E_COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const hexInputRef = useRef<HTMLInputElement>(null);
-  const [hexFocusNonce, setHexFocusNonce] = useState(0);
+  const [colorPickerFocusKey, setColorPickerFocusKey] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const data = character.data as CoC7eFormData;
@@ -427,8 +403,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
     const colourError = customHeaderColourError(isCustomColor, customColorHex);
     if (colourError) {
       setErrors((prev) => ({ ...prev, themeColor: colourError }));
-      setShowColorPicker(true);
-      setHexFocusNonce((n) => n + 1);
+      setColorPickerFocusKey((n) => n + 1);
       return;
     }
     setIsSaving(true);
@@ -503,7 +478,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
   // Load saved color preference from character metadata
   useEffect(() => {
     if (formData.themeColor) {
-      const savedColor = COLOR_PRESETS.find(c => c.name === formData.themeColor);
+      const savedColor = COC7E_COLOR_PRESETS.find(c => c.name === formData.themeColor);
       if (savedColor) {
         setThemeColor(savedColor);
         setIsCustomColor(false);
@@ -521,12 +496,6 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
     }
   }, [formData.themeColor]);
 
-  useEffect(() => {
-    if (!showColorPicker || hexFocusNonce === 0) return;
-    hexInputRef.current?.focus();
-    hexInputRef.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [showColorPicker, hexFocusNonce]);
-
   // Handle custom color change
   const handleCustomColorChange = (hex: string) => {
     setCustomColorHex(hex);
@@ -535,204 +504,58 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
   };
 
   // Handle preset color selection
-  const handlePresetColorSelect = (color: typeof COLOR_PRESETS[0]) => {
-    setThemeColor(color);
+  const handlePresetColorSelect = (color: ColorPreset) => {
+    const vintage =
+      COC7E_COLOR_PRESETS.find((preset) => preset.name === color.name) ?? COC7E_COLOR_PRESETS[0];
+    setThemeColor(vintage);
     setIsCustomColor(false);
-    setShowColorPicker(false);
     setErrors((prev) => ({ ...prev, themeColor: '' }));
   };
 
   // Render header with save/cancel buttons
-  const renderHeader = () => {
-    // Determine the current background style
-    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
-
-    // Passing custom hex keeps white name text. Stored pale hex uses dark
-    // text so the header is readable; save still refuses until it is a
-    // passing hex or a preset. Preset chrome stays parchment.
-    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-parchment';
-    const headerPlaceholder = isCustomColor ? customHeaderPlaceholderClass(customColorHex) : 'placeholder:text-parchment-light/50';
-    const headerFieldBg = isCustomColor ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10';
-    const headerFieldBorder = isCustomColor ? CUSTOM_HEADER_FIELD_BORDER : 'border-white/30';
-    const headerFieldFocus = isCustomColor ? CUSTOM_HEADER_FIELD_FOCUS : 'focus:ring-2 focus:ring-amber-500';
-    const headerClasses = isCustomColor
-      ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
-      : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
-
-    return (
-      <div className={headerClasses} style={headerStyle}>
-        {/* Color Picker Button */}
-        <button
-          onClick={() => setShowColorPicker(!showColorPicker)}
-          className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`}
-          title="Change theme color"
-          aria-invalid={Boolean(errors.themeColor)}
-          aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}
-        >
-          <Palette className="w-5 h-5" />
-        </button>
-        {errors.themeColor && !showColorPicker && (
-          <p
-            id={THEME_COLOR_ERROR_ID}
-            role="alert"
-            className="absolute top-14 right-4 z-10 max-w-xs rounded-lg bg-white px-3 py-2 text-xs text-red-600 shadow-lg"
-          >
-            {errors.themeColor}
-          </p>
-        )}
-
-        {/* Color Picker Dropdown */}
-        {showColorPicker && (
-          <div className="absolute top-16 right-4 bg-white text-stone-800 rounded-lg shadow-xl p-4 z-10 border-2 border-stone-200 max-w-md">
-            <h4 className="font-semibold mb-3">Theme Color</h4>
-
-            {/* Preset Colors */}
-            <div className="grid grid-cols-3 gap-2 mb-4">
-              {COLOR_PRESETS.map((color) => (
-                <button
-                  key={color.name}
-                  onClick={() => handlePresetColorSelect(color)}
-                  className={`px-2 py-2 rounded-lg text-sm font-medium transition-all ${
-                    !isCustomColor && themeColor.name === color.name
-                      ? 'ring-2 ring-stone-400 bg-stone-100'
-                      : 'hover:bg-stone-50'
-                  }`}
-                >
-                  <div className={`w-full h-6 rounded mb-1 bg-gradient-to-r ${color.from} ${color.to}`} />
-                  <div className="text-xs">{color.name}</div>
-                </button>
-              ))}
-            </div>
-
-            {/* Custom Color Section */}
-            <div className="border-t pt-4 space-y-3">
-              <h5 className="text-sm font-semibold text-stone-700">Custom Color</h5>
-
-              <div className="flex items-center space-x-2">
-                {/* Native Color Picker */}
-                <input
-                  type="color"
-                  value={customColorHex || '#14532d'}
-                  onChange={(e) => handleCustomColorChange(e.target.value)}
-                  className="w-12 h-12 rounded cursor-pointer border-2 border-stone-300"
-                  title="Pick a custom color"
-                />
-
-                {/* Hex Code Input */}
-                <div className="flex-1">
-                  <input
-                    type="text"
-                    ref={hexInputRef}
-                    value={customColorHex}
-                    onChange={(e) => {
-                      const hex = e.target.value;
-                      // Validate hex format
-                      if (hex === '' || /^#[0-9A-Fa-f]{0,6}$/.test(hex)) {
-                        handleCustomColorChange(hex);
-                      }
-                    }}
-                    placeholder="#14532d"
-                    aria-label="Custom colour hex code"
-                    aria-invalid={Boolean(errors.themeColor)}
-                    aria-describedby={errors.themeColor ? THEME_COLOR_ERROR_ID : undefined}
-                    className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <div className="text-xs text-stone-500 mt-1">Enter hex code (e.g., #14532d)</div>
-                  {errors.themeColor && (
-                    <p id={THEME_COLOR_ERROR_ID} role="alert" className="text-xs text-red-600 mt-1">
-                      {errors.themeColor}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Custom Color Preview */}
-              {isCustomColor && customColorHex && /^#[0-9A-Fa-f]{6}$/.test(customColorHex) && (
-                <div className="flex items-center space-x-2 p-2 bg-stone-50 rounded">
-                  <div
-                    className="w-8 h-8 rounded"
-                    style={customHeaderFill(customColorHex)}
-                  />
-                  <span className="text-sm font-medium">Custom: {customColorHex}</span>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Action Buttons */}
-        <div className="absolute top-4 right-16 flex items-center space-x-2">
-        <button
-          onClick={handleSave}
-          disabled={isSaving}
-          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg disabled:opacity-50"
-        >
-          <Save className="w-4 h-4" />
-          <span>{isSaving ? 'Saving...' : 'Save'}</span>
-        </button>
-        <button
-          onClick={onCancel}
-          className="px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg"
-        >
-          <X className="w-4 h-4" />
-          <span>Cancel</span>
-        </button>
-      </div>
-
-      {/* pr-64, matching the other sheets: the absolute Save/Cancel cluster is
-          203px wide and starts 64px in, so it needs more clearance than the
-          pr-48 that was here. */}
-      <div className="flex items-start space-x-4 pr-64">
-        {/* Token Image */}
-        <div className="flex-shrink-0 relative">
-          <label htmlFor="token-upload" className="cursor-pointer group">
-            {tokenImagePreview ? (
-              <img
-                src={tokenImagePreview}
-                alt={formData.investigatorName || 'Investigator'}
-                className="w-24 h-24 rounded-full border-4 border-amber-600/50 object-cover shadow-xl group-hover:opacity-75 transition-opacity"
-              />
-            ) : (
-              <div className="w-24 h-24 rounded-full border-4 border-amber-600/50 bg-sepia-900 flex items-center justify-center shadow-xl group-hover:bg-sepia-800 transition-colors">
-                <Upload className="w-8 h-8 text-amber-400/60" />
-              </div>
-            )}
-          </label>
-          <input
-            id="token-upload"
-            type="file"
-            accept="image/*"
-            onChange={handleTokenImageChange}
-            className="hidden"
-          />
-          {errors.tokenImage && (
-            <div className="absolute top-full mt-1 text-xs text-red-200 whitespace-nowrap">
-              {errors.tokenImage}
-            </div>
-          )}
-          {!character.campaignId && (
-            <div className="absolute top-full mt-1 text-xs text-amber-200 whitespace-nowrap">
-              Saves as personal token
-            </div>
-          )}
-        </div>
-
-        {/* Character Info — min-w-0 alongside flex-1 so the column can shrink
-            below its content width and stay inside the reserved padding. */}
-        <div className="flex-1 min-w-0 space-y-3">
-          <input
-            type="text"
-            value={formData.investigatorName || ''}
-            onChange={(e) => setFormData({ ...formData, investigatorName: e.target.value })}
-            maxLength={SHEET_NAME_MAX}
-            placeholder="Investigator Name"
-            className={`text-3xl font-bold ${headerFieldBg} border-2 ${headerFieldBorder} rounded px-3 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
-          />
-
+  // flex-1 on the name row/column, with SheetHeader's min-w-0, so the
+  // column can shrink below its content width and stay inside the reserved padding.
+  const renderHeader = () => (
+    <SheetHeader
+      variant="vintage"
+      mode="edit"
+      presets={COC7E_COLOR_PRESETS}
+      selectedPreset={themeColor}
+      isCustomColor={isCustomColor}
+      customColorHex={customColorHex}
+      defaultHex={COC7E_DEFAULT_HEX}
+      token={{
+        sizeClass: 'w-24 h-24',
+        preview: tokenImagePreview,
+        alt: formData.investigatorName || 'Investigator',
+        circleClass: 'border-4 border-amber-600/50 shadow-xl',
+        emptyClass: 'bg-sepia-900',
+        placeholder: <Upload className="w-8 h-8 text-amber-400/60" />,
+        hover: 'fade',
+        onFileChange: handleTokenImageChange,
+        error: errors.tokenImage,
+        personalHint: !character.campaignId,
+      }}
+      name={{
+        value: formData.investigatorName || '',
+        onChange: (value) => setFormData({ ...formData, investigatorName: value }),
+        placeholder: 'Investigator Name',
+      }}
+      extraNameRowClassName="flex-1"
+      extraNameColumnClassName="flex-1 space-y-3"
+      onSave={handleSave}
+      onCancel={onCancel}
+      isSaving={isSaving}
+      colorError={errors.themeColor}
+      onCustomColorChange={handleCustomColorChange}
+      onPresetSelect={handlePresetColorSelect}
+      colorPickerFocusKey={colorPickerFocusKey}
+      meta={(paint) => (
+        <>
           <div className="grid grid-cols-3 gap-3">
             {/* Read-only: the player name is whoever owns this investigator,
                 filled from their display name at creation. */}
-            <span className={`text-sm px-2 py-1 ${headerTextColor} self-center`}>
+            <span className={`text-sm px-2 py-1 ${paint.text} self-center`}>
               {formData.playerName || '—'}
             </span>
             <input
@@ -740,14 +563,14 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.occupation || ''}
               onChange={(e) => setFormData({ ...formData, occupation: e.target.value })}
               placeholder="Occupation"
-              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
+              className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
             <input
               type="text"
               value={formData.era || ''}
               onChange={(e) => setFormData({ ...formData, era: e.target.value })}
               placeholder="Era (e.g., 1920s)"
-              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
+              className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
           </div>
 
@@ -756,7 +579,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.age ?? 0}
               onChange={(v: number) => setFormData({ ...formData, age: v })}
               placeholder="Age"
-              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
+              className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
               fallback={0}
             />
             <input
@@ -764,14 +587,14 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.sex || ''}
               onChange={(e) => setFormData({ ...formData, sex: e.target.value })}
               placeholder="Sex"
-              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
+              className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
             <input
               type="text"
               value={formData.residence || ''}
               onChange={(e) => setFormData({ ...formData, residence: e.target.value })}
               placeholder="Residence"
-              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 col-span-2 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
+              className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 col-span-2 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
           </div>
 
@@ -780,13 +603,12 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
             value={formData.birthplace || ''}
             onChange={(e) => setFormData({ ...formData, birthplace: e.target.value })}
             placeholder="Birthplace"
-            className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
+            className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 w-full ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
           />
-        </div>
-      </div>
-    </div>
-    );
-  };
+        </>
+      )}
+    />
+  );
 
   // Render tabs
   const renderTabs = () => (

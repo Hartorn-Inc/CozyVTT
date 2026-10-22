@@ -17,7 +17,6 @@ import {
   User,
   BookOpen,
   Target,
-  Edit,
   Dices,
 } from 'lucide-react';
 import { hitDieExpression, hitDiceMaximum, spendRoll, canSpendHitDie } from '@/utils/hitDice';
@@ -48,7 +47,8 @@ import { projectCharacterData } from '../../../utils/sheetProjection';
 import { collectSheetFeatures } from '../../../utils/featureEntries';
 import { readProficiencyGroups } from '../../../utils/proficiencies';
 import { isHexColor } from '@/utils/styleAllowlists';
-import { customHeaderFill, customHeaderTextClass, CUSTOM_HEADER_CONTROL_SURFACE } from '@/utils/themeColor';
+import { SheetHeader } from '../SheetHeader';
+import { DND5E_COLOR_PRESETS, DND5E_DEFAULT_HEX } from './colorPresets';
 
 interface DnD5eCharacterViewProps {
   character: Character;
@@ -86,21 +86,6 @@ const TABS: Tab[] = [
   { id: 'bio', label: 'Biography', icon: User },
 ];
 
-// D&D 5e color presets for character sheets (same as editor)
-const COLOR_PRESETS = [
-  { name: 'Classic Red', from: 'from-red-700', to: 'to-red-900', accent: 'red-700', hex: '#b91c1c' },
-  { name: 'Royal Blue', from: 'from-blue-700', to: 'to-blue-900', accent: 'blue-700', hex: '#1d4ed8' },
-  { name: 'Forest Green', from: 'from-green-700', to: 'to-green-900', accent: 'green-700', hex: '#15803d' },
-  { name: 'Deep Purple', from: 'from-purple-700', to: 'to-purple-900', accent: 'purple-700', hex: '#7e22ce' },
-  { name: 'Amber Gold', from: 'from-amber-600', to: 'to-amber-800', accent: 'amber-600', hex: '#d97706' },
-  { name: 'Slate Gray', from: 'from-slate-700', to: 'to-slate-900', accent: 'slate-700', hex: '#334155' },
-  { name: 'Crimson', from: 'from-rose-700', to: 'to-rose-900', accent: 'rose-700', hex: '#be123c' },
-  { name: 'Teal', from: 'from-teal-700', to: 'to-teal-900', accent: 'teal-700', hex: '#0f766e' },
-  { name: 'Indigo', from: 'from-indigo-700', to: 'to-indigo-900', accent: 'indigo-700', hex: '#4338ca' },
-  { name: 'Emerald', from: 'from-emerald-700', to: 'to-emerald-900', accent: 'emerald-700', hex: '#047857' },
-  { name: 'Orange', from: 'from-orange-700', to: 'to-orange-900', accent: 'orange-700', hex: '#c2410c' },
-  { name: 'Pink', from: 'from-pink-700', to: 'to-pink-900', accent: 'pink-700', hex: '#be185d' },
-];
 
 /**
  * DnD5eCharacterView - Read-only D&D 5e character sheet
@@ -108,7 +93,7 @@ const COLOR_PRESETS = [
 export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ character, onEdit, onRoll, onSpendHitDie }) => {
   const [activeTab, setActiveTab] = useState<TabId>('stats');
   const data = projectCharacterData(character.gameSystem, character.data) as DnD5eCharacterData & SheetChrome;
-  const [themeColor, setThemeColor] = useState(COLOR_PRESETS[0]);
+  const [themeColor, setThemeColor] = useState(DND5E_COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');
   const [rollPopup, setRollPopup] = useState<RollPopupState | null>(null);
@@ -139,7 +124,7 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
   // Load saved color preference from character metadata
   useEffect(() => {
     if (data.themeColor) {
-      const savedColor = COLOR_PRESETS.find(c => c.name === data.themeColor);
+      const savedColor = DND5E_COLOR_PRESETS.find(c => c.name === data.themeColor);
       if (savedColor) {
         setThemeColor(savedColor);
         setIsCustomColor(false);
@@ -156,74 +141,50 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
     return mod >= 0 ? `+${mod}` : `${mod}`;
   };
 
-  // Render character header
-  const renderHeader = () => {
-    // Determine the current background style
-    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
-
-    // Passing custom hex keeps white name text. Stored pale hex uses dark
-    // text so the view is readable; the next save is still refused.
-    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-white';
-    const headerClasses = isCustomColor
-      ? `${headerTextColor} p-6 rounded-t-lg relative`
-      : `bg-gradient-to-r ${themeColor.from} ${themeColor.to} text-white p-6 rounded-t-lg relative`;
-
-    return (
-      <div className={headerClasses} style={headerStyle}>
-        {/* Edit Button */}
-        {onEdit && (
-          <button
-            onClick={onEdit}
-            className={`absolute top-4 right-4 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 font-medium ${
-              isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'
-            }`}
-            title="Edit character"
-          >
-            <Edit className="w-4 h-4" />
-            <span>Edit</span>
-          </button>
-        )}
-
-      <div className="flex items-start justify-between pr-24">
-        <div className="flex items-start space-x-4">
-          {/* Token Image */}
-          <div className="flex-shrink-0">
-            {character.tokenImageUrl ? (
-              <img
-                src={character.tokenImageUrl}
-                alt={data.characterName || 'Character'}
-                className="w-20 h-20 rounded-full border-4 border-white/20 object-cover"
-              />
-            ) : (
-              <div className="w-20 h-20 rounded-full border-4 border-white/20 bg-stone-800 flex items-center justify-center">
-                <User className="w-10 h-10 text-white/40" />
-              </div>
-            )}
-          </div>
-
-          {/* Character Info */}
-          <div>
-            <h2 className="text-3xl font-bold mb-1">{data.characterName || 'Unnamed Character'}</h2>
-            <div className={`flex items-center space-x-4 ${isCustomColor ? '' : 'text-red-100'}`}>
-              <span>
-                Level {data.level} {data.race} {data.class}
-              </span>
-              {data.alignment && <span>• {data.alignment}</span>}
-              {data.background && <span>• {data.background}</span>}
-            </div>
-          </div>
+  const renderHeader = () => (
+    <SheetHeader
+      variant="gradient"
+      mode="view"
+      presets={DND5E_COLOR_PRESETS}
+      selectedPreset={themeColor}
+      isCustomColor={isCustomColor}
+      customColorHex={customColorHex}
+      defaultHex={DND5E_DEFAULT_HEX}
+      token={{
+        sizeClass: 'w-20 h-20',
+        preview: character.tokenImageUrl ?? null,
+        alt: data.characterName || 'Character',
+        circleClass: 'border-4 border-white/20',
+        emptyClass: 'bg-stone-800',
+        placeholder: <User className="w-10 h-10 text-white/40" />,
+        hover: 'none',
+      }}
+      name={{
+        value: data.characterName || '',
+        placeholder: 'Character Name',
+        headingClassName: 'mb-1',
+        emptyDisplay: 'Unnamed Character',
+      }}
+      onEdit={onEdit}
+      meta={
+        <div className={`flex items-center space-x-4 ${isCustomColor ? '' : 'text-red-100'}`}>
+          <span>
+            Level {data.level} {data.race} {data.class}
+          </span>
+          {data.alignment && <span>• {data.alignment}</span>}
+          {data.background && <span>• {data.background}</span>}
         </div>
-
-        {data.experiencePoints !== undefined && (
+      }
+      trailing={
+        data.experiencePoints !== undefined ? (
           <div className="text-right">
             <div className={`text-xs ${isCustomColor ? '' : 'text-red-200'}`}>Experience</div>
             <div className="text-xl font-bold">{data.experiencePoints.toLocaleString()}</div>
           </div>
-        )}
-      </div>
-    </div>
-    );
-  };
+        ) : null
+      }
+    />
+  );
 
   // Render tabs
   const renderTabs = () => (

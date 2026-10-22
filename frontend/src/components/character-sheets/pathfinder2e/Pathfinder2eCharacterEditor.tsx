@@ -13,10 +13,6 @@ import {
   Package,
   BookOpen,
   User,
-  Save,
-  X,
-  Upload,
-  Palette,
   Plus,
   Trash2,
 } from 'lucide-react';
@@ -55,15 +51,9 @@ import { omitUnnamedRows } from '@/utils/sheetNamedRows';
 import {
   toStoredHexColor,
   customHeaderColourError,
-  customHeaderFill,
-  customHeaderTextClass,
-  customHeaderPlaceholderClass,
-  CUSTOM_HEADER_FIELD_SURFACE,
-  CUSTOM_HEADER_CONTROL_SURFACE,
-  CUSTOM_HEADER_FIELD_BORDER,
-  CUSTOM_HEADER_FIELD_FOCUS,
-  THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
+import { SheetHeader, type ColorPreset } from '../SheetHeader';
+import { PF2E_COLOR_PRESETS, PF2E_DEFAULT_HEX } from './colorPresets';
 import {
   readPf2eSpellSlots,
   readPf2eCantrips,
@@ -77,7 +67,6 @@ import {
   PF2E_ITEM_BONUS_MAX,
   PF2E_ITEM_BONUS_MIN,
   SHEET_LIST_MAX,
-  SHEET_NAME_MAX,
   SHEET_ROW_TAGS_MAX,
   SPELL_SLOTS_MAX,
 } from '@/constants/sheetLimits';
@@ -140,30 +129,11 @@ const TABS: Tab[] = [
   { id: 'bio', label: 'Biography', icon: User },
 ];
 
-const COLOR_PRESETS = [
-  { name: 'Pathfinder Blue', from: 'from-blue-700', to: 'to-blue-900', accent: 'blue-700', hex: '#1d4ed8' },
-  { name: 'Golden', from: 'from-amber-600', to: 'to-amber-800', accent: 'amber-600', hex: '#d97706' },
-  { name: 'Emerald', from: 'from-emerald-700', to: 'to-emerald-900', accent: 'emerald-700', hex: '#047857' },
-  { name: 'Royal Purple', from: 'from-purple-700', to: 'to-purple-900', accent: 'purple-700', hex: '#7e22ce' },
-  { name: 'Crimson', from: 'from-rose-700', to: 'to-rose-900', accent: 'rose-700', hex: '#be123c' },
-  { name: 'Teal', from: 'from-teal-700', to: 'to-teal-900', accent: 'teal-700', hex: '#0f766e' },
-  { name: 'Indigo', from: 'from-indigo-700', to: 'to-indigo-900', accent: 'indigo-700', hex: '#4338ca' },
-  { name: 'Slate', from: 'from-slate-700', to: 'to-slate-900', accent: 'slate-700', hex: '#334155' },
-];
 
 const PROFICIENCY_RANKS: ProficiencyRank[] = ['untrained', 'trained', 'expert', 'master', 'legendary'];
 
 const calculateModifier = (score: number): number => Math.floor((score - 10) / 2);
 const formatModifier = (mod: number): string => mod >= 0 ? `+${mod}` : `${mod}`;
-
-const shouldUseWhiteText = (hexColor: string): boolean => {
-  const hex = hexColor.replace('#', '');
-  const r = parseInt(hex.substr(0, 2), 16);
-  const g = parseInt(hex.substr(2, 2), 16);
-  const b = parseInt(hex.substr(4, 2), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance < 0.5;
-};
 
 // TODO(sheets): the inventory's Bulk box stores what is typed as a string, so
 // an item typed as "2" counts as 0 here and in bulkToNumber in BulkTracker, and
@@ -187,9 +157,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>('stats');
   const [isSaving, setIsSaving] = useState(false);
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const hexInputRef = useRef<HTMLInputElement>(null);
-  const [hexFocusNonce, setHexFocusNonce] = useState(0);
+  const [colorPickerFocusKey, setColorPickerFocusKey] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { data: serverConfig } = useServerConfigQuery();
 
@@ -326,7 +294,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
 
   const [tokenImageFile, setTokenImageFile] = useState<File | null>(null);
   const [tokenImagePreview, setTokenImagePreview] = useState<string | null>(character.tokenImageUrl);
-  const [selectedColor, setSelectedColor] = useState(COLOR_PRESETS[0]);
+  const [selectedColor, setSelectedColor] = useState(PF2E_COLOR_PRESETS[0]);
   const [customColorHex, setCustomColorHex] = useState('');
   const [isCustomColor, setIsCustomColor] = useState(false);
 
@@ -363,7 +331,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
   // colour saved elsewhere over the one the user had picked.
   useEffect(() => {
     if (data.themeColor) {
-      const savedColor = COLOR_PRESETS.find(c => c.name === data.themeColor);
+      const savedColor = PF2E_COLOR_PRESETS.find(c => c.name === data.themeColor);
       if (savedColor) {
         setSelectedColor(savedColor);
         setIsCustomColor(false);
@@ -381,22 +349,15 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     }
   }, []);
 
-  useEffect(() => {
-    if (!showColorPicker || hexFocusNonce === 0) return;
-    hexInputRef.current?.focus();
-    hexInputRef.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [showColorPicker, hexFocusNonce]);
-
   const handleCustomColorChange = (hex: string) => {
     setCustomColorHex(hex);
     setIsCustomColor(true);
     setErrors((prev) => ({ ...prev, themeColor: '' }));
   };
 
-  const handlePresetColorSelect = (color: typeof COLOR_PRESETS[0]) => {
+  const handlePresetColorSelect = (color: ColorPreset) => {
     setSelectedColor(color);
     setIsCustomColor(false);
-    setShowColorPicker(false);
     setErrors((prev) => ({ ...prev, themeColor: '' }));
   };
 
@@ -733,8 +694,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     const colourError = customHeaderColourError(isCustomColor, customColorHex);
     if (colourError) {
       newErrors.themeColor = colourError;
-      setShowColorPicker(true);
-      setHexFocusNonce((n) => n + 1);
+      setColorPickerFocusKey((n) => n + 1);
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -859,140 +819,95 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     </select>
   );
 
-  const renderHeader = () => {
-    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
-    // Passing custom hex keeps white name text. Stored pale hex uses dark
-    // text so the header is readable; save still refuses until it is a
-    // passing hex or a preset. Presets still pick by luminance.
-    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : (shouldUseWhiteText(selectedColor.hex) ? 'text-white' : 'text-stone-900');
-    const headerPlaceholder = isCustomColor ? customHeaderPlaceholderClass(customColorHex) : 'placeholder-current/50';
-    const headerFieldBg = isCustomColor ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10';
-    const headerFieldBorder = isCustomColor ? CUSTOM_HEADER_FIELD_BORDER : 'border-white/20';
-    const headerFieldFocus = isCustomColor ? CUSTOM_HEADER_FIELD_FOCUS : 'focus:border-white/40';
-    const headerClasses = isCustomColor ? `${headerTextColor} p-6 rounded-t-lg relative` : `bg-gradient-to-r ${selectedColor.from} ${selectedColor.to} ${headerTextColor} p-6 rounded-t-lg relative`;
-
-    return (
-      <div className={headerClasses} style={headerStyle}>
-        {/* Save and Cancel Buttons */}
-        <div className="absolute top-4 right-16 flex items-center space-x-2">
-          <button
-            onClick={handleSubmit}
-            disabled={isSaving}
-            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg disabled:opacity-50"
-          >
-            <Save className="w-4 h-4" />
-            <span>{isSaving ? 'Saving...' : 'Save'}</span>
-          </button>
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg"
-          >
-            <X className="w-4 h-4" />
-            <span>Cancel</span>
-          </button>
+  const renderHeader = () => (
+    <SheetHeader
+      variant="gradient"
+      mode="edit"
+      presets={PF2E_COLOR_PRESETS}
+      selectedPreset={selectedColor}
+      isCustomColor={isCustomColor}
+      customColorHex={customColorHex}
+      defaultHex={PF2E_DEFAULT_HEX}
+      token={{
+        sizeClass: 'w-40 h-40',
+        preview: tokenImagePreview,
+        alt: formData.characterName || 'Character',
+        circleClass: 'border-4 border-white/20',
+        emptyClass: 'bg-stone-800',
+        placeholder: <User className="w-20 h-20 text-white/40" />,
+        hover: 'overlay',
+        onFileChange: handleTokenImageChange,
+        error: errors.tokenImage,
+        personalHint: !character.campaignId,
+      }}
+      name={{
+        value: formData.characterName || '',
+        onChange: (value) => updateField('characterName', value),
+        placeholder: 'Character Name',
+        invalid: Boolean(errors.characterName),
+      }}
+      extraNameColumnClassName="space-y-2"
+      onSave={handleSubmit}
+      onCancel={onCancel}
+      isSaving={isSaving}
+      colorError={errors.themeColor}
+      onCustomColorChange={handleCustomColorChange}
+      onPresetSelect={handlePresetColorSelect}
+      colorPickerFocusKey={colorPickerFocusKey}
+      meta={(paint) => (
+        <>
+          <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
+            {/* Read-only: the player name is whoever owns the character,
+                filled from their display name at creation. */}
+            <span className={`text-sm ${paint.text}`}>{formData.playerName || '—'}</span>
+          </div>
+          <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs">Level</span>
+              <NumberField
+                min={1}
+                max={20}
+                value={formData.level}
+                onChange={(v: number) => updateField('level', v)}
+                className={`w-16 ${paint.fieldBg} border ${errors.level ? 'border-red-300' : paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} focus:outline-none ${paint.fieldFocus}`}
+                fallback={1}
+              />
+            </div>
+            <input type="text" value={formData.class || ''} onChange={(e) => updateField('class', e.target.value)} placeholder="Class" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.ancestry || ''} onChange={(e) => updateField('ancestry', e.target.value)} placeholder="Ancestry" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.heritage || ''} onChange={(e) => updateField('heritage', e.target.value)} placeholder="Heritage" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.background || ''} onChange={(e) => updateField('background', e.target.value)} placeholder="Background" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            {/* Deity and alignment are part of the sheet the schema
+                describes, and matter for a cleric, champion or oracle, but
+                had no field anywhere in the app until now. */}
+            <input type="text" value={formData.deity || ''} onChange={(e) => updateField('deity', e.target.value)} placeholder="Deity" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.alignment || ''} onChange={(e) => updateField('alignment', e.target.value)} placeholder="Alignment" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+          </div>
+        </>
+      )}
+      trailing={(paint) => (
+        <div className="text-right space-y-2">
+          <div className={`text-xs ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
+          <NumberField
+            min={0}
+            value={formData.experiencePoints}
+            onChange={(v: number) => updateField('experiencePoints', v)}
+            className={`w-24 text-xl font-bold ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} text-right focus:outline-none ${paint.fieldFocus}`}
+            fallback={0}
+          />
+          <div className={`text-xs mt-2 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
+          <NumberField
+            min={0}
+            max={3}
+            value={formData.heroPoints}
+            onChange={(v: number) => updateField('heroPoints', Math.min(v, 3))}
+            className={`w-16 text-lg font-bold ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} text-right focus:outline-none ${paint.fieldFocus}`}
+            fallback={0}
+          />
         </div>
-
-        <button onClick={() => setShowColorPicker(!showColorPicker)} className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`} title="Change theme color" aria-invalid={Boolean(errors.themeColor)} aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}>
-          <Palette className="w-5 h-5" />
-        </button>
-        {errors.themeColor && !showColorPicker && (
-          <p id={THEME_COLOR_ERROR_ID} role="alert" className="absolute top-14 right-4 z-10 max-w-xs rounded-lg bg-white px-3 py-2 text-xs text-red-600 shadow-lg">{errors.themeColor}</p>
-        )}
-
-        {showColorPicker && (
-          <div className="absolute top-16 right-4 bg-white text-stone-800 rounded-lg shadow-xl p-4 z-10 border-2 border-stone-200 max-w-md">
-            <h4 className="font-semibold mb-3">Theme Color</h4>
-            <div className="grid grid-cols-3 gap-2 mb-4">
-              {COLOR_PRESETS.map((color) => (
-                <button key={color.name} onClick={() => handlePresetColorSelect(color)} className={`px-2 py-2 rounded-lg text-sm font-medium transition-all ${!isCustomColor && selectedColor.name === color.name ? 'ring-2 ring-stone-400 bg-stone-100' : 'hover:bg-stone-50'}`}>
-                  <div className={`w-full h-6 rounded mb-1 bg-gradient-to-r ${color.from} ${color.to}`} />
-                  <div className="text-xs">{color.name}</div>
-                </button>
-              ))}
-            </div>
-            <div className="border-t pt-4 space-y-3">
-              <h5 className="text-sm font-semibold text-stone-700">Custom Color</h5>
-              <div className="flex items-center space-x-2">
-                <input type="color" value={customColorHex || '#1d4ed8'} onChange={(e) => handleCustomColorChange(e.target.value)} className="w-12 h-12 rounded cursor-pointer border-2 border-stone-300" title="Pick a custom color" />
-                <div className="flex-1">
-                  <input ref={hexInputRef} type="text" value={customColorHex} onChange={(e) => { const hex = e.target.value; if (hex === '' || /^#[0-9A-Fa-f]{0,6}$/.test(hex)) handleCustomColorChange(hex); }} placeholder="#1d4ed8" aria-label="Custom colour hex code" aria-invalid={Boolean(errors.themeColor)} aria-describedby={errors.themeColor ? THEME_COLOR_ERROR_ID : undefined} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                  <div className="text-xs text-stone-500 mt-1">Enter hex code</div>
-                  {errors.themeColor && <p id={THEME_COLOR_ERROR_ID} role="alert" className="text-xs text-red-600 mt-1">{errors.themeColor}</p>}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* pr-64 reserves the strip the absolutely-positioned Save/Cancel
-            cluster and palette button occupy above. Without it the Level and
-            Hero Points fields sit underneath them. */}
-        <div className="flex items-start justify-between pr-64">
-          {/* min-w-0 so this column can shrink. Flex children default to
-              min-width:auto, which lets the character-name input push out past
-              the reserved padding on a narrow window and back under the
-              buttons. */}
-          <div className="flex items-start space-x-4 min-w-0">
-            <div className="flex-shrink-0 relative group">
-              <input type="file" id="token-upload" accept="image/*" onChange={handleTokenImageChange} className="hidden" />
-              <label htmlFor="token-upload" className="cursor-pointer block relative">
-                {tokenImagePreview ? (
-                  <img src={tokenImagePreview} alt={formData.characterName || 'Character'} className="w-40 h-40 rounded-full border-4 border-white/20 object-cover" />
-                ) : (
-                  <div className="w-40 h-40 rounded-full border-4 border-white/20 bg-stone-800 flex items-center justify-center">
-                    <User className="w-20 h-20 text-white/40" />
-                  </div>
-                )}
-                <div className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <Upload className="w-12 h-12 text-white" />
-                </div>
-              </label>
-              {errors.tokenImage && <div className="absolute top-full mt-1 text-xs text-red-200 whitespace-nowrap">{errors.tokenImage}</div>}
-              {!character.campaignId && (
-                <div className="absolute top-full mt-1 text-xs text-amber-200 whitespace-nowrap">
-                  Saves as personal token
-                </div>
-              )}
-            </div>
-
-            <div className="space-y-2 min-w-0">
-              <input type="text" value={formData.characterName || ''} onChange={(e) => updateField('characterName', e.target.value)} maxLength={SHEET_NAME_MAX} placeholder="Character Name" className={`w-full text-3xl font-bold ${headerFieldBg} border-2 ${errors.characterName ? 'border-red-300' : headerFieldBorder} rounded px-3 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
-              <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
-                {/* Read-only: the player name is whoever owns the character,
-                    filled from their display name at creation. */}
-                <span className={`text-sm ${headerTextColor}`}>{formData.playerName || '—'}</span>
-              </div>
-              <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
-                <div className="flex items-center space-x-2">
-                  <span className="text-xs">Level</span>
-                  <NumberField
-min={1} max={20} value={formData.level} onChange={(v: number) => updateField('level', v)} className={`w-16 ${headerFieldBg} border ${errors.level ? 'border-red-300' : headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} focus:outline-none ${headerFieldFocus}`} fallback={1} />
-                </div>
-                <input type="text" value={formData.class || ''} onChange={(e) => updateField('class', e.target.value)} placeholder="Class" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
-                <input type="text" value={formData.ancestry || ''} onChange={(e) => updateField('ancestry', e.target.value)} placeholder="Ancestry" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
-                <input type="text" value={formData.heritage || ''} onChange={(e) => updateField('heritage', e.target.value)} placeholder="Heritage" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
-                <input type="text" value={formData.background || ''} onChange={(e) => updateField('background', e.target.value)} placeholder="Background" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
-                {/* Deity and alignment are part of the sheet the schema
-                    describes, and matter for a cleric, champion or oracle, but
-                    had no field anywhere in the app until now. */}
-                <input type="text" value={formData.deity || ''} onChange={(e) => updateField('deity', e.target.value)} placeholder="Deity" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
-                <input type="text" value={formData.alignment || ''} onChange={(e) => updateField('alignment', e.target.value)} placeholder="Alignment" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
-              </div>
-            </div>
-          </div>
-
-          <div className="text-right space-y-2">
-            <div className={`text-xs ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
-            <NumberField
-min={0} value={formData.experiencePoints} onChange={(v: number) => updateField('experiencePoints', v)} className={`w-24 text-xl font-bold ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none ${headerFieldFocus}`} fallback={0} />
-            <div className={`text-xs mt-2 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
-            <NumberField
-min={0} max={3} value={formData.heroPoints} onChange={(v: number) => updateField('heroPoints', Math.min(v, 3))} className={`w-16 text-lg font-bold ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none ${headerFieldFocus}`} fallback={0} />
-          </div>
-        </div>
-      </div>
-    );
-  };
+      )}
+    />
+  );
 
   const renderTabs = () => (
     <div className="flex space-x-1 border-b-2 border-stone-200 bg-stone-50 px-4">

@@ -14,10 +14,6 @@ import {
   User,
   BookOpen,
   Target,
-  Save,
-  X,
-  Upload,
-  Palette,
 } from 'lucide-react';
 import { Character, AssetType } from '../../../types';
 import type { CharacterData } from '../../../types';
@@ -73,16 +69,10 @@ import {
 import {
   toStoredHexColor,
   customHeaderColourError,
-  customHeaderFill,
-  customHeaderTextClass,
-  customHeaderPlaceholderClass,
-  CUSTOM_HEADER_FIELD_SURFACE,
-  CUSTOM_HEADER_CONTROL_SURFACE,
-  CUSTOM_HEADER_FIELD_BORDER,
-  CUSTOM_HEADER_FIELD_FOCUS,
-  THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
-import { SHEET_LIST_MAX, SHEET_NAME_MAX, SPELL_SLOTS_MAX } from '@/constants/sheetLimits';
+import { SHEET_LIST_MAX, SPELL_SLOTS_MAX } from '@/constants/sheetLimits';
+import { SheetHeader, shouldUseWhiteText, type ColorPreset } from '../SheetHeader';
+import { DND5E_COLOR_PRESETS, DND5E_DEFAULT_HEX } from './colorPresets';
 import { assetNameFrom } from '@/utils/assetName';
 
 /**
@@ -126,22 +116,6 @@ const TABS: Tab[] = [
   { id: 'bio', label: 'Biography', icon: User },
 ];
 
-// D&D 5e color presets for character sheets
-const COLOR_PRESETS = [
-  { name: 'Classic Red', from: 'from-red-700', to: 'to-red-900', accent: 'red-700', hex: '#b91c1c' },
-  { name: 'Royal Blue', from: 'from-blue-700', to: 'to-blue-900', accent: 'blue-700', hex: '#1d4ed8' },
-  { name: 'Forest Green', from: 'from-green-700', to: 'to-green-900', accent: 'green-700', hex: '#15803d' },
-  { name: 'Deep Purple', from: 'from-purple-700', to: 'to-purple-900', accent: 'purple-700', hex: '#7e22ce' },
-  { name: 'Amber Gold', from: 'from-amber-600', to: 'to-amber-800', accent: 'amber-600', hex: '#d97706' },
-  { name: 'Slate Gray', from: 'from-slate-700', to: 'to-slate-900', accent: 'slate-700', hex: '#334155' },
-  { name: 'Crimson', from: 'from-rose-700', to: 'to-rose-900', accent: 'rose-700', hex: '#be123c' },
-  { name: 'Teal', from: 'from-teal-700', to: 'to-teal-900', accent: 'teal-700', hex: '#0f766e' },
-  { name: 'Indigo', from: 'from-indigo-700', to: 'to-indigo-900', accent: 'indigo-700', hex: '#4338ca' },
-  { name: 'Emerald', from: 'from-emerald-700', to: 'to-emerald-900', accent: 'emerald-700', hex: '#047857' },
-  { name: 'Orange', from: 'from-orange-700', to: 'to-orange-900', accent: 'orange-700', hex: '#c2410c' },
-  { name: 'Pink', from: 'from-pink-700', to: 'to-pink-900', accent: 'pink-700', hex: '#be185d' },
-];
-
 /**
  * Calculate ability modifier from ability score
  */
@@ -154,26 +128,6 @@ const calculateModifier = (score: number): number => {
  */
 const formatModifier = (mod: number): string => {
   return mod >= 0 ? `+${mod}` : `${mod}`;
-};
-
-/**
- * Calculate luminance of a hex color to determine if text should be white or black
- * Returns true if text should be white (dark background), false if text should be black (light background)
- */
-const shouldUseWhiteText = (hexColor: string): boolean => {
-  // Remove # if present
-  const hex = hexColor.replace('#', '');
-
-  // Convert to RGB
-  const r = parseInt(hex.substr(0, 2), 16);
-  const g = parseInt(hex.substr(2, 2), 16);
-  const b = parseInt(hex.substr(4, 2), 16);
-
-  // Calculate relative luminance
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-
-  // Return true for white text if luminance is less than 0.5 (dark background)
-  return luminance < 0.5;
 };
 
 /**
@@ -277,9 +231,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>('stats');
   const [isSaving, setIsSaving] = useState(false);
-  const [showColorPicker, setShowColorPicker] = useState(false);
-  const hexInputRef = useRef<HTMLInputElement>(null);
-  const [hexFocusNonce, setHexFocusNonce] = useState(0);
+  const [colorPickerFocusKey, setColorPickerFocusKey] = useState(0);
   // Set when the last change to the cantrips box was turned away for adding one entry too many.
   const [cantripsTurnedAway, setCantripsTurnedAway] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -401,7 +353,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   );
 
   // Color customization state
-  const [selectedColor, setSelectedColor] = useState(COLOR_PRESETS[0]); // Default to Classic Red
+  const [selectedColor, setSelectedColor] = useState(DND5E_COLOR_PRESETS[0]); // Default to Classic Red
   const [customColorHex, setCustomColorHex] = useState('');
   const [isCustomColor, setIsCustomColor] = useState(false);
 
@@ -438,7 +390,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   // colour saved elsewhere over the one the user had picked.
   useEffect(() => {
     if (data.themeColor) {
-      const savedColor = COLOR_PRESETS.find(c => c.name === data.themeColor);
+      const savedColor = DND5E_COLOR_PRESETS.find(c => c.name === data.themeColor);
       if (savedColor) {
         setSelectedColor(savedColor);
         setIsCustomColor(false);
@@ -456,12 +408,6 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
     }
   }, []);
 
-  useEffect(() => {
-    if (!showColorPicker || hexFocusNonce === 0) return;
-    hexInputRef.current?.focus();
-    hexInputRef.current?.scrollIntoView?.({ block: 'nearest' });
-  }, [showColorPicker, hexFocusNonce]);
-
   // Handle custom color change
   const handleCustomColorChange = (hex: string) => {
     setCustomColorHex(hex);
@@ -470,10 +416,9 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   };
 
   // Handle preset color selection
-  const handlePresetColorSelect = (color: typeof COLOR_PRESETS[0]) => {
+  const handlePresetColorSelect = (color: ColorPreset) => {
     setSelectedColor(color);
     setIsCustomColor(false);
-    setShowColorPicker(false);
     setErrors((prev) => ({ ...prev, themeColor: '' }));
   };
 
@@ -850,8 +795,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
     const colourError = customHeaderColourError(isCustomColor, customColorHex);
     if (colourError) {
       newErrors.themeColor = colourError;
-      setShowColorPicker(true);
-      setHexFocusNonce((n) => n + 1);
+      setColorPickerFocusKey((n) => n + 1);
     }
 
     setErrors(newErrors);
@@ -1053,263 +997,96 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
     });
   };
 
-  // Render character header with token upload and color picker
-  const renderHeader = () => {
-    // Determine the current background style
-    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
-
-    // Passing custom hex keeps white name text. Stored pale hex uses dark
-    // text so the header is readable; save still refuses until it is a
-    // passing hex or a preset. Presets still pick by luminance.
-    const headerTextColor = isCustomColor
-      ? customHeaderTextClass(customColorHex)
-      : (shouldUseWhiteText(selectedColor.hex) ? 'text-white' : 'text-stone-900');
-    const headerPlaceholder = isCustomColor
-      ? customHeaderPlaceholderClass(customColorHex)
-      : 'placeholder-current/50';
-    const headerFieldBg = isCustomColor ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10';
-    const headerFieldBorder = isCustomColor ? CUSTOM_HEADER_FIELD_BORDER : 'border-white/20';
-    const headerFieldFocus = isCustomColor ? CUSTOM_HEADER_FIELD_FOCUS : 'focus:border-white/40';
-
-    const headerClasses = isCustomColor
-      ? `${headerTextColor} p-6 rounded-t-lg relative`
-      : `bg-gradient-to-r ${selectedColor.from} ${selectedColor.to} ${headerTextColor} p-6 rounded-t-lg relative`;
-
-    return (
-      <div className={headerClasses} style={headerStyle}>
-        {/* Save and Cancel Buttons */}
-        <div className="absolute top-4 right-16 flex items-center space-x-2">
-          <button
-            onClick={handleSubmit}
-            disabled={isSaving}
-            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg disabled:opacity-50"
-          >
-            <Save className="w-4 h-4" />
-            <span>{isSaving ? 'Saving...' : 'Save'}</span>
-          </button>
-          <button
-            onClick={onCancel}
-            className="px-4 py-2 bg-red-600/80 hover:bg-red-600 text-white rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg"
-          >
-            <X className="w-4 h-4" />
-            <span>Cancel</span>
-          </button>
-        </div>
-
-        {/* Color Picker Button */}
-        <button
-          onClick={() => setShowColorPicker(!showColorPicker)}
-          className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`}
-          title="Change theme color"
-          aria-invalid={Boolean(errors.themeColor)}
-          aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}
-        >
-          <Palette className="w-5 h-5" />
-        </button>
-        {errors.themeColor && !showColorPicker && (
-          <p
-            id={THEME_COLOR_ERROR_ID}
-            role="alert"
-            className="absolute top-14 right-4 z-10 max-w-xs rounded-lg bg-white px-3 py-2 text-xs text-red-600 shadow-lg"
-          >
-            {errors.themeColor}
-          </p>
-        )}
-
-        {/* Color Picker Dropdown */}
-        {showColorPicker && (
-          <div className="absolute top-16 right-4 bg-white text-stone-800 rounded-lg shadow-xl p-4 z-10 border-2 border-stone-200 max-w-md">
-            <h4 className="font-semibold mb-3">Theme Color</h4>
-
-            {/* Preset Colors */}
-            <div className="grid grid-cols-3 gap-2 mb-4">
-              {COLOR_PRESETS.map((color) => (
-                <button
-                  key={color.name}
-                  onClick={() => handlePresetColorSelect(color)}
-                  className={`px-2 py-2 rounded-lg text-sm font-medium transition-all ${
-                    !isCustomColor && selectedColor.name === color.name
-                      ? 'ring-2 ring-stone-400 bg-stone-100'
-                      : 'hover:bg-stone-50'
-                  }`}
-                >
-                  <div className={`w-full h-6 rounded mb-1 bg-gradient-to-r ${color.from} ${color.to}`} />
-                  <div className="text-xs">{color.name}</div>
-                </button>
-              ))}
-            </div>
-
-            {/* Custom Color Section */}
-            <div className="border-t pt-4 space-y-3">
-              <h5 className="text-sm font-semibold text-stone-700">Custom Color</h5>
-
-              <div className="flex items-center space-x-2">
-                {/* Native Color Picker */}
-                <input
-                  type="color"
-                  value={customColorHex || '#b91c1c'}
-                  onChange={(e) => handleCustomColorChange(e.target.value)}
-                  className="w-12 h-12 rounded cursor-pointer border-2 border-stone-300"
-                  title="Pick a custom color"
-                />
-
-                {/* Hex Code Input */}
-                <div className="flex-1">
-                  <input
-                    type="text"
-                    ref={hexInputRef}
-                    value={customColorHex}
-                    onChange={(e) => {
-                      const hex = e.target.value;
-                      // Validate hex format
-                      if (hex === '' || /^#[0-9A-Fa-f]{0,6}$/.test(hex)) {
-                        handleCustomColorChange(hex);
-                      }
-                    }}
-                    placeholder="#b91c1c"
-                    aria-label="Custom colour hex code"
-                    aria-invalid={Boolean(errors.themeColor)}
-                    aria-describedby={errors.themeColor ? THEME_COLOR_ERROR_ID : undefined}
-                    className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <div className="text-xs text-stone-500 mt-1">Enter hex code (e.g., #b91c1c)</div>
-                  {errors.themeColor && (
-                    <p id={THEME_COLOR_ERROR_ID} role="alert" className="text-xs text-red-600 mt-1">
-                      {errors.themeColor}
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              {/* Custom Color Preview */}
-              {isCustomColor && customColorHex && /^#[0-9A-Fa-f]{6}$/.test(customColorHex) && (
-                <div className="flex items-center space-x-2 p-2 bg-stone-50 rounded">
-                  <div
-                    className="w-8 h-8 rounded"
-                    style={customHeaderFill(customColorHex)}
-                  />
-                  <span className="text-sm font-medium">Custom: {customColorHex}</span>
-                </div>
-              )}
-            </div>
+  const renderHeader = () => (
+    <SheetHeader
+      variant="gradient"
+      mode="edit"
+      presets={DND5E_COLOR_PRESETS}
+      selectedPreset={selectedColor}
+      isCustomColor={isCustomColor}
+      customColorHex={customColorHex}
+      defaultHex={DND5E_DEFAULT_HEX}
+      token={{
+        sizeClass: 'w-40 h-40',
+        preview: tokenImagePreview,
+        alt: formData.characterName || 'Character',
+        circleClass: 'border-4 border-white/20',
+        emptyClass: 'bg-stone-800',
+        placeholder: <User className="w-20 h-20 text-white/40" />,
+        hover: 'overlay',
+        onFileChange: handleTokenImageChange,
+        error: errors.tokenImage,
+        personalHint: !character.campaignId,
+      }}
+      name={{
+        value: formData.characterName || '',
+        onChange: (value) => updateField('characterName', value),
+        placeholder: 'Character Name',
+        invalid: Boolean(errors.characterName),
+      }}
+      extraNameColumnClassName="space-y-2"
+      onSave={handleSubmit}
+      onCancel={onCancel}
+      isSaving={isSaving}
+      colorError={errors.themeColor}
+      onCustomColorChange={handleCustomColorChange}
+      onPresetSelect={handlePresetColorSelect}
+      colorPickerFocusKey={colorPickerFocusKey}
+      meta={(paint) => (
+        <>
+          {/* Player name is who owns this character, not free text — it is
+              filled from their display name when the character is created
+              and is shown rather than edited. */}
+          <div className={`flex items-center space-x-3 ${isCustomColor ? '' : 'opacity-80'}`}>
+            <span className={`text-sm ${paint.text}`}>
+              {formData.playerName || '—'}
+            </span>
           </div>
-        )}
-
-      {/* pr-64 reserves the strip the absolutely-positioned Save/Cancel cluster
-          and palette button occupy above. Without it the Experience Points
-          field sits underneath them. */}
-      <div className="flex items-start justify-between pr-64">
-        {/* min-w-0 so this column can shrink. Flex children default to
-            min-width:auto, which lets the character-name input push out past
-            the reserved padding on a narrow window and back under the
-            buttons. */}
-        <div className="flex items-start space-x-4 min-w-0">
-          {/* Token Image Upload */}
-          <div className="flex-shrink-0 relative group">
-            <input
-              type="file"
-              id="token-upload"
-              accept="image/*"
-              onChange={handleTokenImageChange}
-              className="hidden"
-            />
-            <label
-              htmlFor="token-upload"
-              className="cursor-pointer block relative"
-            >
-              {tokenImagePreview ? (
-                <img
-                  src={tokenImagePreview}
-                  alt={formData.characterName || 'Character'}
-                  className="w-40 h-40 rounded-full border-4 border-white/20 object-cover"
-                />
-              ) : (
-                <div className="w-40 h-40 rounded-full border-4 border-white/20 bg-stone-800 flex items-center justify-center">
-                  <User className="w-20 h-20 text-white/40" />
-                </div>
-              )}
-              <div className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                <Upload className="w-12 h-12 text-white" />
-              </div>
-            </label>
-            {errors.tokenImage && (
-              <div className="absolute top-full mt-1 text-xs text-red-200 whitespace-nowrap">
-                {errors.tokenImage}
-              </div>
-            )}
-            {!character.campaignId && (
-              <div className="absolute top-full mt-1 text-xs text-amber-200 whitespace-nowrap">
-                Saves as personal token
-              </div>
-            )}
-          </div>
-
-          {/* Character Info */}
-          <div className="space-y-2 min-w-0">
+          <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-80'}`}>
+            <div className="flex items-center space-x-2">
+              <span className="text-xs">Level</span>
+              <NumberField
+                min={1}
+                max={20}
+                value={formData.level}
+                onChange={(v: number) => updateField('level', v)}
+                className={`w-16 ${paint.fieldBg} border ${
+                  errors.level ? 'border-red-300' : paint.fieldBorder
+                } rounded px-2 py-0.5 text-sm ${paint.text} focus:outline-none ${paint.fieldFocus}`}
+                fallback={1}
+              />
+            </div>
             <input
               type="text"
-              value={formData.characterName || ''}
-              onChange={(e) => updateField('characterName', e.target.value)}
-              maxLength={SHEET_NAME_MAX}
-              placeholder="Character Name"
-              className={`w-full text-3xl font-bold ${headerFieldBg} border-2 ${
-                errors.characterName ? 'border-red-300' : headerFieldBorder
-              } rounded px-3 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
+              value={formData.race || ''}
+              onChange={(e) => updateField('race', e.target.value)}
+              placeholder="Race"
+              className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
-            {/* Player name is who owns this character, not free text — it is
-                filled from their display name when the character is created
-                and is shown rather than edited. */}
-            <div className={`flex items-center space-x-3 ${isCustomColor ? '' : 'opacity-80'}`}>
-              <span className={`text-sm ${headerTextColor}`}>
-                {formData.playerName || '—'}
-              </span>
-            </div>
-            <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-80'}`}>
-              <div className="flex items-center space-x-2">
-                <span className="text-xs">Level</span>
-                <NumberField
-min={1}
-                  max={20}
-                  value={formData.level}
-                  onChange={(v: number) => updateField('level', v)}
-                  className={`w-16 ${headerFieldBg} border ${
-                    errors.level ? 'border-red-300' : headerFieldBorder
-                  } rounded px-2 py-0.5 text-sm ${headerTextColor} focus:outline-none ${headerFieldFocus}`}
-                fallback={1}
-                />
-              </div>
-              <input
-                type="text"
-                value={formData.race || ''}
-                onChange={(e) => updateField('race', e.target.value)}
-                placeholder="Race"
-                className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
-              />
-              <input
-                type="text"
-                value={formData.class || ''}
-                onChange={(e) => updateField('class', e.target.value)}
-                placeholder="Class"
-                className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
-              />
-            </div>
+            <input
+              type="text"
+              value={formData.class || ''}
+              onChange={(e) => updateField('class', e.target.value)}
+              placeholder="Class"
+              className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
+            />
           </div>
-        </div>
-
+        </>
+      )}
+      trailing={(paint) => (
         <div className="text-right space-y-1">
           <div className={`text-xs ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
           <NumberField
-min={0}
+            min={0}
             value={formData.experiencePoints}
             onChange={(v: number) => updateField('experiencePoints', v)}
-            className={`w-24 text-xl font-bold ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none ${headerFieldFocus}`}
-          fallback={0}
+            className={`w-24 text-xl font-bold ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} text-right focus:outline-none ${paint.fieldFocus}`}
+            fallback={0}
           />
         </div>
-      </div>
-    </div>
-    );
-  };
+      )}
+    />
+  );
 
   // Render tabs
   const renderTabs = () => (

@@ -40,7 +40,7 @@ So a "game system" in CozyVTT is really six coordinated pieces:
 | 1 | Enum value | `backend/prisma/schema.prisma` + both `GameSystem` TS enums |
 | 2 | Character **type** (the data shape) | `backend/src/game-systems/` + `frontend/src/types/game-systems/` |
 | 3 | **Zod schema** (validation on save) | `backend/src/validators/game-systems/` |
-| 4 | **Templates** (blank + example starting data) | `backend/src/utils/character-templates/` and a blank factory in the validator index |
+| 4 | **Templates** (blank + example starting data) | `backend/src/utils/character-templates/` — the named `blank` starter is the only blank JSON; `getBlankCharacterTemplate` aliases a clone of that data |
 | 5 | **Sheet component** (the UI) | `frontend/src/components/character-sheets/{system}/` |
 | 6 | **Display metadata + registration** (labels, the creation dropdown, the router) | `frontend/src/constants/game-systems.ts` + `CharacterSheetRouter.tsx` |
 
@@ -495,20 +495,7 @@ case GameSystem.MY_SYSTEM: {
 }
 ```
 
-Second, provide a **blank-character factory** and wire it into `getBlankCharacterTemplate`. This returns the minimal valid data object used to seed a brand-new character:
-
-```typescript
-case GameSystem.MY_SYSTEM:
-  return createBlankMySystemCharacter();
-
-// …lower in the file, next to the other createBlank* functions:
-function createBlankMySystemCharacter(): MySystemCharacterData {
-  return {
-    characterName: 'New Character',
-    // …minimal valid defaults…
-  };
-}
-```
+Second, `getBlankCharacterTemplate` aliases the named `blank` starter. Do **not** add a second object literal in this file. The only blank JSON lives in `backend/src/utils/character-templates/` (Step 6). `getBlankCharacterTemplate(gameSystem)` returns a deep clone of `getBlankTemplate(gameSystem).data`, typed as today's character-data union, so tests cannot mutate the shipped template.
 
 ---
 
@@ -522,10 +509,10 @@ function createBlankMySystemCharacter(): MySystemCharacterData {
 >
 > Your system gets the user-published kind for free — that feature stores the
 > same `data` blob a character does and edits it through `CharacterSheetRouter`,
-> so once Steps 7–10 are done it works with no extra wiring. The one thing it
-> needs from you is the blank factory in Step 5: publishing a template starts
-> from `GET /api/characters/templates/<system>/blank`, so a system whose blank
-> is missing or invalid cannot have templates created for it.
+> so once Steps 7–10 are done it works with no extra wiring. Publishing still
+> starts from `GET /api/characters/templates/<system>/blank`, so a system whose
+> named `blank` starter is missing or invalid cannot have templates created for
+> it. That starter GET and `/api/character-templates` remain different APIs.
 
 > **A template may only write fields the schema declares.** Every one of the
 > original four had drifted: they seeded fields no reader knew about, so the
@@ -668,6 +655,8 @@ frontend/src/components/character-sheets/mySystem/
   MySystemCharacterEditor.tsx   ← the form; props: { character, onSave, onCancel, onDirtyChange, onDone }
   components/                   ← reusable sub-sections (stat block, skills, etc.)
 ```
+
+**Shared header chrome.** D&D 5e, Pathfinder 2e, and Call of Cthulhu 7e views and editors use `SheetHeader` in `frontend/src/components/character-sheets/SheetHeader.tsx` for presets, custom hex, the 4.5:1 contrast rule, name, token picture, and Save/Cancel/Edit. Pass that system's preset list (keep it in `{system}/colorPresets.ts`, not a shared rainbow), a `gradient` or `vintage` variant, Tailwind token size classes, and an unconstrained `meta` slot for system fields. Flexible stays off this primitive. Colour changes belong in the editor; views paint the stored colour only.
 
 The `…CharacterSheet.tsx` mode-switcher looks like this (copied from D&D 5e):
 
@@ -873,7 +862,7 @@ The exhaustive `switch`/`Record` types mean a missed backend registration point 
 - [ ] `game-systems/mySystem.ts` — character-data interface(s)
 - [ ] `game-systems/index.ts` — `export *`, type import, enum value, `CharacterDataBySystem`, `GameSystemCharacterData`, `isMySystemData` guard, cases in `getTypedCharacterData` + structural `validateCharacterData`
 - [ ] `validators/game-systems/mySystem.schema.ts` — Zod schema + inferred type
-- [ ] `validators/game-systems/index.ts` — import/re-export, case in Zod `validateCharacterData`, `createBlankMySystemCharacter()` + case in `getBlankCharacterTemplate`
+- [ ] `validators/game-systems/index.ts` — import/re-export, case in Zod `validateCharacterData`; `getBlankCharacterTemplate` clones the named `blank` starter (no second blank JSON)
 - [ ] `utils/character-templates/mySystem-templates.ts` — templates + `getMySystemTemplates` / `getMySystemTemplate`
 - [ ] `utils/character-templates/index.ts` — cases in `getTemplatesForGameSystem`, `getCharacterTemplate`, and `getAllTemplates`
 - [ ] Schema (and template) tests written and passing
