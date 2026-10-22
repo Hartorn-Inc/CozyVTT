@@ -42,14 +42,17 @@ export const SanityTracker: React.FC<SanityTrackerProps> = ({
   editable = false,
   onChange,
 }) => {
-  // Calculate percentage for progress bar
-  const percentage = maximum > 0 ? Math.round((current / maximum) * 100) : 0;
+  // Calculate percentage for progress bar. Clamp to [0, 100] so a stored
+  // current above the projected maximum cannot overflow the fill (e.g. 40 / 1).
+  const percentage =
+    maximum > 0 ? Math.min(100, Math.max(0, Math.round((current / maximum) * 100))) : 0;
 
   // Determine danger level and color.
   // Mythos 100 projects maximum 0 while current can remain stored (e.g. 40).
   // current / 0 is Infinity, which is > 0.75 and would otherwise read as Stable.
+  // A stored current above a positive maximum is the same over-max state.
   const getDangerLevel = () => {
-    if (maximum <= 0) {
+    if (maximum <= 0 || current > maximum) {
       return { level: 'Breaking', color: 'bg-red-600', text: 'text-red-600' };
     }
     const ratio = current / maximum;
