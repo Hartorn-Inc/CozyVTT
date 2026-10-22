@@ -288,6 +288,29 @@ describe('creating a character with a campaign preselected', () => {
     ).toEqual([]);
   });
 
+  it('assigns an unassigned character to exactly one of two campaigns raced together', async () => {
+    const campaignA = await campaignForRace(`Assign race A ${Date.now()}`);
+    const campaignB = await campaignForRace(`Assign race B ${Date.now()}`);
+    const created = await playerAgent.post('/api/characters').send({ name: 'Raced assign' }).expect(201);
+    const characterId: string = created.body.character.id;
+
+    const results = await Promise.all([
+      playerAgent.post(`/api/characters/${characterId}/assign`).send({ campaignId: campaignA }),
+      playerAgent.post(`/api/characters/${characterId}/assign`).send({ campaignId: campaignB }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([200, 200]);
+
+    const stored = await prisma.character.findUnique({ where: { id: characterId } });
+    expect([campaignA, campaignB]).toContain(stored?.campaignId);
+    const winnerId = stored?.campaignId === campaignA ? campaignA : campaignB;
+    const loserId = winnerId === campaignA ? campaignB : campaignA;
+
+    const winnerMembership = await membershipFor(playerId, winnerId);
+    const loserMembership = await membershipFor(playerId, loserId);
+    expect(winnerMembership?.characterIds.filter((id) => id === characterId)).toEqual([characterId]);
+    expect(loserMembership?.characterIds).not.toContain(characterId);
+  });
+
   it('clears a Character written while kick waited on the membership lock', async () => {
     const raceCampaignId = await campaignForRace(`Kick race membership hold ${Date.now()}`);
 

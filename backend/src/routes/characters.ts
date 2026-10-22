@@ -29,9 +29,11 @@ import { withMapsLocked } from '../utils/mapTokens';
 import {
   assertCompatible,
   CampaignGoneError,
+  CharacterGoneError,
   GameSystemMismatchError,
   lockCampaignGameSystem,
   lockCampaignMembership,
+  lockCharacterCampaignId,
   MembershipGoneError,
 } from '../utils/gameSystemMatchWrite';
 import { holdOwnerCreates } from '../utils/ownerLimit';
@@ -1099,6 +1101,8 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
 
     // Handle unassignment (campaignId is null, empty string, or undefined)
     if (!campaignId || campaignId === '') {
+      // Unassign still uses the pre-tx campaignId; assign's Character
+      // FOR UPDATE does not cover this path.
       // Remove from previous campaign's membership characterIds if assigned
       if (character.campaignId) {
         const previousMembership = await prisma.campaignMembership.findUnique({
@@ -1215,9 +1219,13 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
     // Notes, and Character.campaignId are one transaction. Compatibility is
     // checked after locking the Campaign: a 400 must undo every write, and
     // membership characterIds is re-read inside so a concurrent assign does
-    // not clobber the array.
+    // not clobber the array. Character.campaignId is re-read after FOR UPDATE
+    // so two assigns of the same unassigned Character cannot both append and
+    // then overwrite the column.
     const updatedCharacter = await prisma.$transaction(async (tx) => {
       const locked = await lockCampaignGameSystem(tx, campaignId);
+      // Character.gameSystem cannot change after create, so the outer
+      // character.gameSystem is the same value a locked re-read would see.
       assertCompatible(character.gameSystem, locked);
       // A concurrent kick can delete the seat without taking Campaign
       // FOR UPDATE, so it can finish while this join waits on (or holds)
@@ -1231,13 +1239,19 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
         campaignId,
         ASSIGN_NOT_A_MEMBER,
       );
+      // Campaign then membership then Character: kick is membership then
+      // Character, and the reverse deadlocks.
+      const previousCampaignId = await lockCharacterCampaignId(tx, id);
 
-      if (character.campaignId && character.campaignId !== campaignId) {
+      if (previousCampaignId && previousCampaignId !== campaignId) {
+        // Skip if the previous seat is gone. Do not FOR UPDATE it after
+        // holding Character: kick of that campaign locks membership then
+        // Character, and the reverse deadlocks.
         const previousMembership = await tx.campaignMembership.findUnique({
           where: {
             userId_campaignId: {
               userId,
-              campaignId: character.campaignId,
+              campaignId: previousCampaignId,
             },
           },
         });
@@ -1247,7 +1261,7 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
             where: {
               userId_campaignId: {
                 userId,
-                campaignId: character.campaignId,
+                campaignId: previousCampaignId,
               },
             },
             data: {
@@ -1274,7 +1288,7 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
       // Assign character to campaign. Coming from another campaign, or from
       // none, it leaves the Keeper's Notes behind: they are the last Keeper's,
       // and the owner may be this campaign's DM.
-      if (character.campaignId !== campaignId) await clearKeeperNotes(tx, id);
+      if (previousCampaignId !== campaignId) await clearKeeperNotes(tx, id);
       return tx.character.update({
         where: { id },
         data: { campaignId },
@@ -1315,6 +1329,12 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
       return res.status(404).json({
         error: 'Not Found',
         message: 'Campaign not found',
+      });
+    }
+    if (error instanceof CharacterGoneError) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'Character not found',
       });
     }
     if (error instanceof MembershipGoneError) {

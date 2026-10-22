@@ -23,12 +23,21 @@
  * seat is 403 and rolls back. Invitation-accept creates the membership, so it
  * only takes the Campaign lock.
  *
+ * Assign then locks the Character. Two concurrent assigns of the same
+ * unassigned Character to different campaigns used to both see campaignId
+ * null (loaded before the transaction), append the id to both memberships,
+ * and both UPDATE the column: the leftover roster entry stayed on the
+ * campaign that lost the write. FOR UPDATE waits, then the write uses that
+ * campaignId for previous-membership removal and the column.
+ *
  * Kick used to updateMany characters then delete the seat. If a join already
  * held membership, updateMany matched zero rows and did not wait; DELETE
  * waited; the join wrote campaignId and committed; kick deleted the seat —
  * leftover `Character.campaignId` again. Kick now FOR UPDATE the membership
  * before updateMany. It does not take Campaign FOR UPDATE after the seat
- * (join is Campaign then membership; the reverse deadlocks).
+ * (join is Campaign then membership; the reverse deadlocks). Assign's
+ * Character lock comes after that same membership, matching kick
+ * (membership then Character).
  */
 
 import type { CampaignRole, Prisma } from '@prisma/client';
@@ -68,6 +77,14 @@ export class MembershipGoneError extends Error {
   }
 }
 
+/** The Character row disappeared after the route had already looked it up. */
+export class CharacterGoneError extends Error {
+  constructor() {
+    super('Character not found');
+    this.name = 'CharacterGoneError';
+  }
+}
+
 /**
  * Lock the Campaign row and return its current gameSystem.
  *
@@ -96,7 +113,8 @@ export async function lockCampaignGameSystem(
  * seat throws `MembershipGoneError` (create-in/assign → 403, kick → 404).
  *
  * Join paths call this after `lockCampaignGameSystem` (Campaign, then
- * membership). Kick does not take Campaign FOR UPDATE after the seat.
+ * membership). Assign then locks the Character. Kick does not take Campaign
+ * FOR UPDATE after the seat.
  */
 export async function lockCampaignMembership(
   tx: Prisma.TransactionClient,
@@ -111,6 +129,30 @@ export async function lockCampaignMembership(
   });
   if (!membership) throw new MembershipGoneError(goneMessage);
   return membership;
+}
+
+/**
+ * Lock the Character row and return its current campaignId.
+ *
+ * Assign calls this after Campaign then membership. Concurrent assigns of
+ * the same Character serialize here so the loser sees the committed
+ * campaignId and can strip the id from that previous membership. A missing
+ * Character is not a 500: the route turns `CharacterGoneError` into 404.
+ *
+ * Do not FOR UPDATE another campaign's membership after this lock: kick of
+ * that campaign is membership then Character, and the reverse deadlocks.
+ */
+export async function lockCharacterCampaignId(
+  tx: Prisma.TransactionClient,
+  characterId: string,
+): Promise<string | null> {
+  await tx.$queryRaw`SELECT id FROM "Character" WHERE id = ${characterId} FOR UPDATE`;
+  const character = await tx.character.findUnique({
+    where: { id: characterId },
+    select: { campaignId: true },
+  });
+  if (!character) throw new CharacterGoneError();
+  return character.campaignId;
 }
 
 /** Refuse a Character whose game system may not join this Campaign. */
