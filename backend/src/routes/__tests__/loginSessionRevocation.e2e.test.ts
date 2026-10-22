@@ -11,13 +11,15 @@
  * Requires PostgreSQL at DATABASE_URL.
  */
 
+import { createHmac } from 'crypto';
 import request from 'supertest';
 import { generateSync } from 'otplib';
 import type session from 'express-session';
 import { createApp } from '../../app';
 import { loginSessionRevocationGuard, loginSessionWriteBarrier, sessionConfig, sessionPool } from '../../config/session';
-import { LOGIN_SESSION_SID_LOCK, writeLoginSessionUnlessRevoked } from '../../config/loginSessionRevocationGuard';
+import { LOGIN_SESSION_SID_LOCK, LOGIN_SESSION_USER_LOCK, writeLoginSessionUnlessRevoked } from '../../config/loginSessionRevocationGuard';
 import { destroyUserLoginSessions } from '../../services/sessionStore';
+import { mfaVerifyLoginBarrier } from '../auth';
 import {
   prisma,
   createTestUser,
@@ -50,6 +52,26 @@ function sidOf(res: request.Response): string {
   const cookie = raw?.map((c) => c.split(';')[0]).find((c) => c.startsWith('cozyvtt.sid='));
   if (!cookie) throw new Error('no session cookie was set');
   return decodeURIComponent(cookie.slice('cozyvtt.sid='.length)).slice(2).split('.')[0];
+}
+
+function cookieFor(sid: string): string {
+  const secret = sessionConfig.secret;
+  const key = Array.isArray(secret) ? secret[0] : secret;
+  if (typeof key !== 'string') throw new Error('session secret was not a string');
+  const sig = createHmac('sha256', key).update(sid).digest('base64').replace(/=+$/g, '');
+  return `cozyvtt.sid=${encodeURIComponent(`s:${sid}.${sig}`)}`;
+}
+
+function cookieOf(sess: Partial<session.SessionData> = {}): session.SessionData {
+  return {
+    cookie: {
+      originalMaxAge: 3_600_000,
+      expires: new Date(Date.now() + 3_600_000),
+      httpOnly: true,
+      path: '/',
+    },
+    ...sess,
+  };
 }
 
 function storeGet(sid: string): Promise<session.SessionData | null | undefined> {
@@ -96,6 +118,8 @@ beforeAll(async () => {
 
 afterEach(() => {
   delete loginSessionWriteBarrier.wait;
+  delete mfaVerifyLoginBarrier.wait;
+  delete mfaVerifyLoginBarrier.reached;
 });
 
 afterAll(async () => {
@@ -302,14 +326,18 @@ describe('an in-flight store.set after destroy', () => {
     try {
       await holder.query('BEGIN');
       await holder.query(
+        `SELECT pg_advisory_xact_lock(${LOGIN_SESSION_USER_LOCK}, hashtext($1::text))`,
+        [user.id],
+      );
+      await holder.query(
         `SELECT pg_advisory_xact_lock(${LOGIN_SESSION_SID_LOCK}, hashtext($1::text))`,
         [sid],
       );
 
       const write = writeLoginSessionUnlessRevoked(sessionPool, sid, sess);
-      await waitForAdvisoryWaiters(sid, 1);
+      await waitForAdvisoryWaiters(LOGIN_SESSION_USER_LOCK, user.id, 1);
       const destroy = destroyUserLoginSessions(user.id);
-      await waitForAdvisoryWaiters(sid, 2);
+      await waitForAdvisoryWaiters(LOGIN_SESSION_USER_LOCK, user.id, 2);
       await holder.query('COMMIT');
       await Promise.all([write, destroy]);
     } finally {
@@ -319,9 +347,96 @@ describe('an in-flight store.set after destroy', () => {
     const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${sid}`;
     expect(rows).toEqual([]);
   });
+
+  it('does not authenticate a new sid whose store.set ran after destroy committed', async () => {
+    const user = await createTestUser({ email: `pg-store-new-sid-${stamp}@test.cozyvtt.local` });
+    created.push(user.id);
+    const agent = request.agent(app);
+    const login = await agent.post('/api/auth/login').send({ email: user.email, password: TEST_PASSWORD });
+    expect(login.status).toBe(200);
+    const sid = sidOf(login);
+    const sess = await storeGet(sid);
+    expect(sess?.userId).toBe(user.id);
+    expect(sess?.loginSessionEpoch).toBe(0);
+    if (!sess) throw new Error('expected a stored session');
+
+    const newSid = `new-sid-${stamp}`;
+    let release!: () => void;
+    loginSessionWriteBarrier.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = storeSet(newSid, sess);
+    expect(await destroyUserLoginSessions(user.id)).toBe(1);
+    release();
+    await pending;
+
+    expect((await agent.get('/api/auth/me')).status).toBe(401);
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${newSid}`;
+    expect(rows).toEqual([]);
+    expect((await request(app).get('/api/auth/me').set('Cookie', cookieFor(newSid))).status).toBe(401);
+  });
+
+  it('increments epoch when the user has no sessions, so a new sid stamped with the old epoch does not insert', async () => {
+    const user = await createTestUser({ email: `pg-store-zero-${stamp}@test.cozyvtt.local` });
+    created.push(user.id);
+    expect(user.loginSessionEpoch).toBe(0);
+    expect(await destroyUserLoginSessions(user.id)).toBe(0);
+    const stored = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(stored.loginSessionEpoch).toBe(1);
+
+    const newSid = `new-sid-zero-${stamp}`;
+    await writeLoginSessionUnlessRevoked(sessionPool, newSid, cookieOf({
+      userId: user.id,
+      loginSessionEpoch: 0,
+    }));
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${newSid}`;
+    expect(rows).toEqual([]);
+  });
 });
 
-async function waitForAdvisoryWaiters(sid: string, atLeast: number): Promise<void> {
+describe('an in-flight MFA verify-login after destroy', () => {
+  it('does not complete sign-in when destroy increments epoch before the User re-read', async () => {
+    const user = await createTestUser({ email: `pg-store-mfa-verify-race-${stamp}@test.cozyvtt.local` });
+    created.push(user.id);
+    const enrol = await signIn(user.email);
+    const setup = await enrol.post('/api/auth/mfa/setup').send({ password: TEST_PASSWORD });
+    expect(setup.status).toBe(200);
+    const secret: string = setup.body.secret;
+    const enabled = await enrol.post('/api/auth/mfa/verify').send({
+      token: generateSync({ secret }),
+    });
+    expect(enabled.status).toBe(200);
+
+    const agent = request.agent(app);
+    const login = await agent.post('/api/auth/login').send({ email: user.email, password: TEST_PASSWORD });
+    expect(login.status).toBe(200);
+    expect(login.body.mfaRequired).toBe(true);
+
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      mfaVerifyLoginBarrier.reached = resolve;
+    });
+    mfaVerifyLoginBarrier.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const token = await nextUnusedTotp(secret);
+    const finished = Promise.resolve(agent.post('/api/auth/mfa/verify-login').send({ token }));
+    await reached;
+    await destroyUserLoginSessions(user.id);
+    release();
+    const verify = await finished;
+    expect(verify.status).toBe(401);
+
+    expect((await agent.get('/api/auth/me')).status).toBe(401);
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`
+      SELECT sid FROM session WHERE sess->>'userId' = ${user.id}
+    `;
+    expect(rows).toEqual([]);
+  });
+});
+
+async function waitForAdvisoryWaiters(classid: number, key: string, atLeast: number): Promise<void> {
   const deadline = Date.now() + 5_000;
   while (Date.now() < deadline) {
     const waiting = await sessionPool.query<{ n: number }>(
@@ -332,7 +447,7 @@ async function waitForAdvisoryWaiters(sid: string, atLeast: number): Promise<voi
           AND classid = $1
           AND objid = hashtext($2::text)::oid
           AND NOT granted`,
-      [LOGIN_SESSION_SID_LOCK, sid],
+      [classid, key],
     );
     if (waiting.rows[0].n >= atLeast) return;
     await new Promise((resolve) => setTimeout(resolve, 20));

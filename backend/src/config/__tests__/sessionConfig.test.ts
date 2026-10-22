@@ -72,8 +72,12 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  // Each load made a pool; none of them connected, but each is closed.
-  await Promise.all(loaded.map((m) => m.sessionPool.end()));
+  // Each load started the revocation guard, which may still be connecting
+  // (or have failed against a fake host); wait it out so end() is idle.
+  await Promise.all(loaded.map(async (m) => {
+    await m.loginSessionRevocationGuard.catch(() => undefined);
+    await m.sessionPool.end();
+  }));
 });
 
 describe('the session secret', () => {

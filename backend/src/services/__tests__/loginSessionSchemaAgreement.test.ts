@@ -67,7 +67,14 @@ it('builds the session pool from databaseConnectionSettings for the named schema
 });
 
 it('deletes the row connect-pg-simple wrote in the isolated schema, not a public.session stand-in', async () => {
-  const userId = 'schema-agree-user';
+  const user = await db.user.create({
+    data: {
+      email: 'schema-agree@test.cozyvtt.local',
+      passwordHash: 'not-used',
+      displayName: 'Schema Agree',
+    },
+  });
+  const userId = user.id;
   const sid = 'schema-agree-sid';
   await setSession(sid, {
     cookie: {
@@ -77,6 +84,7 @@ it('deletes the row connect-pg-simple wrote in the isolated schema, not a public
       path: '/',
     },
     userId,
+    loginSessionEpoch: user.loginSessionEpoch,
   });
 
   const client = new Client({ connectionString: savedUrl });
@@ -109,6 +117,7 @@ it('deletes the row connect-pg-simple wrote in the isolated schema, not a public
         path: '/',
       },
       userId,
+      loginSessionEpoch: user.loginSessionEpoch,
     });
     const afterSet = await client.query<{ sid: string }>(
       `SELECT sid FROM "${SCHEMA}".session WHERE sid = $1`,

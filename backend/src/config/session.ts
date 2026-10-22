@@ -61,8 +61,9 @@ export const loginSessionWriteBarrier: { wait?: Promise<void> } = {};
  * sid destroyUserLoginSessions just deleted is a successful no-op, so an
  * in-flight request cannot UPSERT the row back. The in-memory block is the
  * fast path; after it has already passed, the revoked row and trigger skip
- * the write. When `opts.pool` is set, set/touch take the same advisory lock
- * as destroyUserLoginSessions instead of connect-pg-simple's UPSERT.
+ * the write. When `opts.pool` is set, set takes the user then sid advisory
+ * locks destroyUserLoginSessions uses (touch stays sid-lock only) instead of
+ * connect-pg-simple's UPSERT.
  */
 export function wrapPgSessionStore<T extends session.Store>(
   store: T,

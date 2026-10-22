@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { rememberMeMaxAge } from '../config/sessionDurations';
-import { LOGIN_SESSION_SID_LOCK } from '../config/loginSessionRevocationGuard';
+import { LOGIN_SESSION_SID_LOCK, LOGIN_SESSION_USER_LOCK } from '../config/loginSessionRevocationGuard';
 import logger from '../utils/logger';
 import { blockLoginSessions, unblockLoginSessions } from './revokedLoginSessions';
 
@@ -67,6 +67,12 @@ async function selectUserLoginSessionSids(
   return rows.map((row) => row.sid);
 }
 
+async function lockLoginSessionUser(db: Prisma.TransactionClient, userId: string): Promise<void> {
+  await db.$queryRaw<{ ok: number }[]>`
+    SELECT 1 AS ok FROM (SELECT pg_advisory_xact_lock(${LOGIN_SESSION_USER_LOCK}, hashtext(${userId}::text))) AS lock
+  `;
+}
+
 async function lockLoginSessionSid(db: Prisma.TransactionClient, sid: string): Promise<void> {
   await db.$queryRaw<{ ok: number }[]>`
     SELECT 1 AS ok FROM (SELECT pg_advisory_xact_lock(${LOGIN_SESSION_SID_LOCK}, hashtext(${sid}::text))) AS lock
@@ -78,11 +84,17 @@ async function deleteAndRevokeLoginSessions(
   exceptSessionId: string | undefined,
   db: Prisma.TransactionClient,
 ): Promise<string[]> {
-  // Expired markers first, even when this user has no session to revoke.
+  // User lock then epoch increment first, even when this user has no session
+  // to revoke: a concurrent first login after reset must not land. Then
+  // expired markers, then per-sid locks (same order as the store write: user
+  // then sid), then FOR UPDATE, so a writer waiting on the lock cannot INSERT
+  // a new sid while this transaction holds the row and this transaction waits
+  // on the lock.
+  await lockLoginSessionUser(db, userId);
+  await db.$executeRaw`
+    UPDATE "User" SET "loginSessionEpoch" = "loginSessionEpoch" + 1 WHERE id = ${userId}
+  `;
   await db.$executeRaw`DELETE FROM revoked_login_session WHERE expires_at <= NOW()`;
-  // Advisory lock first (same order as the store write), then FOR UPDATE, so a
-  // writer waiting on the lock cannot INSERT while this transaction holds the
-  // row and this transaction waits on the lock.
   const preview = await selectUserLoginSessionSids(userId, exceptSessionId, db, false);
   if (preview.length === 0) return preview;
   for (const sid of preview) await lockLoginSessionSid(db, sid);
@@ -156,14 +168,16 @@ export async function destroyUserLoginSessions(
   // so the person is told, instead of reporting success while the old
   // sessions keep their role until they expire. Store or SQL failures become
   // LoginSessionStoreUnavailable (503), not a swallowed zero.
-  // A per-sid advisory lock, SELECT FOR UPDATE, the revoked_login_session
-  // INSERT and DELETE share one transaction so a later store UPSERT cannot
-  // recreate a deleted sid. exceptSessionId stays in the WHERE, so it is
-  // not returned and not revoked. In-memory blocking waits until this
-  // helper's own transaction commits: a caller-supplied client is already
-  // in a transaction, and a rollback must not leave a block that would
-  // refuse a later write of a sid that is still in the table. If this
-  // helper fails after blocking, those sids are unblocked.
+  // A user-scoped advisory lock and epoch increment, then per-sid advisory
+  // locks, SELECT FOR UPDATE, the revoked_login_session INSERT and DELETE
+  // share one transaction so a later store UPSERT cannot recreate a deleted
+  // sid or insert a new one minted with the previous epoch. exceptSessionId
+  // stays in the WHERE, so it is not returned and not revoked. In-memory
+  // blocking waits until this helper's own transaction commits: a
+  // caller-supplied client is already in a transaction, and a rollback must
+  // not leave a block that would refuse a later write of a sid that is still
+  // in the table. If this helper fails after blocking, those sids are
+  // unblocked.
   let sids: string[] = [];
   try {
     if (db === prisma) {

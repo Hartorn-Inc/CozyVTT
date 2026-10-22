@@ -103,6 +103,7 @@ describe('sanitizeUser', () => {
     rememberMe: false,
     preferences: null,
     lastLoginAt: null,
+    loginSessionEpoch: 0,
     createdAt: new Date(),
     updatedAt: new Date(),
   };
@@ -120,6 +121,11 @@ describe('sanitizeUser', () => {
   it('removes mfaBackupCodes from the returned object', () => {
     const sanitized = sanitizeUser(mockUser);
     expect('mfaBackupCodes' in sanitized).toBe(false);
+  });
+
+  it('removes loginSessionEpoch from the returned object', () => {
+    const sanitized = sanitizeUser(mockUser);
+    expect('loginSessionEpoch' in sanitized).toBe(false);
   });
 
   it('preserves non-sensitive fields', () => {

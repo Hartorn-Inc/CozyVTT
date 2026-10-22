@@ -75,6 +75,7 @@ it('blocks the deleted sids and not the session it is asked to keep', async () =
 
 it('does not leave the sid blocked when the revoked-row insert fails', async () => {
   queryRaw
+    .mockResolvedValueOnce([])
     .mockResolvedValueOnce([{ sid: 'gone-then-rolled-back' }])
     .mockResolvedValueOnce([])
     .mockResolvedValueOnce([{ sid: 'gone-then-rolled-back' }])

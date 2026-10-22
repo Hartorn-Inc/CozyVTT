@@ -32,9 +32,13 @@ jest.mock('pg', () => {
 });
 
 // Loaded after the mock is in place, so its pool is recorded.
-require('../session');
+const { loginSessionRevocationGuard } = require('../session');
 const { Client } = jest.requireActual<typeof import('pg')>('pg');
 const pool = mockPools[0];
+
+beforeAll(async () => {
+  await loginSessionRevocationGuard;
+});
 
 afterAll(() => pool.end());
 

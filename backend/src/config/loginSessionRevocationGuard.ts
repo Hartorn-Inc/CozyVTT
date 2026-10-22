@@ -14,6 +14,9 @@ import { sessionMaxAge } from './sessionDurations';
 /** First key of pg_advisory_xact_lock so a store write and destroy serialize on one sid. */
 export const LOGIN_SESSION_SID_LOCK = 8723641;
 
+/** First key of pg_advisory_xact_lock so a store write and destroy serialize on one user. Always taken before LOGIN_SESSION_SID_LOCK. */
+export const LOGIN_SESSION_USER_LOCK = 8723642;
+
 /** Idempotent SQL the session pool applies so every schema the store uses is guarded. */
 export const LOGIN_SESSION_REVOCATION_GUARD_SQL = `
 CREATE TABLE IF NOT EXISTS "session" (
@@ -109,39 +112,71 @@ async function inLoginSessionWriteTx(pool: Pool, work: (client: PoolClient) => P
   }
 }
 
+function boundLoginSessionUserId(sess: session.SessionData): string | null {
+  if (typeof sess.userId === 'string') return sess.userId;
+  if (typeof sess.mfaPendingUserId === 'string') return sess.mfaPendingUserId;
+  return null;
+}
+
+function boundLoginSessionEpoch(sess: session.SessionData): number | null {
+  return typeof sess.loginSessionEpoch === 'number' ? sess.loginSessionEpoch : null;
+}
+
 /**
  * UPSERT a login session unless destroyUserLoginSessions has named the sid
- * in revoked_login_session. Takes the same transaction-scoped advisory lock
- * destroy uses, so a connect-pg-simple INSERT cannot pass the trigger, wait
- * on the row, and recreate it after DELETE commits.
+ * in revoked_login_session, or (for a new sid bound to an account) the
+ * stamped loginSessionEpoch no longer matches User.loginSessionEpoch.
+ * Takes the user lock then the sid lock, the same order destroy uses, so a
+ * connect-pg-simple INSERT cannot pass the trigger, wait on the row, and
+ * recreate it after DELETE commits, and a concurrent first login after
+ * reset cannot land. A skipped INSERT is a successful no-op.
  */
 export async function writeLoginSessionUnlessRevoked(
   pool: Pool,
   sid: string,
   sess: session.SessionData,
 ): Promise<void> {
+  const userId = boundLoginSessionUserId(sess);
+  const epoch = boundLoginSessionEpoch(sess);
   await inLoginSessionWriteTx(pool, async (client) => {
+    if (userId !== null) {
+      await client.query(
+        `SELECT pg_advisory_xact_lock(${LOGIN_SESSION_USER_LOCK}, hashtext($1::text))`,
+        [userId],
+      );
+    }
     await client.query(
       `SELECT pg_advisory_xact_lock(${LOGIN_SESSION_SID_LOCK}, hashtext($1::text))`,
       [sid],
     );
+    // Epoch match is required only for a new sid: ON CONFLICT update of a
+    // kept exceptSessionId must still save after destroy increments epoch.
     await client.query(
       `INSERT INTO session (sess, expire, sid)
        SELECT $1::json, to_timestamp($2), $3::varchar
        WHERE NOT EXISTS (
          SELECT 1 FROM revoked_login_session WHERE sid = $3::varchar AND expires_at > NOW()
        )
+       AND (
+         EXISTS (SELECT 1 FROM session WHERE sid = $3::varchar)
+         OR $4::text IS NULL
+         OR EXISTS (
+           SELECT 1 FROM "User" WHERE id = $4::text AND "loginSessionEpoch" = $5::int
+         )
+       )
        ON CONFLICT (sid) DO UPDATE SET sess = EXCLUDED.sess, expire = EXCLUDED.expire
        WHERE NOT EXISTS (
          SELECT 1 FROM revoked_login_session WHERE sid = EXCLUDED.sid AND expires_at > NOW()
        )`,
-      [JSON.stringify(sess), expireUnixSeconds(sess), sid],
+      [JSON.stringify(sess), expireUnixSeconds(sess), sid, userId, epoch],
     );
   });
 }
 
 /**
  * Extend a login session's expiry unless the sid is still revoked.
+ * Sid-lock only: taking the user lock here would invert lock order vs
+ * write/destroy.
  */
 export async function touchLoginSessionUnlessRevoked(
   pool: Pool,

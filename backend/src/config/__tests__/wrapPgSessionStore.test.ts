@@ -10,14 +10,20 @@ import request from 'supertest';
 import { createApp } from '../../app';
 import { sessionOptions } from '../sessionOptions';
 import type { Pool } from 'pg';
-import { wrapPgSessionStore, sessionPool, loginSessionWriteBarrier } from '../session';
+import { wrapPgSessionStore, sessionPool, loginSessionWriteBarrier, loginSessionRevocationGuard } from '../session';
 import { blockLoginSessions, unblockLoginSessions } from '../../services/revokedLoginSessions';
+
+beforeAll(async () => {
+  await loginSessionRevocationGuard;
+});
 
 afterEach(() => {
   delete loginSessionWriteBarrier.wait;
 });
 
-afterAll(() => sessionPool.end());
+afterAll(async () => {
+  await sessionPool.end();
+});
 
 const SECRET = 'wrap-pg-session-store-test-secret-32chars';
 

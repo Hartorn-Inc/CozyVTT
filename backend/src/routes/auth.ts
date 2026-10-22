@@ -76,6 +76,13 @@ export async function clientUser(user: Parameters<typeof sanitizeUser>[0]) {
 export const MFA_PENDING_MAX_AGE_MS = 5 * 60 * 1000;
 
 /**
+ * Tests pause MFA verify-login after the pending session is in memory and
+ * before the User re-read, so a concurrent destroy can increment epoch
+ * first. Production never sets this.
+ */
+export const mfaVerifyLoginBarrier: { wait?: Promise<void>; reached?: () => void } = {};
+
+/**
  * How long after issuing a reset link forgot-password issues no other for the
  * same account. The route is limited per requesting address, so anyone with a
  * few addresses could ask for a reset for one victim every few seconds: each
@@ -239,6 +246,7 @@ router.post('/register', accountCreationLimiter, async (req: Request, res: Respo
       await regenerateSession(req);
       req.session.userId = user.id;
       req.session.platformRole = user.platformRole;
+      req.session.loginSessionEpoch = user.loginSessionEpoch;
       recordSignIn(req, user.id);
 
       return res.status(201).json({
@@ -253,6 +261,7 @@ router.post('/register', accountCreationLimiter, async (req: Request, res: Respo
     await regenerateSession(req);
     req.session.userId = user.id;
     req.session.platformRole = user.platformRole;
+    req.session.loginSessionEpoch = user.loginSessionEpoch;
     recordSignIn(req, user.id);
 
     return res.status(201).json({
@@ -318,6 +327,7 @@ router.post('/login', credentialLimiter, accountLoginLimiter, async (req: Reques
       // Set pending MFA state — do NOT fully authenticate yet
       req.session.mfaPending = true;
       req.session.mfaPendingUserId = user.id;
+      req.session.loginSessionEpoch = user.loginSessionEpoch;
       req.session.mfaRememberMe = !!rememberMe;
       req.session.mfaPendingAt = Date.now();
 
@@ -333,6 +343,7 @@ router.post('/login', credentialLimiter, accountLoginLimiter, async (req: Reques
     req.session.platformRole = user.platformRole;
     // Gates every other API call until the password is replaced
     req.session.mustChangePassword = user.mustChangePassword;
+    req.session.loginSessionEpoch = user.loginSessionEpoch;
     recordSignIn(req, user.id);
 
     // Extend session if "Remember Me" is checked
@@ -898,12 +909,30 @@ router.post('/mfa/verify-login', mfaLoginLimiter, mfaAccountLimiter, async (req:
     if (!body.ok) return invalid(res, body.message);
     const { token, backupCode } = body.data;
 
+    // Stamp from the password-proof pending session, not a later User read:
+    // destroy increments epoch and deletes this sid, and a re-read would let
+    // this hop mint a new authenticated cookie.
+    const mintedEpoch = req.session.loginSessionEpoch;
+    mfaVerifyLoginBarrier.reached?.();
+    if (mfaVerifyLoginBarrier.wait) await mfaVerifyLoginBarrier.wait;
+
     const user = await prisma.user.findUnique({
       where: { id: req.session.mfaPendingUserId },
     });
 
     if (!user || !user.mfaEnabled || !user.mfaSecret) {
       return res.status(401).json({ error: 'Unauthorized', message: 'Invalid MFA state' });
+    }
+
+    if (typeof mintedEpoch !== 'number' || mintedEpoch !== user.loginSessionEpoch) {
+      req.session.mfaPending = undefined;
+      req.session.mfaPendingUserId = undefined;
+      req.session.mfaRememberMe = undefined;
+      req.session.mfaPendingAt = undefined;
+      return res.status(401).json({
+        error: 'Sign-In Expired',
+        message: 'Your sign-in timed out at the code step. Sign in again with your password.',
+      });
     }
 
     let backupCodeUsed = false;
@@ -966,6 +995,7 @@ router.post('/mfa/verify-login', mfaLoginLimiter, mfaAccountLimiter, async (req:
     await regenerateSession(req);
     req.session.userId = user.id;
     req.session.platformRole = user.platformRole;
+    req.session.loginSessionEpoch = mintedEpoch;
     recordSignIn(req, user.id);
     req.session.mfaPending = undefined;
     req.session.mfaPendingUserId = undefined;
