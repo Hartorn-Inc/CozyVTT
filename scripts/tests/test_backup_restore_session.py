@@ -46,6 +46,23 @@ DUMP = '\n'.join([
 ])
 
 
+def tables_dump(user, migrations):
+    return '\n'.join([
+        '-- PostgreSQL database dump',
+        'CREATE TABLE {0} ('.format(user),
+        '    id text NOT NULL',
+        ');',
+        'CREATE TABLE {0} ('.format(migrations),
+        '    id character varying(36) NOT NULL',
+        ');',
+        '-- PostgreSQL database dump complete',
+        '',
+    ])
+
+
+APP_DATA_DUMP = tables_dump('app_data."User"', 'app_data._prisma_migrations')
+
+
 def read(path):
     with open(path, encoding='utf-8') as source:
         return source.read()
@@ -222,8 +239,12 @@ class BackupRestoreScripts(unittest.TestCase):
         with open(self.seen, encoding='utf-8') as handle:
             return handle.read().splitlines()
 
-    def _restore_sql(self, database_url):
-        result = subprocess.run(
+    def _write_dump(self, sql):
+        with gzip.open(self.backup_file, 'wb') as archive:
+            archive.write(sql.encode('utf-8'))
+
+    def _run_restore(self, database_url):
+        return subprocess.run(
             ['bash', RESTORE_SH, self.backup_file],
             cwd=self.root.name,
             env=self._env(database_url),
@@ -231,6 +252,9 @@ class BackupRestoreScripts(unittest.TestCase):
             text=True,
             check=False,
         )
+
+    def _restore_sql(self, database_url):
+        result = self._run_restore(database_url)
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
         with open(self.loaded, encoding='utf-8') as handle:
             return handle.read()
@@ -345,6 +369,7 @@ class BackupRestoreScripts(unittest.TestCase):
                     self.assertEqual(handle.read(), sentinel)
 
     def test_restore_custom_schema_appends_format_literal_statement(self):
+        self._write_dump(APP_DATA_DUMP)
         text = self._restore_sql(
             'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data'
         )
@@ -365,6 +390,7 @@ class BackupRestoreScripts(unittest.TestCase):
         )
         for url in urls:
             with self.subTest(url=url):
+                self._write_dump(APP_DATA_DUMP)
                 text = self._restore_sql(url)
                 lines = text.rstrip('\n').split('\n')
                 self.assertEqual(lines[-2], PUBLIC_TRAILER)
@@ -380,37 +406,89 @@ class BackupRestoreScripts(unittest.TestCase):
         self.assertEqual(text.rstrip('\n').split('\n')[-1], PUBLIC_TRAILER)
         self.assertEqual(text.count(PUBLIC_TRAILER), 1)
 
-    def test_restore_accepts_create_table_in_any_schema_qualifier(self):
+    def test_restore_accepts_create_table_in_the_configured_schema(self):
         cases = (
-            ('app_data."User"', 'app_data._prisma_migrations'),
-            ('app_data.User', 'app_data._prisma_migrations'),
-            ('"app_data"."User"', '"app_data"."_prisma_migrations"'),
-            ('public."User"', 'public._prisma_migrations'),
+            (
+                'public."User"',
+                'public._prisma_migrations',
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt',
+            ),
+            (
+                'public.User',
+                'public._prisma_migrations',
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt',
+            ),
+            (
+                '"public"."User"',
+                '"public"."_prisma_migrations"',
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt',
+            ),
+            (
+                'app_data."User"',
+                'app_data._prisma_migrations',
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data',
+            ),
+            (
+                'app_data.User',
+                'app_data._prisma_migrations',
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data',
+            ),
+            (
+                '"app_data"."User"',
+                '"app_data"."_prisma_migrations"',
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data',
+            ),
+            (
+                '"app_data".User',
+                '"app_data"._prisma_migrations',
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data',
+            ),
         )
-        for user, migrations in cases:
+        for user, migrations, url in cases:
             with self.subTest(user=user, migrations=migrations):
-                dump = '\n'.join([
-                    '-- PostgreSQL database dump',
-                    'CREATE TABLE {0} ('.format(user),
-                    '    id text NOT NULL',
-                    ');',
-                    'CREATE TABLE {0} ('.format(migrations),
-                    '    id character varying(36) NOT NULL',
-                    ');',
-                    '-- PostgreSQL database dump complete',
-                    '',
-                ])
-                with gzip.open(self.backup_file, 'wb') as archive:
-                    archive.write(dump.encode('utf-8'))
-                text = self._restore_sql(
-                    'postgresql://cozyvtt:secret@localhost:5432/cozyvtt'
-                )
+                self._write_dump(tables_dump(user, migrations))
+                text = self._restore_sql(url)
                 self.assertIn('CREATE TABLE {0} ('.format(user), text)
                 self.assertIn('CREATE TABLE {0} ('.format(migrations), text)
                 self.assertNotIn(
                     'it does not create the User and _prisma_migrations tables',
                     text,
                 )
+
+    def test_restore_refuses_create_table_outside_the_configured_schema(self):
+        cases = (
+            (
+                DUMP,
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data',
+            ),
+            (
+                APP_DATA_DUMP,
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt',
+            ),
+            (
+                tables_dump('"app_data"."User"', '"app_data"."_prisma_migrations"'),
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt',
+            ),
+            (
+                tables_dump('public."User"', 'public._prisma_migrations'),
+                'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data',
+            ),
+        )
+        sentence = (
+            'it does not create the User and _prisma_migrations tables, '
+            'so it is not a CozyVTT backup'
+        )
+        sentinel = '-- not loaded --\n'
+        for dump, url in cases:
+            with self.subTest(url=url, dump=dump.split('\n')[1]):
+                self._write_dump(dump)
+                with open(self.loaded, 'w', encoding='utf-8') as handle:
+                    handle.write(sentinel)
+                result = self._run_restore(url)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(sentence, result.stderr + result.stdout)
+                with open(self.loaded, encoding='utf-8') as handle:
+                    self.assertEqual(handle.read(), sentinel)
 
     def test_restore_still_refuses_a_dump_without_user_and_migrations(self):
         dump = '\n'.join([

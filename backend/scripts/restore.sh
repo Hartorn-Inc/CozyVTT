@@ -67,7 +67,8 @@ fi
 # removed account. Only those schemas; never every schema.
 #
 # Outside its rows, the dump must end with pg_dump's closing line, create the
-# User and _prisma_migrations tables, and hold nothing but SQL: a psql
+# User and _prisma_migrations tables in the instance schema (the one the
+# preamble drops), and hold nothing but SQL: a psql
 # command, a COPY that is not table data, or a transaction statement means
 # it is not a backup pg_dump wrote, and it is refused before anything runs.
 # ------------------------------------------------------------------
@@ -168,7 +169,7 @@ fi
 
 echo "🔍 Checking $BACKUP_FILE..."
 set +e
-gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preamble="$CUSTOM_PREAMBLE" -v trailer="$RESTORE_TRAILER" '
+gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preamble="$CUSTOM_PREAMBLE" -v trailer="$RESTORE_TRAILER" -v app_schema="$APP_SCHEMA" '
   BEGIN {
     print "\\restrict " key
     print "SET client_min_messages = warning;"
@@ -208,9 +209,10 @@ gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preambl
     }
     if (line ~ /^(GRANT|REVOKE) /) next
     # A backup from DATABASE_URL?schema=app_data writes these in that schema,
-    # not public. Quoted or unquoted qualifier, quoted or unquoted table name.
-    if (line ~ /^CREATE TABLE ("[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.("User"|User) \($/) has_user = 1
-    if (line ~ /^CREATE TABLE ("[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.("_prisma_migrations"|_prisma_migrations) \($/) has_migrations = 1
+    # not public. Count them only when the qualifier is the instance schema
+    # (app_schema or "app_schema"). Quoted or unquoted table name.
+    if (line ~ ("^CREATE TABLE (\"" app_schema "\"|" app_schema ")\\.(\"User\"|User) \\($")) has_user = 1
+    if (line ~ ("^CREATE TABLE (\"" app_schema "\"|" app_schema ")\\.(\"_prisma_migrations\"|_prisma_migrations) \\($")) has_migrations = 1
     print
   }
   END {

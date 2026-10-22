@@ -210,6 +210,11 @@ const DUMP_FROM_NEWER_CLIENT = [
   '',
 ].join('\n');
 
+/** Same dump with the required tables created in app_data rather than public. */
+const DUMP_FROM_NEWER_CLIENT_IN_APP_DATA = DUMP_FROM_NEWER_CLIENT
+  .replace('CREATE TABLE public."User" (', 'CREATE TABLE app_data."User" (')
+  .replace('CREATE TABLE public._prisma_migrations (', 'CREATE TABLE app_data._prisma_migrations (');
+
 let adminId: string;
 let userId: string;
 let admin: ReturnType<typeof request.agent>;
@@ -280,7 +285,7 @@ describe('POST /api/admin/backups/restore', () => {
     process.env.DATABASE_URL = `${base}?schema=app_data`;
     try {
       const calls = stubTools();
-      const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
+      const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT_IN_APP_DATA });
 
       const res = await restore(admin, zip);
 
@@ -291,6 +296,28 @@ describe('POST /api/admin/backups/restore', () => {
       expect(firstSql).toBe(restorePreamble('app_data')[0]);
       expect(psql?.sqlLoaded).not.toContain('DROP SCHEMA public');
       expect(psql?.sqlLoaded).not.toMatch(/pg_namespace|nspname/);
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  });
+
+  it('refuses a public dump when DATABASE_URL names a schema other than public, before any tool runs', async () => {
+    const previous = process.env.DATABASE_URL;
+    const base = (previous ?? 'postgresql://u:p@h:5432/db').replace(/\?.*$/, '');
+    process.env.DATABASE_URL = `${base}?schema=app_data`;
+    try {
+      const calls = stubTools();
+      const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
+
+      const res = await restore(admin, zip);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid Backup');
+      expect(res.body.message).toBe(
+        'This file cannot be restored because it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup. Nothing was changed.',
+      );
+      expect(calls).toEqual([]);
     } finally {
       if (previous === undefined) delete process.env.DATABASE_URL;
       else process.env.DATABASE_URL = previous;

@@ -184,7 +184,8 @@ const COPY_END = '\\.';
  * replacement above commits, and the instance is left empty while the restore
  * reports success. So a file is refused unless, outside its table data, it
  * ends with the trailer pg_dump writes last and creates the tables every
- * CozyVTT database has.
+ * CozyVTT database has in the instance schema (the one the preamble drops), so
+ * a dump of a different schema cannot empty this instance.
  *
  * psql also runs whatever the file says, as the database owner. A backslash
  * command such as `\!` runs a shell command in the backend container, `COPY
@@ -213,7 +214,7 @@ const CREATE_TABLE = /^CREATE TABLE (?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\.(?:"
 const TRANSACTION_CONTROL =
   /^(?:BEGIN|START TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE TRANSACTION)\b/i;
 
-/** Tables every CozyVTT database has; a dump that does not create them is not a backup of one. */
+/** Tables every CozyVTT database has in the instance schema; a dump that does not create them there is not a backup of one. */
 export const REQUIRED_TABLES = ['User', '_prisma_migrations'];
 
 /** What prepareDumpForRestore left out, for the log. */
@@ -327,8 +328,11 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
       } else {
         const table = CREATE_TABLE.exec(statement);
         if (table) {
+          // Groups 1/2 are the schema qualifier (quoted or unquoted); count a
+          // required table only when that identifier equals the instance schema.
+          const dumpSchema = table[1] ?? table[2];
           const name = table[3] ?? table[4];
-          if (name) tables.add(name);
+          if (name && dumpSchema === schema) tables.add(name);
         }
       }
       if (keep) {

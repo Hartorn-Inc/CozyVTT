@@ -275,9 +275,19 @@ describe('backend/scripts/restore.sh', () => {
     expect(restorePreamble('app_data')).toEqual([scriptCustomPreamble]);
 
     // Handed to the awk step that writes the file psql loads.
-    const awk = /awk -v key="\$RESTRICT_KEY" -v custom_preamble="\$CUSTOM_PREAMBLE" -v trailer="\$RESTORE_TRAILER" '\n([\s\S]*?)\n' > "\$PREPARED"/.exec(script);
+    const awk = /awk -v key="\$RESTRICT_KEY" -v custom_preamble="\$CUSTOM_PREAMBLE" -v trailer="\$RESTORE_TRAILER" -v app_schema="\$APP_SCHEMA" '\n([\s\S]*?)\n' > "\$PREPARED"/.exec(script);
     if (!awk) throw new Error('restore.sh no longer hands RESTORE_TRAILER to its awk step; update this test with the script');
     const program = awk[1];
+
+    // CREATE TABLE User / _prisma_migrations count only in APP_SCHEMA
+    // (quoted or unquoted), not any schema qualifier.
+    const createTableChecks = [...program.matchAll(/if \(line ~ \("\^CREATE TABLE[\s\S]*?has_(?:user|migrations) = 1/g)];
+    expect(createTableChecks).toHaveLength(2);
+    for (const [check] of createTableChecks) {
+      expect(check).toContain('app_schema');
+      expect(check).not.toContain('[A-Za-z_][A-Za-z0-9_]*');
+      expect(check).not.toContain('("[^"]+"');
+    }
 
     // Public two-line DROP/CREATE stay in awk BEGIN. backupRestore.e2e matches
     // that text on a public restore; a custom schema prints CUSTOM_PREAMBLE only.

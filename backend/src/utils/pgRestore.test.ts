@@ -454,6 +454,37 @@ describe('prepareDumpForRestore', () => {
     '\\unrestrict k3y',
   ];
 
+  /** Same dump with User and _prisma_migrations created in `schema` instead of public. */
+  const dumpWithRequiredTablesIn = (schema: string): string[] =>
+    NEWER_CLIENT_DUMP.map((line) => {
+      if (line === 'CREATE TABLE public."User" (') return `CREATE TABLE ${schema}."User" (`;
+      if (line === 'CREATE TABLE public._prisma_migrations (') {
+        return `CREATE TABLE ${schema}._prisma_migrations (`;
+      }
+      return line;
+    });
+
+  const withDatabaseUrl = async (url: string, run: () => Promise<void>) => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = url;
+    try {
+      await run();
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  };
+
+  const requiredTablesDump = (userCreate: string, migrationsCreate: string) => [
+    userCreate,
+    '    id text NOT NULL',
+    ');',
+    migrationsCreate,
+    '    id character varying(36) NOT NULL',
+    ');',
+    '-- PostgreSQL database dump complete',
+  ];
+
   const isSkipped = (l: string) =>
     l === 'SET transaction_timeout = 0;' ||
     (l.startsWith('ALTER ') && l.includes(' OWNER TO ')) ||
@@ -487,13 +518,11 @@ describe('prepareDumpForRestore', () => {
   });
 
   it('writes a custom-schema preamble when DATABASE_URL names a schema other than public', async () => {
-    const previous = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=app_data';
-    try {
-      const src = await write('database.sql', NEWER_CLIENT_DUMP);
+    await withDatabaseUrl('postgresql://u:p@h:5432/db?schema=app_data', async () => {
+      const src = await write('database.sql', dumpWithRequiredTablesIn('app_data'));
       const dest = path.join(dir, 'restore.sql');
 
-      await prepareDumpForRestore(src, dest);
+      const result = await prepareDumpForRestore(src, dest);
 
       const [restrict, ...rest] = (await fs.readFile(dest, 'utf8')).split('\n');
       expect(restrict).toMatch(RESTRICT_LINE);
@@ -501,30 +530,24 @@ describe('prepareDumpForRestore', () => {
       expect(rest.slice(0, preamble.length).join('\n')).toBe(preamble.join('\n'));
       expect(rest.join('\n')).not.toContain('DROP SCHEMA public');
       expect(rest.join('\n')).not.toMatch(/pg_namespace|nspname/);
-    } finally {
-      if (previous === undefined) delete process.env.DATABASE_URL;
-      else process.env.DATABASE_URL = previous;
-    }
+      expect(result.refused).toBeNull();
+    });
   });
 
   it('writes a custom-schema preamble when DATABASE_URL percent-encodes a simple schema as app%5Fdata', async () => {
-    const previous = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=app%5Fdata';
-    try {
-      const src = await write('database.sql', NEWER_CLIENT_DUMP);
+    await withDatabaseUrl('postgresql://u:p@h:5432/db?schema=app%5Fdata', async () => {
+      const src = await write('database.sql', dumpWithRequiredTablesIn('app_data'));
       const dest = path.join(dir, 'restore.sql');
 
-      await prepareDumpForRestore(src, dest);
+      const result = await prepareDumpForRestore(src, dest);
 
       const out = await fs.readFile(dest, 'utf8');
       expect(out).toContain("format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data')");
       expect(out).toContain("to_regclass(format('%I.session', 'app_data'))");
       expect(out).not.toContain('DROP SCHEMA public');
       expect(out).not.toMatch(/app%5Fdata/);
-    } finally {
-      if (previous === undefined) delete process.env.DATABASE_URL;
-      else process.env.DATABASE_URL = previous;
-    }
+      expect(result.refused).toBeNull();
+    });
   });
 
   it('refuses a DATABASE_URL whose ?schema= is not a simple identifier', async () => {
@@ -734,21 +757,57 @@ describe('prepareDumpForRestore', () => {
       expect(refused).toContain('User');
     });
 
-    it('accepts a dump that creates User and _prisma_migrations in a non-public schema', async () => {
-      const dump = [
-        'CREATE TABLE app_data."User" (',
-        '    id text NOT NULL',
-        ');',
-        'CREATE TABLE app_data._prisma_migrations (',
-        '    id character varying(36) NOT NULL',
-        ');',
-        '-- PostgreSQL database dump complete',
-      ];
-      const src = await write('database.sql', dump);
+    it('refuses a dump that creates User and _prisma_migrations in a non-public schema when the instance is on public', async () => {
+      const src = await write(
+        'database.sql',
+        requiredTablesDump('CREATE TABLE app_data."User" (', 'CREATE TABLE app_data._prisma_migrations ('),
+      );
 
       const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
 
-      expect(refused).toBeNull();
+      expect(refused).toBe(
+        'it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup',
+      );
+    });
+
+    it('accepts a dump that creates User and _prisma_migrations in app_data when DATABASE_URL names that schema', async () => {
+      await withDatabaseUrl('postgresql://u:p@h:5432/db?schema=app_data', async () => {
+        const src = await write(
+          'database.sql',
+          requiredTablesDump('CREATE TABLE app_data."User" (', 'CREATE TABLE app_data._prisma_migrations ('),
+        );
+
+        const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+
+        expect(refused).toBeNull();
+      });
+    });
+
+    it('refuses a public dump when DATABASE_URL names a schema other than public', async () => {
+      await withDatabaseUrl('postgresql://u:p@h:5432/db?schema=app_data', async () => {
+        const src = await write('database.sql', NEWER_CLIENT_DUMP);
+
+        const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+
+        expect(refused).toBe(
+          'it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup',
+        );
+      });
+    });
+
+    it.each([
+      ['unquoted public schema and User', 'CREATE TABLE public.User (', 'CREATE TABLE public._prisma_migrations (', undefined],
+      ['quoted public schema', 'CREATE TABLE "public"."User" (', 'CREATE TABLE "public"._prisma_migrations (', undefined],
+      ['unquoted app_data schema and User', 'CREATE TABLE app_data.User (', 'CREATE TABLE app_data._prisma_migrations (', 'app_data'],
+      ['quoted app_data schema', 'CREATE TABLE "app_data"."User" (', 'CREATE TABLE "app_data"._prisma_migrations (', 'app_data'],
+    ])('accepts %s CREATE TABLE forms in the instance schema', async (_label, userCreate, migrationsCreate, schema) => {
+      const run = async () => {
+        const src = await write('database.sql', requiredTablesDump(userCreate, migrationsCreate));
+        const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+        expect(refused).toBeNull();
+      };
+      if (schema === undefined) await run();
+      else await withDatabaseUrl(`postgresql://u:p@h:5432/db?schema=${schema}`, run);
     });
 
     it('accepts a real dump taken on Windows line endings', async () => {
