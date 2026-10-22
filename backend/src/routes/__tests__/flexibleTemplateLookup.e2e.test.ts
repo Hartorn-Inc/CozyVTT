@@ -51,4 +51,14 @@ describe('GET /api/characters/templates/:gameSystem/:templateName', () => {
     expect(res.status).toBe(200);
     expect(res.body.name).toBe('Level 1 Fighter');
   });
+
+  it('returns the named blank starter, not the published template list', async () => {
+    const res = await agent.get('/api/characters/templates/DND_5E/blank');
+    expect(res.status).toBe(200);
+    expect(res.body.name).toBe('Blank D&D 5e Character');
+    expect(res.body.description).toBe('A blank character sheet for D&D 5th Edition');
+    expect(res.body.data.characterName).toBe('New Character');
+    expect(res.body.templates).toBeUndefined();
+    expect(res.body.total).toBeUndefined();
+  });
 });

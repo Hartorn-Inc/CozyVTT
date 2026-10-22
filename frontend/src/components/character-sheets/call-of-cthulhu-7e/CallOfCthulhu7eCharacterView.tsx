@@ -12,11 +12,9 @@ import {
   Swords,
   Package,
   BookText,
-  Edit,
   Heart,
   Eye,
   Skull,
-  Palette,
 } from 'lucide-react';
 import { Character } from '../../../types';
 import type {
@@ -33,7 +31,8 @@ import { projectCharacterData } from '../../../utils/sheetProjection';
 import { WeaponsList } from './components/WeaponsList';
 import { BackstorySection } from './components/BackstorySection';
 import { isHexColor } from '@/utils/styleAllowlists';
-import { customHeaderFill, customHeaderTextClass, CUSTOM_HEADER_CONTROL_SURFACE } from '@/utils/themeColor';
+import { SheetHeader } from '../SheetHeader';
+import { COC7E_COLOR_PRESETS, COC7E_DEFAULT_HEX } from './colorPresets';
 
 interface CallOfCthulhu7eCharacterViewProps {
   character: Character;
@@ -58,19 +57,6 @@ const TABS: Tab[] = [
   { id: 'backstory', label: 'Backstory', icon: BookText },
 ];
 
-// Call of Cthulhu color presets - Vintage 1920s aesthetic
-const COLOR_PRESETS = [
-  { name: 'Dark Forest', from: 'from-green-900', to: 'to-green-800', accent: 'green-800', border: 'amber-600', hex: '#14532d' },
-  { name: 'Noir Shadow', from: 'from-slate-900', to: 'to-slate-800', accent: 'slate-800', border: 'amber-500', hex: '#0f172a' },
-  { name: 'Deep Sepia', from: 'from-sepia-900', to: 'to-sepia-800', accent: 'sepia-800', border: 'sepia-400', hex: '#2E2419' },
-  { name: 'Midnight Blue', from: 'from-blue-950', to: 'to-blue-900', accent: 'blue-900', border: 'amber-600', hex: '#172554' },
-  { name: 'Burgundy Wine', from: 'from-red-950', to: 'to-red-900', accent: 'red-900', border: 'amber-500', hex: '#450a0a' },
-  { name: 'Victorian Purple', from: 'from-purple-950', to: 'to-purple-900', accent: 'purple-900', border: 'amber-600', hex: '#3b0764' },
-  { name: 'Emerald Mist', from: 'from-emerald-900', to: 'to-emerald-800', accent: 'emerald-800', border: 'amber-600', hex: '#064e3b' },
-  { name: 'Charcoal Gray', from: 'from-gray-900', to: 'to-gray-800', accent: 'gray-800', border: 'amber-500', hex: '#111827' },
-  { name: 'Teal Shadow', from: 'from-teal-950', to: 'to-teal-900', accent: 'teal-900', border: 'amber-600', hex: '#042f2e' },
-  { name: 'Amber Dusk', from: 'from-amber-900', to: 'to-amber-800', accent: 'amber-800', border: 'amber-400', hex: '#78350f' },
-];
 
 /**
  * CallOfCthulhu7eCharacterView - Read-only Call of Cthulhu 7e character sheet
@@ -82,15 +68,14 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
   const data = projectCharacterData(character.gameSystem, character.data) as CoC7eCharacterData & SheetChrome;
-  const [themeColor, setThemeColor] = useState(COLOR_PRESETS[0]);
+  const [themeColor, setThemeColor] = useState(COC7E_COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');
-  const [showColorPicker, setShowColorPicker] = useState(false);
 
   // Load saved color preference from character metadata
   useEffect(() => {
     if (data.themeColor) {
-      const savedColor = COLOR_PRESETS.find(c => c.name === data.themeColor);
+      const savedColor = COC7E_COLOR_PRESETS.find(c => c.name === data.themeColor);
       if (savedColor) {
         setThemeColor(savedColor);
         setIsCustomColor(false);
@@ -102,182 +87,62 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
     }
   }, [data.themeColor]);
 
-  // Handle custom color change
-  const handleCustomColorChange = (hex: string) => {
-    setCustomColorHex(hex);
-    setIsCustomColor(true);
-  };
-
-  // Handle preset color selection
-  const handlePresetColorSelect = (color: typeof COLOR_PRESETS[0]) => {
-    setThemeColor(color);
-    setIsCustomColor(false);
-    setShowColorPicker(false);
-  };
-
   // Render character header with vintage styling
-  const renderHeader = () => {
-    // Determine the current background style
-    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
-
-    // Passing custom hex keeps white name text. Stored pale hex uses dark
-    // text so the view is readable; the next save is still refused. Preset
-    // chrome stays parchment.
-    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-parchment';
-    const headerMuted = isCustomColor ? headerTextColor : 'text-parchment-light';
-    const headerClasses = isCustomColor
-      ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
-      : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
-
-    return (
-      <div className={headerClasses} style={headerStyle}>
-        {/* TODO(sheets): the colour picked here only sets this component's
-           state and is never saved, so it is gone the next time the sheet
-           opens. Save it to the sheet's themeColor as the editor does, or
-           leave the choice to the editor and remove the button. */}
-        {/* Color Picker Button */}
-        <button
-          onClick={() => setShowColorPicker(!showColorPicker)}
-          className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`}
-          title="Change theme color"
-        >
-          <Palette className="w-5 h-5" />
-        </button>
-
-        {/* Color Picker Dropdown */}
-        {showColorPicker && (
-          <div className="absolute top-16 right-4 bg-white text-stone-800 rounded-lg shadow-xl p-4 z-10 border-2 border-stone-200 max-w-md">
-            <h4 className="font-semibold mb-3">Theme Color</h4>
-
-            {/* Preset Colors */}
-            <div className="grid grid-cols-3 gap-2 mb-4">
-              {COLOR_PRESETS.map((color) => (
-                <button
-                  key={color.name}
-                  onClick={() => handlePresetColorSelect(color)}
-                  className={`px-2 py-2 rounded-lg text-sm font-medium transition-all ${
-                    !isCustomColor && themeColor.name === color.name
-                      ? 'ring-2 ring-stone-400 bg-stone-100'
-                      : 'hover:bg-stone-50'
-                  }`}
-                >
-                  <div className={`w-full h-6 rounded mb-1 bg-gradient-to-r ${color.from} ${color.to}`} />
-                  <div className="text-xs">{color.name}</div>
-                </button>
-              ))}
-            </div>
-
-            {/* Custom Color Section */}
-            <div className="border-t pt-4 space-y-3">
-              <h5 className="text-sm font-semibold text-stone-700">Custom Color</h5>
-
-              <div className="flex items-center space-x-2">
-                {/* Native Color Picker */}
-                <input
-                  type="color"
-                  value={customColorHex || '#14532d'}
-                  onChange={(e) => handleCustomColorChange(e.target.value)}
-                  className="w-12 h-12 rounded cursor-pointer border-2 border-stone-300"
-                  title="Pick a custom color"
-                />
-
-                {/* Hex Code Input */}
-                <div className="flex-1">
-                  <input
-                    type="text"
-                    value={customColorHex}
-                    onChange={(e) => {
-                      const hex = e.target.value;
-                      // Validate hex format
-                      if (hex === '' || /^#[0-9A-Fa-f]{0,6}$/.test(hex)) {
-                        handleCustomColorChange(hex);
-                      }
-                    }}
-                    placeholder="#14532d"
-                    className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  <div className="text-xs text-stone-500 mt-1">Enter hex code (e.g., #14532d)</div>
-                </div>
-              </div>
-
-              {/* Custom Color Preview */}
-              {isCustomColor && customColorHex && /^#[0-9A-Fa-f]{6}$/.test(customColorHex) && (
-                <div className="flex items-center space-x-2 p-2 bg-stone-50 rounded">
-                  <div
-                    className="w-8 h-8 rounded"
-                    style={customHeaderFill(customColorHex)}
-                  />
-                  <span className="text-sm font-medium">Custom: {customColorHex}</span>
-                </div>
-              )}
-            </div>
+  const renderHeader = () => (
+    <SheetHeader
+      variant="vintage"
+      mode="view"
+      presets={COC7E_COLOR_PRESETS}
+      selectedPreset={themeColor}
+      isCustomColor={isCustomColor}
+      customColorHex={customColorHex}
+      defaultHex={COC7E_DEFAULT_HEX}
+      token={{
+        sizeClass: 'w-24 h-24',
+        preview: character.tokenImageUrl ?? null,
+        alt: data.investigatorName || 'Investigator',
+        circleClass: 'border-4 border-amber-600/50 shadow-xl',
+        emptyClass: 'bg-sepia-900',
+        placeholder: <User className="w-12 h-12 text-amber-400/40" />,
+        hover: 'none',
+      }}
+      name={{
+        value: data.investigatorName || '',
+        placeholder: 'Investigator Name',
+        headingClassName: 'mb-2 drop-shadow-lg',
+        emptyDisplay: 'Unnamed Investigator',
+      }}
+      onEdit={onEdit}
+      editTitle="Edit investigator"
+      meta={(paint) => (
+        <div className={`space-y-1 ${paint.text}`}>
+          <div className="flex items-center space-x-4">
+            <span className="font-medium">{data.occupation || 'No Occupation'}</span>
+            {data.era && <span>• {data.era}</span>}
           </div>
-        )}
-
-        {/* Edit Button */}
-        {onEdit && (
-          <button
-            onClick={onEdit}
-            className="absolute top-4 right-16 px-4 py-2 bg-amber-600/80 hover:bg-amber-600 text-white rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg"
-            title="Edit investigator"
-          >
-            <Edit className="w-4 h-4" />
-            <span>Edit</span>
-          </button>
-        )}
-
-      <div className="flex items-start justify-between pr-24">
-        <div className="flex items-start space-x-4">
-          {/* Token Image */}
-          <div className="flex-shrink-0">
-            {character.tokenImageUrl ? (
-              <img
-                src={character.tokenImageUrl}
-                alt={data.investigatorName || 'Investigator'}
-                className="w-24 h-24 rounded-full border-4 border-amber-600/50 object-cover shadow-xl"
-              />
-            ) : (
-              <div className="w-24 h-24 rounded-full border-4 border-amber-600/50 bg-sepia-900 flex items-center justify-center shadow-xl">
-                <User className="w-12 h-12 text-amber-400/40" />
-              </div>
-            )}
-          </div>
-
-          {/* Character Info */}
-          <div>
-            <h2 className={`text-3xl font-bold mb-2 ${headerTextColor} drop-shadow-lg`}>
-              {data.investigatorName || 'Unnamed Investigator'}
-            </h2>
-            <div className={`space-y-1 ${headerMuted}`}>
-              <div className="flex items-center space-x-4">
-                <span className="font-medium">{data.occupation || 'No Occupation'}</span>
-                {data.era && <span>• {data.era}</span>}
-              </div>
-              {data.residence && (
-                <div className="text-sm">
-                  <span className={headerMuted}>Residence:</span> {data.residence}
-                </div>
-              )}
-              <div className="flex items-center space-x-4 text-sm">
-                {data.age && <span>Age {data.age}</span>}
-                {data.sex && <span>• {data.sex}</span>}
-                {data.birthplace && <span>• Born in {data.birthplace}</span>}
-              </div>
+          {data.residence && (
+            <div className="text-sm">
+              <span className={paint.text}>Residence:</span> {data.residence}
             </div>
+          )}
+          <div className="flex items-center space-x-4 text-sm">
+            {data.age && <span>Age {data.age}</span>}
+            {data.sex && <span>• {data.sex}</span>}
+            {data.birthplace && <span>• Born in {data.birthplace}</span>}
           </div>
         </div>
-
-        {/* Player Name */}
-        {data.playerName && (
-          <div className="text-right">
-            <div className={`text-xs uppercase tracking-wide ${headerMuted}`}>Player</div>
-            <div className={`text-lg font-semibold ${headerTextColor}`}>{data.playerName}</div>
+      )}
+      trailing={(paint) => {
+        if (!data.playerName) return null;
+        return (
+          <div className={`text-right ${paint.trailingText}`}>
+            <div className={`text-xs uppercase tracking-wide ${paint.trailingText}`}>Player</div>
+            <div className={`text-lg font-semibold ${paint.trailingText}`}>{data.playerName}</div>
           </div>
-        )}
-      </div>
-    </div>
-    );
-  };
+        );
+      }}
+    />
+  );
 
   // Render tabs
   const renderTabs = () => (

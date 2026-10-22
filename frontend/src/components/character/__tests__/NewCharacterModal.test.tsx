@@ -16,11 +16,17 @@ import {
 } from '@/constants/game-systems';
 
 vi.mock('@/services/api', () => {
-  const client = { listCampaigns: vi.fn() };
+  const client = {
+    listCampaigns: vi.fn(),
+    getStarterSheet: vi.fn(),
+    createCharacter: vi.fn(),
+  };
   return { api: client, default: client };
 });
 import { api } from '@/services/api';
 const listCampaigns = api.listCampaigns as ReturnType<typeof vi.fn>;
+const getStarterSheet = api.getStarterSheet as ReturnType<typeof vi.fn>;
+const createCharacter = api.createCharacter as ReturnType<typeof vi.fn>;
 
 const campaign = (id: string, name: string, gameSystem: GameSystem | null): Campaign =>
   ({ id, name, description: null, gameSystem }) as unknown as Campaign;
@@ -41,6 +47,13 @@ const campaignOptionNames = () =>
 beforeEach(() => {
   vi.clearAllMocks();
   listCampaigns.mockResolvedValue({ campaigns });
+  getStarterSheet.mockResolvedValue({
+    name: 'Blank D&D 5e Character',
+    description: 'A blank character sheet for D&D 5th Edition',
+    gameSystem: GameSystem.DND_5E,
+    data: { characterName: 'New Character' },
+  });
+  createCharacter.mockResolvedValue({ character: { id: 'char-1', name: 'Aria' } });
 });
 
 describe('NewCharacterModal', () => {
@@ -232,5 +245,20 @@ describe('NewCharacterModal', () => {
     ).toBeDisabled();
     expect(screen.getByText(/New Characters cannot be created/i)).toBeInTheDocument();
     expect(screen.queryByText(/Street Samurai/)).not.toBeInTheDocument();
+  });
+
+  it('loads the blank starter from the starter-template API, including blank', async () => {
+    render(<NewCharacterModal isOpen onClose={vi.fn()} onSuccess={vi.fn()} />);
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole('option', { name: /Lost Mine/ })).toBeInTheDocument()
+    );
+    await userEvent.selectOptions(screen.getByLabelText(/Game System/), GameSystem.DND_5E);
+    await userEvent.type(screen.getByLabelText(/Character Name/), 'Aria');
+    await userEvent.click(screen.getByRole('button', { name: /Create Character/ }));
+
+    await vi.waitFor(() => expect(getStarterSheet).toHaveBeenCalled());
+    expect(getStarterSheet).toHaveBeenCalledWith(GameSystem.DND_5E, 'blank');
+    expect(createCharacter).toHaveBeenCalled();
   });
 });

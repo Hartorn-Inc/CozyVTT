@@ -25,7 +25,7 @@ describe('prepareSheetForStorage', () => {
     const result = prepareSheetForStorage({ gameSystem: GameSystem.CALL_OF_CTHULHU_7E, data });
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.data).toMatchObject({ investigatorName: 'New Investigator' });
+      expect(result.data).toMatchObject({ investigatorName: 'Blank Investigator' });
     }
   });
 
