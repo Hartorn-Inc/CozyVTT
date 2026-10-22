@@ -53,4 +53,17 @@ describe('Call of Cthulhu 7e projection', () => {
     expect(projected.derivedStats.sanity.current).toBe(40);
     expect(projected.derivedStats.sanity.starting).toBe(50);
   });
+
+  it('does not create derivedStats when the stored sheet omitted it', () => {
+    const projected = projectCharacterData('CALL_OF_CTHULHU_7E', {
+      characteristics: {
+        CON: { regular: 70, half: 35, fifth: 14 },
+        SIZ: { regular: 80, half: 40, fifth: 16 },
+        POW: { regular: 50, half: 25, fifth: 10 },
+      },
+      skills: { cthulhuMythos: { currentValue: 8 } },
+    }) as { derivedStats?: unknown };
+
+    expect(projected).not.toHaveProperty('derivedStats');
+  });
 });

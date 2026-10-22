@@ -183,4 +183,33 @@ describe('projected derived values on REST reads', () => {
     const stored = await prisma.character.findUniqueOrThrow({ where: { id: planted.id } });
     expect((stored.data as { derivedStats: { sanity: { maximum: number } } }).derivedStats.sanity.maximum).toBe(99);
   });
+
+  it('round-trips GET then PUT for a valid CoC sheet without derivedStats', async () => {
+    const { derivedStats: _derivedStats, ...sheetWithoutDerived } = getBlankCharacterTemplate(
+      GameSystem.CALL_OF_CTHULHU_7E
+    ) as Record<string, unknown>;
+
+    const created = await playerAgent.post('/api/characters').send({
+      name: 'No Derived Investigator',
+      gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+      data: sheetWithoutDerived,
+    });
+    expect(created.status).toBe(201);
+    const id = created.body.character.id as string;
+
+    const loaded = await playerAgent.get(`/api/characters/${id}`);
+    expect(loaded.status).toBe(200);
+    expect(loaded.body.character.data).not.toHaveProperty('derivedStats');
+
+    const saved = await playerAgent.put(`/api/characters/${id}`).send({
+      data: loaded.body.character.data,
+    });
+    expect(saved.status).toBe(200);
+
+    const reloaded = await playerAgent.get(`/api/characters/${id}`);
+    expect(reloaded.status).toBe(200);
+    expect(reloaded.body.character.data).not.toHaveProperty('derivedStats');
+
+    await prisma.character.delete({ where: { id } });
+  });
 });

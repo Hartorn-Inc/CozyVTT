@@ -186,29 +186,27 @@ describe('Call of Cthulhu 7e projection', () => {
     expect(projected.skills.dodge.baseValue).toBe(25);
   });
 
-  it('creates derived maxima when derivedStats is missing, without inventing currents', () => {
+  it('does not create derivedStats when the stored sheet omitted it', () => {
     const projected = projectCharacterData('CALL_OF_CTHULHU_7E', {
       characteristics: {
-        CON: { regular: 70, half: 35, fifth: 14 },
-        SIZ: { regular: 80, half: 40, fifth: 16 },
-        POW: { regular: 50, half: 25, fifth: 10 },
+        CON: { regular: 70, half: 0, fifth: 0 },
+        SIZ: { regular: 80, half: 0, fifth: 0 },
+        POW: { regular: 50, half: 0, fifth: 0 },
       },
       skills: { cthulhuMythos: { currentValue: 8 } },
     }) as {
-      derivedStats: {
-        hp?: { maximum?: number; current?: number };
-        magicPoints?: { maximum?: number; current?: number };
-        sanity?: { maximum?: number; current?: number; starting?: number };
+      derivedStats?: unknown;
+      characteristics: {
+        CON: { regular: number; half: number; fifth: number };
+        SIZ: { regular: number; half: number; fifth: number };
+        POW: { regular: number; half: number; fifth: number };
       };
     };
 
-    expect(projected.derivedStats.hp).toEqual({ maximum: 15, majorWoundThreshold: 7 });
-    expect(projected.derivedStats.magicPoints).toEqual({ maximum: 10 });
-    expect(projected.derivedStats.sanity).toEqual({ maximum: 91 });
-    expect(projected.derivedStats.hp).not.toHaveProperty('current');
-    expect(projected.derivedStats.magicPoints).not.toHaveProperty('current');
-    expect(projected.derivedStats.sanity).not.toHaveProperty('current');
-    expect(projected.derivedStats.sanity).not.toHaveProperty('starting');
+    expect(projected).not.toHaveProperty('derivedStats');
+    expect(projected.characteristics.CON).toEqual({ regular: 70, half: 35, fifth: 14 });
+    expect(projected.characteristics.SIZ).toEqual({ regular: 80, half: 40, fifth: 16 });
+    expect(projected.characteristics.POW).toEqual({ regular: 50, half: 25, fifth: 10 });
   });
 });
 

@@ -269,28 +269,27 @@ function projectCallOfCthulhu(data: Record<string, unknown>): Record<string, unk
     if (charsOut) out().characteristics = charsOut;
   }
 
+  // A missing, null, or non-object derivedStats stays as stored: inventing a
+  // partial object would fail CoC Zod on the next PUT (hp, sanity, magicPoints,
+  // luck, damageBonus, build, moveRate, and dodge are all required once present).
   const derivedIn = rec(data.derivedStats);
-  const derivedAbsent = data.derivedStats === undefined || data.derivedStats === null;
-  if (!derivedIn && !derivedAbsent) return result ?? data;
+  if (!derivedIn) return result ?? data;
 
   let derivedOut: Record<string, unknown> | undefined;
   const setDerived = (key: string, value: unknown): void => {
-    if (!derivedOut) derivedOut = { ...(derivedIn ?? {}) };
+    if (!derivedOut) derivedOut = { ...derivedIn };
     derivedOut[key] = value;
   };
   const mergeBlock = (key: string, fields: Record<string, unknown>): void => {
-    const existing = rec(derivedIn?.[key]);
-    if (existing) {
-      const differs = Object.keys(fields).some((field) => existing[field] !== fields[field]);
-      if (!differs) return;
-      setDerived(key, { ...existing, ...fields });
-      return;
-    }
-    if (derivedAbsent) setDerived(key, fields);
+    const existing = rec(derivedIn[key]);
+    if (!existing) return;
+    const differs = Object.keys(fields).some((field) => existing[field] !== fields[field]);
+    if (!differs) return;
+    setDerived(key, { ...existing, ...fields });
   };
   const setScalar = (key: string, value: string | number): void => {
-    if (derivedIn && derivedIn[key] === value) return;
-    if (derivedIn || derivedAbsent) setDerived(key, value);
+    if (derivedIn[key] === value) return;
+    setDerived(key, value);
   };
 
   const characteristics = charsIn ?? {};
