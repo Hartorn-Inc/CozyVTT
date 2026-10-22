@@ -124,8 +124,8 @@ export async function deleteAccount(userId: string): Promise<AccountDeletion> {
     // read the session, so a deleted admin's other device would otherwise
     // keep the role until the session expired. Destroy last so a later
     // failure cannot leave the account deleted while login sessions remain;
-    // sessions are not FK-bound to User. Durable revoke and the trigger skip
-    // a later store UPSERT.
+    // sessions are not FK-bound to User. Durable revoke (advisory lock,
+    // revoked row, then DELETE) skips a later store write.
     await tx.user.delete({ where: { id: userId } });
     await destroyUserLoginSessions(userId, undefined, tx);
     return { deleted: true, campaignIds, personal };

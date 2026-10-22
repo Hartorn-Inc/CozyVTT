@@ -2,7 +2,7 @@
 import './config/loadEnvFile';
 
 import { createServer } from 'http';
-import { sessionConfig, sessionPool } from './config/session';
+import { sessionConfig, sessionPool, loginSessionRevocationGuard } from './config/session';
 import { enforceDatabaseCredential } from './config/databaseGuard';
 import { createApp } from './app';
 import { initializeWebSocket } from './websocket';
@@ -51,37 +51,42 @@ onShutdownSignals(createShutdown({ io, prisma, sessionPool, backups: backupsInPr
 // Node's default five minutes to arrive; see config/httpServer.ts.
 applyRequestTimeouts(httpServer);
 
-httpServer.listen(PORT, () => {
-  logger.info(`CozyVTT Backend running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info(`CORS origin: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}`);
+void loginSessionRevocationGuard.then(() => {
+  httpServer.listen(PORT, () => {
+    logger.info(`CozyVTT Backend running on port ${PORT}`);
+    logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+    logger.info(`CORS origin: ${process.env.CORS_ORIGIN || 'http://localhost:3000'}`);
 
-  const uploadLimits = Object.entries(UPLOAD_LIMITS)
-    .map(([type, bytes]) => `${type} ${Math.round(bytes / (1024 * 1024))}MB`)
-    .join(', ');
-  logger.info(`Upload limits: ${uploadLimits}`);
+    const uploadLimits = Object.entries(UPLOAD_LIMITS)
+      .map(([type, bytes]) => `${type} ${Math.round(bytes / (1024 * 1024))}MB`)
+      .join(', ');
+    logger.info(`Upload limits: ${uploadLimits}`);
 
-  // A proxy body-size cap below the configured limits turns uploads into 413s
-  // that never reach this process — surface it at startup rather than in a
-  // bug report.
-  for (const warning of getProxyLimitWarnings()) {
-    logger.warn(warning);
-  }
+    // A proxy body-size cap below the configured limits turns uploads into 413s
+    // that never reach this process — surface it at startup rather than in a
+    // bug report.
+    for (const warning of getProxyLimitWarnings()) {
+      logger.warn(warning);
+    }
 
-  // A backend stopped mid-restore left the uploaded backup in the backups
-  // folder; nothing can finish restoring it now.
-  void removeLeftoverRestoreUploads(resolveBackupDir());
+    // A backend stopped mid-restore left the uploaded backup in the backups
+    // folder; nothing can finish restoring it now.
+    void removeLeftoverRestoreUploads(resolveBackupDir());
 
-  // Until setup has run, the wizard asks for a token only the owner can
-  // read, so a stranger who finds the instance first cannot become its
-  // administrator. Printed here, where the owner reads the log, unless they
-  // set one themselves in .env.
-  setupState()
-    .then(({ setupCompleted }) => {
-      if (setupCompleted) return;
-      logger.warn(`Setup is not complete. ${setupTokenHint()}`);
-    })
-    .catch((err: unknown) => logger.error('Could not read the setup state at start', { err }));
+    // Until setup has run, the wizard asks for a token only the owner can
+    // read, so a stranger who finds the instance first cannot become its
+    // administrator. Printed here, where the owner reads the log, unless they
+    // set one themselves in .env.
+    setupState()
+      .then(({ setupCompleted }) => {
+        if (setupCompleted) return;
+        logger.warn(`Setup is not complete. ${setupTokenHint()}`);
+      })
+      .catch((err: unknown) => logger.error('Could not read the setup state at start', { err }));
+  });
+}).catch((err) => {
+  logger.error('[FATAL] Login session revocation guard could not be applied', { err });
+  process.exit(1);
 });
 
 export default app;

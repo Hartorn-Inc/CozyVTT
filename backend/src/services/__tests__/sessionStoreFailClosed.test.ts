@@ -63,8 +63,10 @@ it('blocks the deleted sids and not the session it is asked to keep', async () =
   expect(isLoginSessionBlocked('kept-sid')).toBe(false);
 });
 
-it('does not leave the sid blocked when insert fails after DELETE', async () => {
+it('does not leave the sid blocked when the revoked-row insert fails', async () => {
   queryRaw
+    .mockResolvedValueOnce([{ sid: 'gone-then-rolled-back' }])
+    .mockResolvedValueOnce([])
     .mockResolvedValueOnce([{ sid: 'gone-then-rolled-back' }])
     .mockRejectedValueOnce(new Error('could not keep the revoked row'));
   await expect(destroyUserLoginSessions('u1')).rejects.toBeInstanceOf(LoginSessionStoreUnavailable);

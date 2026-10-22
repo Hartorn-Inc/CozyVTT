@@ -10,11 +10,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Security
 
-- **Login-session revocation is fail-closed on HTTP.** After a password change, MFA change, administrator password reset, administrator MFA reset, or platform-role change, the next discrete HTTP request with a revoked cookie is 401. Self-service password and MFA keep the initiating login session and revoke the others; an administrator reset kills every login session for that user. If the login-session store cannot be confirmed, the mutation answers 503 `{ error: 'Service Unavailable', message }` and does not persist.
+- **Login-session revocation is fail-closed on HTTP.** After a password change, MFA change, administrator password reset, administrator MFA reset, or platform-role change, the next HTTP request with a revoked cookie is 401. Self-service password and MFA keep the initiating login session and revoke the others; an administrator reset kills every login session for that user. If the login-session store cannot be confirmed, the mutation answers 503 `{ error: 'Service Unavailable', message }` and does not persist. The backend starts listening only after the revocation guard is installed. A concurrent session-store write cannot recreate a revoked cookie.
 
 ### Changed
 
 - **Sign-in sessions use the PostgreSQL schema from `DATABASE_URL`.** The connect-pg-simple store previously ignored `?schema=` and used `public.session` while Prisma used the configured schema, so revocation could miss the table Express reads. Both now use the same `databaseConnectionSettings`. **On an instance that stored sign-ins in `public.session` while Prisma used another schema, everyone is signed out once** when this takes effect; they sign in again.
+- **Dashboard backups and restores strip Prisma-only `DATABASE_URL` query parameters** (`schema`, `connection_limit`, and the others only Prisma reads) before calling `pg_dump` and `psql`. A restore of a dump whose `User` and `_prisma_migrations` tables live in a custom schema is accepted. Login-session cleanup after restore empties `public.session` / `public.revoked_login_session` and the same two tables in the instance `?schema=` only.
 
 - **The stack runs PostgreSQL 18.** Compose, CI, the backend's `pg_dump`/`psql`, and the Ubuntu install steps use 18. The named volume is mounted at `/var/lib/postgresql` (18 stores the cluster under `18/docker`). The database container's filesystem is read-only, with `/tmp` and `/var/run/postgresql` in memory.
 - **The Docker development stack is isolated from production.** Fresh checkouts copy `.env.example` to `.env`, set `DEV_SESSION_SECRET`, make the file private with `chmod 600`, and run `make up`, which uses a project name and Postgres volume derived from that checkout, plus disposable `backend/uploads-dev` and `backend/backups-dev` directories. Production keeps its existing resources. If a checkout still has the pre-isolation fixed-name dev containers, `make up` refuses until they are stopped or isolated; stopping/removing those containers without `down -v` preserves their old data.
@@ -23,6 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Upgrading
 
 A leftover PostgreSQL 15 `postgres_data` volume will not start. Remove it (`docker volume rm` the compose project volume) before `docker compose up`. That drops the old cluster; there is no in-container migrator.
+
+If this instance stored sign-ins in `public.session` while Prisma used another schema, everyone is signed out once after this takes effect; they sign in again.
 
 ---
 

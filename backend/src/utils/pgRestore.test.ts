@@ -83,9 +83,33 @@ describe('pgConnection', () => {
     expect(dbname).not.toContain('p%40ss');
   });
 
+  it('gives libpq a password whose encoded form includes a percent sign', () => {
+    const { env } = pgConnection(
+      'postgresql://cozy%2Badmin:p%40ss%25w0rd@db.internal/cozyvtt?schema=public',
+    );
+    expect(env.PGPASSWORD).toBe('p@ss%w0rd');
+  });
+
   it('keeps the query string, which may carry connection options', () => {
     const { dbname } = pgConnection('postgresql://u:p@h:5432/db?sslmode=require');
     expect(dbname).toBe('postgresql://u@h:5432/db?sslmode=require');
+  });
+
+  it('drops Prisma-only query parameters that libpq rejects, and keeps sslmode', () => {
+    const { dbname, env } = pgConnection(
+      'postgresql://u:p@h:5432/db?schema=tenant&connection_limit=5&sslmode=require',
+    );
+    expect(dbname).toBe('postgresql://u@h:5432/db?sslmode=require');
+    expect(dbname).not.toMatch(/schema=/);
+    expect(dbname).not.toMatch(/connection_limit=/);
+    expect(env.PGPASSWORD).toBe('p');
+  });
+
+  it('strips Prisma-only query parameters from a passwordless address too', () => {
+    const { dbname, env } = pgConnection('postgresql://u@h:5432/db?schema=tenant');
+    expect(dbname).toBe('postgresql://u@h:5432/db');
+    expect(dbname).not.toMatch(/schema=/);
+    expect(env).not.toHaveProperty('PGPASSWORD');
   });
 
   it('leaves an address without a password alone, and sets no password', () => {
@@ -113,6 +137,20 @@ describe('buildDumpArgs and buildRestoreArgs', () => {
   ])('%s puts no password on the command line', (_name, build) => {
     const args = build('postgresql://cozyvtt:s3cret@database:5432/cozyvtt', '/tmp/db.sql');
     expect(args.join(' ')).not.toContain('s3cret');
+    expect(args).toContain('postgresql://cozyvtt@database:5432/cozyvtt');
+  });
+
+  it.each([
+    ['buildDumpArgs', buildDumpArgs],
+    ['buildRestoreArgs', buildRestoreArgs],
+  ])('%s drops schema= and connection_limit= from the address and puts no password on argv', (_name, build) => {
+    const args = build(
+      'postgresql://cozyvtt:s3cret@database:5432/cozyvtt?schema=tenant&connection_limit=5',
+      '/tmp/db.sql',
+    );
+    expect(args.join(' ')).not.toContain('s3cret');
+    expect(args.join(' ')).not.toMatch(/schema=/);
+    expect(args.join(' ')).not.toMatch(/connection_limit=/);
     expect(args).toContain('postgresql://cozyvtt@database:5432/cozyvtt');
   });
 });
@@ -542,6 +580,23 @@ describe('prepareDumpForRestore', () => {
 
       expect(refused).toMatch(/not a CozyVTT backup/);
       expect(refused).toContain('User');
+    });
+
+    it('accepts a dump that creates User and _prisma_migrations in a non-public schema', async () => {
+      const dump = [
+        'CREATE TABLE app_data."User" (',
+        '    id text NOT NULL',
+        ');',
+        'CREATE TABLE app_data._prisma_migrations (',
+        '    id character varying(36) NOT NULL',
+        ');',
+        '-- PostgreSQL database dump complete',
+      ];
+      const src = await write('database.sql', dump);
+
+      const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+
+      expect(refused).toBeNull();
     });
 
     it('accepts a real dump taken on Windows line endings', async () => {

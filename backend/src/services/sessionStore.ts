@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { rememberMeMaxAge } from '../config/sessionDurations';
+import { LOGIN_SESSION_SID_LOCK } from '../config/loginSessionRevocationGuard';
 import logger from '../utils/logger';
 import { blockLoginSessions, unblockLoginSessions } from './revokedLoginSessions';
 
@@ -44,25 +45,50 @@ export function rethrowIfLoginSessionStoreUnavailable(error: unknown): void {
   throw error instanceof LoginSessionStoreUnavailable ? error : new LoginSessionStoreUnavailable();
 }
 
+async function selectUserLoginSessionSids(
+  userId: string,
+  exceptSessionId: string | undefined,
+  db: Prisma.TransactionClient,
+  forUpdate: boolean,
+): Promise<string[]> {
+  const lock = forUpdate ? Prisma.sql`FOR UPDATE` : Prisma.sql``;
+  const rows = exceptSessionId
+    ? await db.$queryRaw<{ sid: string }[]>`
+        SELECT sid FROM session
+        WHERE (sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId})
+          AND sid <> ${exceptSessionId}
+        ${lock}
+      `
+    : await db.$queryRaw<{ sid: string }[]>`
+        SELECT sid FROM session
+        WHERE sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId}
+        ${lock}
+      `;
+  return rows.map((row) => row.sid);
+}
+
+async function lockLoginSessionSid(db: Prisma.TransactionClient, sid: string): Promise<void> {
+  await db.$queryRaw<{ ok: number }[]>`
+    SELECT 1 AS ok FROM (SELECT pg_advisory_xact_lock(${LOGIN_SESSION_SID_LOCK}, hashtext(${sid}::text))) AS lock
+  `;
+}
+
 async function deleteAndRevokeLoginSessions(
   userId: string,
   exceptSessionId: string | undefined,
   db: Prisma.TransactionClient,
 ): Promise<string[]> {
-  const rows = exceptSessionId
-    ? await db.$queryRaw<{ sid: string }[]>`
-        DELETE FROM session
-        WHERE (sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId})
-          AND sid <> ${exceptSessionId}
-        RETURNING sid
-      `
-    : await db.$queryRaw<{ sid: string }[]>`
-        DELETE FROM session
-        WHERE sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId}
-        RETURNING sid
-      `;
-  const sids = rows.map((row) => row.sid);
+  // Advisory lock first (same order as the store write), then FOR UPDATE, so a
+  // writer waiting on the lock cannot INSERT while this transaction holds the
+  // row and this transaction waits on the lock.
+  const preview = await selectUserLoginSessionSids(userId, exceptSessionId, db, false);
+  if (preview.length === 0) return preview;
+  for (const sid of preview) await lockLoginSessionSid(db, sid);
+  const sids = await selectUserLoginSessionSids(userId, exceptSessionId, db, true);
   if (sids.length === 0) return sids;
+  for (const sid of sids) {
+    if (!preview.includes(sid)) await lockLoginSessionSid(db, sid);
+  }
   const expiresAt = new Date(Date.now() + rememberMeMaxAge);
   await db.$queryRaw<{ sid: string }[]>`
     INSERT INTO revoked_login_session (sid, expires_at)
@@ -70,7 +96,33 @@ async function deleteAndRevokeLoginSessions(
     ON CONFLICT (sid) DO UPDATE SET expires_at = EXCLUDED.expires_at
     RETURNING sid
   `;
+  await db.$queryRaw`
+    DELETE FROM session WHERE sid IN (${Prisma.join(sids.map((sid) => Prisma.sql`${sid}`))})
+  `;
   return sids;
+}
+
+function isPgDeadlock(err: unknown, depth = 0): boolean {
+  if (depth > 5 || typeof err !== 'object' || err === null) return false;
+  if ('code' in err && (err.code === '40P01' || err.code === 'P2034')) return true;
+  if ('message' in err && typeof err.message === 'string' && /deadlock detected|40P01/.test(err.message)) {
+    return true;
+  }
+  if ('cause' in err) return isPgDeadlock(err.cause, depth + 1);
+  return false;
+}
+
+async function withDeadlockRetry<T>(work: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      return await work();
+    } catch (err) {
+      lastErr = err;
+      if (!isPgDeadlock(err)) throw err;
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -102,17 +154,20 @@ export async function destroyUserLoginSessions(
   // so the person is told, instead of reporting success while the old
   // sessions keep their role until they expire. Store or SQL failures become
   // LoginSessionStoreUnavailable (503), not a swallowed zero.
-  // DELETE and the revoked_login_session INSERT share one transaction so a
-  // later store UPSERT cannot recreate a deleted sid. exceptSessionId stays
-  // in the WHERE, so it is not returned and not revoked. In-memory blocking
-  // waits until this helper's own transaction commits: a caller-supplied
-  // client is already in a transaction, and a rollback must not leave a
-  // block that would refuse a later write of a sid that is still in the
-  // table. If this helper fails after blocking, those sids are unblocked.
+  // A per-sid advisory lock, SELECT FOR UPDATE, the revoked_login_session
+  // INSERT and DELETE share one transaction so a later store UPSERT cannot
+  // recreate a deleted sid. exceptSessionId stays in the WHERE, so it is
+  // not returned and not revoked. In-memory blocking waits until this
+  // helper's own transaction commits: a caller-supplied client is already
+  // in a transaction, and a rollback must not leave a block that would
+  // refuse a later write of a sid that is still in the table. If this
+  // helper fails after blocking, those sids are unblocked.
   let sids: string[] = [];
   try {
     if (db === prisma) {
-      sids = await prisma.$transaction((tx) => deleteAndRevokeLoginSessions(userId, exceptSessionId, tx));
+      sids = await withDeadlockRetry(() =>
+        prisma.$transaction((tx) => deleteAndRevokeLoginSessions(userId, exceptSessionId, tx)),
+      );
       blockLoginSessions(sids);
     } else {
       sids = await deleteAndRevokeLoginSessions(userId, exceptSessionId, db);

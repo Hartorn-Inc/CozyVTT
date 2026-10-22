@@ -244,6 +244,16 @@ describe('backend/scripts/restore.sh', () => {
     expect(held[1].split('\n')).toEqual(loginSessionRestoreTrailer('public'));
     expect(loginSessionRestoreTrailer('public')).toEqual(RESTORE_TRAILER);
 
+    // The script then appends the same second statement loginSessionRestoreTrailer
+    // adds for a simple ?schema= name. Substitute app_data for ${_SCHEMA_SQL}.
+    const extra = /RESTORE_TRAILER="\$\{RESTORE_TRAILER\}\n(DO \\\$\\\$ BEGIN[\s\S]*?END \\\$\\\$;)"/.exec(script);
+    if (!extra) throw new Error('restore.sh no longer appends a custom-schema trailer; update this test with the script');
+    const scriptCustom = extra[1].replace(/\\\$/g, '$').replace(/\$\{_SCHEMA_SQL\}/g, 'app_data');
+    expect(loginSessionRestoreTrailer('app_data')).toEqual([
+      loginSessionRestoreTrailer('public')[0],
+      scriptCustom,
+    ]);
+
     // Handed to the awk step that writes the file psql loads.
     const awk = /awk -v key="\$RESTRICT_KEY" -v trailer="\$RESTORE_TRAILER" '\n([\s\S]*?)\n' > "\$PREPARED"/.exec(script);
     if (!awk) throw new Error('restore.sh no longer hands RESTORE_TRAILER to its awk step; update this test with the script');

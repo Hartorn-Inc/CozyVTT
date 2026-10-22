@@ -12,7 +12,7 @@ import logger from '../utils/logger';
  * does not understand. `schema` and `connection_limit` are translated below;
  * the rest only tuned Prisma's own connection engine, which is gone.
  */
-const PRISMA_ONLY_PARAMETERS = [
+export const PRISMA_ONLY_PARAMETERS = [
   'schema',
   'connection_limit',
   'pool_timeout',

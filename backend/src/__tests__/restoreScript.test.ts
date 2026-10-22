@@ -147,6 +147,28 @@ describeOnPosix('restore.sh', () => {
     }
   });
 
+  it('accepts CREATE TABLE in a non-public schema, the dump DATABASE_URL?schema= writes', async () => {
+    const dump = [
+      '-- PostgreSQL database dump',
+      'CREATE TABLE app_data."User" (',
+      '    id text NOT NULL',
+      ');',
+      'CREATE TABLE app_data._prisma_migrations (',
+      '    id character varying(36) NOT NULL',
+      ');',
+      '-- PostgreSQL database dump complete',
+    ].join('\n') + '\n';
+    await fs.writeFile(backup, gzipSync(dump));
+
+    const result = run();
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toMatch(/does not create the User and _prisma_migrations tables/);
+    const text = await fs.readFile(loaded, 'utf8');
+    expect(text).toContain('CREATE TABLE app_data."User" (');
+    expect(text).toContain('CREATE TABLE app_data._prisma_migrations (');
+  });
+
   // On a Docker install the last thing the script prints is how to check the
   // app. A tunnel setup writes HTTP_PORT=127.0.0.1:80, which "where PORT is
   // HTTP_PORT" read oddly beside; the message names the address to use.

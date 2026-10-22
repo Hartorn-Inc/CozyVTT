@@ -15,6 +15,7 @@
 import { createReadStream, createWriteStream } from 'fs';
 import { randomBytes } from 'crypto';
 import { once } from 'events';
+import { PRISMA_ONLY_PARAMETERS } from '../config/prismaClient';
 
 /**
  * Statements run before the dump itself.
@@ -41,7 +42,7 @@ const APP_SCHEMA = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /**
  * Schema Prisma (and the session pool) use, from `?schema=` on DATABASE_URL.
  * Parse failure, a missing parameter, and a name the scripts would refuse
- * are `public`. Kept here so restore code does not load prismaClient.ts
+ * are `public`. Kept here so restore code does not call createPrismaClient
  * (and a database pool) to dump or restore.
  */
 export function schemaFromDatabaseUrl(dbUrl: string): string {
@@ -169,7 +170,7 @@ const COPY_END = '\\.';
  */
 const DUMP_COMPLETE = '-- PostgreSQL database dump complete';
 const RESTRICTED_MODE_LINE = /^\\(?:un)?restrict /;
-const CREATE_TABLE = /^CREATE TABLE public\.(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*)) \($/;
+const CREATE_TABLE = /^CREATE TABLE (?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\.(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*)) \($/;
 const TRANSACTION_CONTROL =
   /^(?:BEGIN|START TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE TRANSACTION)\b/i;
 
@@ -283,7 +284,10 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
         keep = false;
       } else {
         const table = CREATE_TABLE.exec(statement);
-        if (table) tables.add(table[1] ?? table[2]);
+        if (table) {
+          const name = table[3] ?? table[4];
+          if (name) tables.add(name);
+        }
       }
       if (keep) {
         await write(newline ? raw + '\n' : raw);
@@ -337,16 +341,14 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
  * which only the same user or root can read. The environment handed over is
  * the path and the password alone; the tools need nothing else of the app's.
  *
- * An address that does not parse, or carries no password, is passed on as it
- * is, so an unusual one (a Unix socket, a passwordless local server) still
- * connects the way it did.
+ * An address that does not parse is passed on as it is, so an unusual one
+ * (a Unix socket) still connects the way it did. A parsed address always
+ * has Prisma-only query parameters removed, password or not: libpq rejects
+ * `?schema=` and `?connection_limit=` as invalid URI query parameters, while
+ * the app's pool accepts them. `sslmode=require` and other libpq settings
+ * stay on the address. The schema is read separately by
+ * schemaFromDatabaseUrl for dump excludes, not passed as a libpq parameter.
  */
-// TODO(backups): the address goes to pg_dump and psql with its query string,
-// and libpq refuses what it does not know: `?schema=` and `?connection_limit=`
-// ("invalid URI query parameter") and `sslmode=no-verify` ("invalid sslmode
-// value"), all of which the app's pg pool accepts, so every backup and restore
-// fails there. Drop the parameters prismaClient.ts handles itself, and pass the
-// schema with --schema, so the tools get only what libpq reads.
 export function pgConnection(dbUrl: string): { dbname: string; env: Record<string, string> } {
   const env: Record<string, string> = { PATH: process.env.PATH ?? '' };
   let parsed: URL;
@@ -355,7 +357,11 @@ export function pgConnection(dbUrl: string): { dbname: string; env: Record<strin
   } catch {
     return { dbname: dbUrl, env };
   }
-  if (!parsed.password) return { dbname: dbUrl, env };
+  for (const name of PRISMA_ONLY_PARAMETERS) parsed.searchParams.delete(name);
+  if (!parsed.password) return { dbname: parsed.toString(), env };
+  // Node's URL.password getter still returns the percent-encoded form
+  // (`p%40ss%25w0rd`). One decodeURIComponent is the password as typed
+  // (`p@ss%w0rd`); a second decode would throw on a literal `%`.
   env.PGPASSWORD = decodeURIComponent(parsed.password);
   parsed.password = '';
   return { dbname: parsed.toString(), env };

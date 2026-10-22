@@ -160,8 +160,10 @@ gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v trailer="$REST
       if (at > 0 && length(rest) - at - 10 >= 2) next
     }
     if (line ~ /^(GRANT|REVOKE) /) next
-    if (line == "CREATE TABLE public.\"User\" (") has_user = 1
-    if (line == "CREATE TABLE public._prisma_migrations (") has_migrations = 1
+    # A backup from DATABASE_URL?schema=app_data writes these in that schema,
+    # not public. Quoted or unquoted qualifier, quoted or unquoted table name.
+    if (line ~ /^CREATE TABLE ("[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.("User"|User) \($/) has_user = 1
+    if (line ~ /^CREATE TABLE ("[^"]+"|[A-Za-z_][A-Za-z0-9_]*)\.("_prisma_migrations"|_prisma_migrations) \($/) has_migrations = 1
     print
   }
   END {

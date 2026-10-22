@@ -7,7 +7,12 @@
  * createTableIfMissing only runs on a later store query.
  */
 
-import type { Pool } from 'pg';
+import type { Pool, PoolClient } from 'pg';
+import type session from 'express-session';
+import { sessionMaxAge } from './sessionDurations';
+
+/** First key of pg_advisory_xact_lock so a store write and destroy serialize on one sid. */
+export const LOGIN_SESSION_SID_LOCK = 8723641;
 
 /** Idempotent SQL the session pool applies so every schema the store uses is guarded. */
 export const LOGIN_SESSION_REVOCATION_GUARD_SQL = `
@@ -60,4 +65,101 @@ export async function ensureLoginSessionRevocationGuard(pool: Pool): Promise<voi
   } finally {
     client.release();
   }
+}
+
+function expireUnixSeconds(sess: session.SessionData): number {
+  const expires = sess.cookie.expires;
+  if (expires) return Math.ceil(new Date(expires).getTime() / 1000);
+  return Math.ceil(Date.now() / 1000 + sessionMaxAge / 1000);
+}
+
+function isPgDeadlock(err: unknown, depth = 0): boolean {
+  if (depth > 5 || typeof err !== 'object' || err === null) return false;
+  if ('code' in err && (err.code === '40P01' || err.code === 'P2034')) return true;
+  if ('message' in err && typeof err.message === 'string' && /deadlock detected|40P01/.test(err.message)) {
+    return true;
+  }
+  if ('cause' in err) return isPgDeadlock(err.cause, depth + 1);
+  return false;
+}
+
+async function inLoginSessionWriteTx(pool: Pool, work: (client: PoolClient) => Promise<void>): Promise<void> {
+  const client = await pool.connect();
+  try {
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        await client.query('BEGIN');
+        await work(client);
+        await client.query('COMMIT');
+        return;
+      } catch (err) {
+        lastErr = err;
+        try {
+          await client.query('ROLLBACK');
+        } catch {
+          // The connection is already failed; retry or throw below.
+        }
+        if (!isPgDeadlock(err)) throw err;
+      }
+    }
+    throw lastErr;
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * UPSERT a login session unless destroyUserLoginSessions has named the sid
+ * in revoked_login_session. Takes the same transaction-scoped advisory lock
+ * destroy uses, so a connect-pg-simple INSERT cannot pass the trigger, wait
+ * on the row, and recreate it after DELETE commits.
+ */
+export async function writeLoginSessionUnlessRevoked(
+  pool: Pool,
+  sid: string,
+  sess: session.SessionData,
+): Promise<void> {
+  await inLoginSessionWriteTx(pool, async (client) => {
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${LOGIN_SESSION_SID_LOCK}, hashtext($1::text))`,
+      [sid],
+    );
+    await client.query(
+      `INSERT INTO session (sess, expire, sid)
+       SELECT $1::json, to_timestamp($2), $3::varchar
+       WHERE NOT EXISTS (
+         SELECT 1 FROM revoked_login_session WHERE sid = $3::varchar AND expires_at > NOW()
+       )
+       ON CONFLICT (sid) DO UPDATE SET sess = EXCLUDED.sess, expire = EXCLUDED.expire
+       WHERE NOT EXISTS (
+         SELECT 1 FROM revoked_login_session WHERE sid = EXCLUDED.sid AND expires_at > NOW()
+       )`,
+      [JSON.stringify(sess), expireUnixSeconds(sess), sid],
+    );
+  });
+}
+
+/**
+ * Extend a login session's expiry unless the sid is still revoked.
+ */
+export async function touchLoginSessionUnlessRevoked(
+  pool: Pool,
+  sid: string,
+  sess: session.SessionData,
+): Promise<void> {
+  await inLoginSessionWriteTx(pool, async (client) => {
+    await client.query(
+      `SELECT pg_advisory_xact_lock(${LOGIN_SESSION_SID_LOCK}, hashtext($1::text))`,
+      [sid],
+    );
+    await client.query(
+      `UPDATE session SET expire = to_timestamp($1)
+       WHERE sid = $2::varchar
+         AND NOT EXISTS (
+           SELECT 1 FROM revoked_login_session WHERE sid = $2::varchar AND expires_at > NOW()
+         )`,
+      [expireUnixSeconds(sess), sid],
+    );
+  });
 }

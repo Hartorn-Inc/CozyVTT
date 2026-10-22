@@ -260,6 +260,64 @@ class BackupRestoreScripts(unittest.TestCase):
         self.assertEqual(text.rstrip('\n').split('\n')[-1], PUBLIC_TRAILER)
         self.assertEqual(text.count(PUBLIC_TRAILER), 1)
 
+    def test_restore_accepts_create_table_in_any_schema_qualifier(self):
+        cases = (
+            ('app_data."User"', 'app_data._prisma_migrations'),
+            ('app_data.User', 'app_data._prisma_migrations'),
+            ('"app_data"."User"', '"app_data"."_prisma_migrations"'),
+            ('public."User"', 'public._prisma_migrations'),
+        )
+        for user, migrations in cases:
+            with self.subTest(user=user, migrations=migrations):
+                dump = '\n'.join([
+                    '-- PostgreSQL database dump',
+                    'CREATE TABLE {0} ('.format(user),
+                    '    id text NOT NULL',
+                    ');',
+                    'CREATE TABLE {0} ('.format(migrations),
+                    '    id character varying(36) NOT NULL',
+                    ');',
+                    '-- PostgreSQL database dump complete',
+                    '',
+                ])
+                with gzip.open(self.backup_file, 'wb') as archive:
+                    archive.write(dump.encode('utf-8'))
+                text = self._restore_sql(
+                    'postgresql://cozyvtt:secret@localhost:5432/cozyvtt'
+                )
+                self.assertIn('CREATE TABLE {0} ('.format(user), text)
+                self.assertIn('CREATE TABLE {0} ('.format(migrations), text)
+                self.assertNotIn(
+                    'it does not create the User and _prisma_migrations tables',
+                    text,
+                )
+
+    def test_restore_still_refuses_a_dump_without_user_and_migrations(self):
+        dump = '\n'.join([
+            '-- PostgreSQL database dump',
+            'CREATE TABLE app_data."Note" (',
+            '    id text NOT NULL',
+            ');',
+            '-- PostgreSQL database dump complete',
+            '',
+        ])
+        with gzip.open(self.backup_file, 'wb') as archive:
+            archive.write(dump.encode('utf-8'))
+        result = subprocess.run(
+            ['bash', RESTORE_SH, self.backup_file],
+            cwd=self.root.name,
+            env=self._env('postgresql://cozyvtt:secret@localhost:5432/cozyvtt'),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            'it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup',
+            result.stderr + result.stdout,
+        )
+        self.assertFalse(os.path.isfile(self.loaded))
+
 
 if __name__ == '__main__':
     unittest.main()

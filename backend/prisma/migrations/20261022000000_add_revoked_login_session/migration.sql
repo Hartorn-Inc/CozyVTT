@@ -3,6 +3,19 @@
 -- when a row is still unexpired; db push creates the table but not the
 -- trigger, so the runtime helper reapplies this.
 
+-- CREATE TRIGGER needs this table. Fresh migrate deploy can run this file
+-- before 20261015032229_add_login_session_table has been applied in a
+-- restore or an empty schema; IF NOT EXISTS matches that earlier migration.
+CREATE TABLE IF NOT EXISTS "session" (
+    "sid" VARCHAR NOT NULL,
+    "sess" JSON NOT NULL,
+    "expire" TIMESTAMP(6) NOT NULL,
+
+    CONSTRAINT "session_pkey" PRIMARY KEY ("sid")
+);
+
+CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session"("expire");
+
 CREATE TABLE IF NOT EXISTS "revoked_login_session" (
     "sid" VARCHAR NOT NULL,
     "expires_at" TIMESTAMP(6) NOT NULL,

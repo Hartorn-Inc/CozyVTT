@@ -7,7 +7,11 @@ import { sessionOptions } from './sessionOptions';
 import { sessionSecretProblem, INSECURE_SESSION_SECRETS } from './sessionSecret';
 import { databaseConnectionSettings } from './prismaClient';
 import { isLoginSessionBlocked } from '../services/revokedLoginSessions';
-import { ensureLoginSessionRevocationGuard } from './loginSessionRevocationGuard';
+import {
+  ensureLoginSessionRevocationGuard,
+  writeLoginSessionUnlessRevoked,
+  touchLoginSessionUnlessRevoked,
+} from './loginSessionRevocationGuard';
 
 export { rememberMeMaxAge };
 
@@ -57,15 +61,20 @@ export const loginSessionWriteBarrier: { wait?: Promise<void> } = {};
  * sid destroyUserLoginSessions just deleted is a successful no-op, so an
  * in-flight request cannot UPSERT the row back. The in-memory block is the
  * fast path; after it has already passed, the revoked row and trigger skip
- * the write.
+ * the write. When `opts.pool` is set, set/touch take the same advisory lock
+ * as destroyUserLoginSessions instead of connect-pg-simple's UPSERT.
  */
-export function wrapPgSessionStore<T extends session.Store>(store: T): T {
+export function wrapPgSessionStore<T extends session.Store>(
+  store: T,
+  opts?: { pool: Pool },
+): T {
   const get = store.get.bind(store);
   const set = store.set.bind(store);
   const destroy = store.destroy.bind(store);
   const touch = typeof store.touch === 'function'
     ? store.touch.bind(store)
     : undefined;
+  const pool = opts?.pool;
 
   store.get = (sid, callback) => {
     get(sid, (err, sess) => {
@@ -79,6 +88,13 @@ export function wrapPgSessionStore<T extends session.Store>(store: T): T {
       return;
     }
     const write = () => {
+      if (pool) {
+        void writeLoginSessionUnlessRevoked(pool, sid, sess).then(
+          () => { if (callback) callback(); },
+          (err: unknown) => { if (callback) callback(loginSessionStoreUnavailable(err)); },
+        );
+        return;
+      }
       set(sid, sess, (err) => {
         if (!callback) return;
         if (err) callback(loginSessionStoreUnavailable(err));
@@ -109,6 +125,21 @@ export function wrapPgSessionStore<T extends session.Store>(store: T): T {
         return;
       }
       const write = () => {
+        if (pool) {
+          void touchLoginSessionUnlessRevoked(pool, sid, sess).then(
+            () => {
+              if (!callback) return;
+              const done = callback as unknown as (error?: Error) => void;
+              done();
+            },
+            (err: unknown) => {
+              if (!callback) return;
+              const done = callback as unknown as (error?: Error) => void;
+              done(loginSessionStoreUnavailable(err));
+            },
+          );
+          return;
+        }
         touchWithErr(sid, sess, (err) => {
           if (!callback) return;
           // Published touch types omit the error argument the store passes.
@@ -190,7 +221,7 @@ const pgSessionStore = wrapPgSessionStore(new PgSession({
   tableName: 'session',
   createTableIfMissing: true,
   ...(sessionDatabase ? { schemaName: sessionDatabase.schema } : {}),
-}));
+}), { pool: sessionPool });
 
 // After PgSession so createTableIfMissing has been requested. The guard also
 // creates session if missing, because that flag only creates the table on a

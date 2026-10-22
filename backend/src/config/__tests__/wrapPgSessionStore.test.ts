@@ -9,6 +9,7 @@ import session from 'express-session';
 import request from 'supertest';
 import { createApp } from '../../app';
 import { sessionOptions } from '../sessionOptions';
+import type { Pool } from 'pg';
 import { wrapPgSessionStore, sessionPool, loginSessionWriteBarrier } from '../session';
 import { blockLoginSessions, unblockLoginSessions } from '../../services/revokedLoginSessions';
 
@@ -94,6 +95,64 @@ describe('wrapPgSessionStore callback errors', () => {
     store.touch!('sid-touch', cookieOf(), (err?: Error) => {
       if (err) received.push(err);
     });
+    expect(received).toHaveLength(1);
+    expect(received[0].name).toBe('LoginSessionStoreUnavailable');
+  });
+});
+
+function fakePool(onQuery: (sql: string) => void, fail?: Error): Pool {
+  const client = {
+    query: async (sql: string) => {
+      onQuery(sql);
+      if (fail) throw fail;
+      return { rows: [] };
+    },
+    release: () => undefined,
+  };
+  return { connect: async () => client } as unknown as Pool;
+}
+
+describe('wrapPgSessionStore with a pool', () => {
+  it('does not call inner set when a pool is provided', async () => {
+    const queries: string[] = [];
+    const inner = new FakeStore();
+    const store = wrapPgSessionStore(inner, { pool: fakePool((sql) => queries.push(sql)) });
+    await new Promise<void>((resolve, reject) => {
+      store.set('sid-pool-set', cookieOf({ userId: 'u1' }), (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect(inner.setCalls).toBe(0);
+    expect(queries.some((sql) => sql === 'BEGIN' || sql.startsWith('BEGIN'))).toBe(true);
+    expect(queries.some((sql) => sql.includes('pg_advisory_xact_lock'))).toBe(true);
+  });
+
+  it('does not call inner touch when a pool is provided', async () => {
+    const inner = new FakeStore();
+    const store = wrapPgSessionStore(inner, { pool: fakePool(() => undefined) });
+    await new Promise<void>((resolve, reject) => {
+      store.touch!('sid-pool-touch', cookieOf(), (err?: Error) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect(inner.touchCalls).toBe(0);
+  });
+
+  it('maps pool write errors to name LoginSessionStoreUnavailable', async () => {
+    const inner = new FakeStore();
+    const store = wrapPgSessionStore(inner, {
+      pool: fakePool(() => undefined, new Error('ECONNREFUSED')),
+    });
+    const received: Error[] = [];
+    await new Promise<void>((resolve) => {
+      store.set('sid-pool-err', cookieOf({ userId: 'u1' }), (err) => {
+        if (err) received.push(err);
+        resolve();
+      });
+    });
+    expect(inner.setCalls).toBe(0);
     expect(received).toHaveLength(1);
     expect(received[0].name).toBe('LoginSessionStoreUnavailable');
   });

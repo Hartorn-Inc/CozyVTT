@@ -16,6 +16,7 @@ import { generateSync } from 'otplib';
 import type session from 'express-session';
 import { createApp } from '../../app';
 import { loginSessionRevocationGuard, loginSessionWriteBarrier, sessionConfig, sessionPool } from '../../config/session';
+import { LOGIN_SESSION_SID_LOCK, writeLoginSessionUnlessRevoked } from '../../config/loginSessionRevocationGuard';
 import { destroyUserLoginSessions } from '../../services/sessionStore';
 import {
   prisma,
@@ -268,5 +269,74 @@ describe('an in-flight store.set after destroy', () => {
     const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${sid}`;
     expect(rows).toEqual([]);
   });
+
+  it('does not leave the row when set and destroy run together', async () => {
+    const user = await createTestUser({ email: `pg-store-all-${stamp}@test.cozyvtt.local` });
+    created.push(user.id);
+    const agent = request.agent(app);
+    const login = await agent.post('/api/auth/login').send({ email: user.email, password: TEST_PASSWORD });
+    expect(login.status).toBe(200);
+    const sid = sidOf(login);
+    const sess = await storeGet(sid);
+    expect(sess?.userId).toBe(user.id);
+    if (!sess) throw new Error('expected a stored session');
+
+    await Promise.all([storeSet(sid, sess), destroyUserLoginSessions(user.id)]);
+
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${sid}`;
+    expect(rows).toEqual([]);
+  });
+
+  it('does not leave the row when a third connection holds the advisory lock across write and destroy', async () => {
+    const user = await createTestUser({ email: `pg-store-lock-${stamp}@test.cozyvtt.local` });
+    created.push(user.id);
+    const agent = request.agent(app);
+    const login = await agent.post('/api/auth/login').send({ email: user.email, password: TEST_PASSWORD });
+    expect(login.status).toBe(200);
+    const sid = sidOf(login);
+    const sess = await storeGet(sid);
+    expect(sess?.userId).toBe(user.id);
+    if (!sess) throw new Error('expected a stored session');
+
+    const holder = await sessionPool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(
+        `SELECT pg_advisory_xact_lock(${LOGIN_SESSION_SID_LOCK}, hashtext($1::text))`,
+        [sid],
+      );
+
+      const write = writeLoginSessionUnlessRevoked(sessionPool, sid, sess);
+      await waitForAdvisoryWaiters(sid, 1);
+      const destroy = destroyUserLoginSessions(user.id);
+      await waitForAdvisoryWaiters(sid, 2);
+      await holder.query('COMMIT');
+      await Promise.all([write, destroy]);
+    } finally {
+      holder.release();
+    }
+
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${sid}`;
+    expect(rows).toEqual([]);
+  });
 });
+
+async function waitForAdvisoryWaiters(sid: string, atLeast: number): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (Date.now() < deadline) {
+    const waiting = await sessionPool.query<{ n: number }>(
+      `SELECT COUNT(*)::int AS n
+         FROM pg_locks
+        WHERE locktype = 'advisory'
+          AND objsubid = 2
+          AND classid = $1
+          AND objid = hashtext($2::text)::oid
+          AND NOT granted`,
+      [LOGIN_SESSION_SID_LOCK, sid],
+    );
+    if (waiting.rows[0].n >= atLeast) return;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`timed out waiting for ${atLeast} advisory lock waiter(s)`);
+}
 
