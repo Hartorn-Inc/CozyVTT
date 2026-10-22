@@ -27,7 +27,7 @@ import { prisma } from '../config/database';
 import { isAssetInUse } from './assetUsage';
 import { deleteFile } from '../utils/fileUtils';
 import logger from '../utils/logger';
-import { destroyUserLoginSessions } from './sessionStore';
+import { destroyUserLoginSessions, lockLoginSessionUser } from './sessionStore';
 import { isOnlyAdmin } from './platformAdmins';
 import { inSerializableTransaction } from '../utils/serializable';
 
@@ -66,6 +66,15 @@ export type AccountDeletion =
  */
 export async function deleteAccount(userId: string): Promise<AccountDeletion> {
   return inSerializableTransaction(async (tx): Promise<AccountDeletion> => {
+    // First statement: production logins take this lock before INSERT, so
+    // they cannot commit a new sid until this transaction finishes. The
+    // SERIALIZABLE snapshot is still taken at the start of this statement
+    // (before a lock wait); a sid committed during the wait is invisible on
+    // this client, which is why destroy deletes session rows from a
+    // read-committed view. Returning after the lock (onlyAdmin /
+    // runsCampaigns) is fine; the lock is transaction-scoped. Destroy is not
+    // called on those paths.
+    await lockLoginSessionUser(tx, userId);
     const account = await tx.user.findUnique({ where: { id: userId }, select: { platformRole: true } });
     if (account?.platformRole === 'ADMIN' && (await isOnlyAdmin(userId, tx))) {
       return { deleted: false, refused: 'onlyAdmin' };
@@ -125,7 +134,11 @@ export async function deleteAccount(userId: string): Promise<AccountDeletion> {
     // keep the role until the session expired. Destroy last so a later
     // failure cannot leave the account deleted while login sessions remain;
     // sessions are not FK-bound to User. Durable revoke (advisory lock,
-    // revoked row, then DELETE) skips a later store write.
+    // revoked row, then DELETE) skips a later store write. Destroy's
+    // session-row DELETE uses a read-committed view on another connection
+    // while this transaction holds the user lock: the SERIALIZABLE snapshot
+    // cannot see a sid committed after the first statement. That DELETE is
+    // durable if this transaction later rolls back (fail-closed).
     await tx.user.delete({ where: { id: userId } });
     await destroyUserLoginSessions(userId, undefined, tx);
     return { deleted: true, campaignIds, personal };

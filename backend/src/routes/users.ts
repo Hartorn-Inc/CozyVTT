@@ -7,7 +7,7 @@ import { toJson } from '../utils/prisma-json';
 import { sanitizeUser, hashPassword, verifyPassword } from '../services/auth';
 import { validateEmail, sanitizeInput } from '../utils/validation';
 import { isSmtpConfigured, sendPasswordResetEmail, sendEmailChangedNotice } from '../services/email';
-import { destroyUserLoginSessions, rethrowIfLoginSessionStoreUnavailable } from '../services/sessionStore';
+import { destroyUserLoginSessions, lockLoginSessionUser, rethrowIfLoginSessionStoreUnavailable } from '../services/sessionStore';
 import { voidOutstandingResetLinks, issueResetToken, RESET_LINK_TTL_MS } from '../services/passwordResetTokens';
 import { isOnlyAdmin } from '../services/platformAdmins';
 import { inSerializableTransaction } from '../utils/serializable';
@@ -296,6 +296,13 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
     const roleIsChanging = updateData.platformRole !== undefined && updateData.platformRole !== existingUser.platformRole;
     const written: Written = updateData.platformRole === 'USER'
       ? await inSerializableTransaction(async (tx): Promise<Written> => {
+        // First statement: production logins take this lock before INSERT.
+        // The SERIALIZABLE snapshot is still taken at the start of this
+        // statement; destroy deletes session rows from a read-committed view
+        // so a sid committed during a lock wait is still revoked. Returning
+        // after the lock (gone / only-admin) is fine; destroy is not called
+        // on those paths.
+        await lockLoginSessionUser(tx, id);
         const current = await tx.user.findUnique({ where: { id } });
         if (!current) return { kind: 'gone' };
         if (current.platformRole === 'ADMIN' && await isOnlyAdmin(id, tx)) return { kind: 'only-admin' };

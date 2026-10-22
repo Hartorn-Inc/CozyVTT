@@ -18,7 +18,8 @@ import type session from 'express-session';
 import { createApp } from '../../app';
 import { loginSessionRevocationGuard, loginSessionWriteBarrier, sessionConfig, sessionPool } from '../../config/session';
 import { LOGIN_SESSION_SID_LOCK, LOGIN_SESSION_USER_LOCK, writeLoginSessionUnlessRevoked } from '../../config/loginSessionRevocationGuard';
-import { destroyUserLoginSessions } from '../../services/sessionStore';
+import { destroyUserLoginSessions, destroyUserLoginSessionsBarrier } from '../../services/sessionStore';
+import { deleteAccount } from '../../services/accountDeletion';
 import { mfaVerifyLoginBarrier } from '../auth';
 import {
   prisma,
@@ -120,6 +121,8 @@ afterEach(() => {
   delete loginSessionWriteBarrier.wait;
   delete mfaVerifyLoginBarrier.wait;
   delete mfaVerifyLoginBarrier.reached;
+  delete destroyUserLoginSessionsBarrier.wait;
+  delete destroyUserLoginSessionsBarrier.reached;
 });
 
 afterAll(async () => {
@@ -391,6 +394,90 @@ describe('an in-flight store.set after destroy', () => {
     }));
     const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${newSid}`;
     expect(rows).toEqual([]);
+  });
+});
+
+describe('a login-session row committed after a SERIALIZABLE snapshot', () => {
+  async function insertRacedSid(sid: string, userId: string, platformRole: 'USER' | 'ADMIN') {
+    await prisma.$executeRaw`
+      INSERT INTO session (sid, sess, expire)
+      VALUES (
+        ${sid},
+        ${JSON.stringify({
+          cookie: {
+            originalMaxAge: 3_600_000,
+            expires: new Date(Date.now() + 3_600_000),
+            httpOnly: true,
+            path: '/',
+          },
+          userId,
+          platformRole,
+          signedInAt: Date.now(),
+          loginSessionEpoch: 0,
+        })}::json,
+        NOW() + interval '1 hour'
+      )
+    `;
+  }
+
+  it('is gone after account deletion, and the next HTTP request is 401', async () => {
+    const user = await createTestUser({ email: `pg-store-serializable-delete-${stamp}@test.cozyvtt.local` });
+    created.push(user.id);
+    const racedSid = `raced-delete-${stamp}`;
+
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      destroyUserLoginSessionsBarrier.reached = resolve;
+    });
+    destroyUserLoginSessionsBarrier.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const deletion = deleteAccount(user.id);
+    await reached;
+    await insertRacedSid(racedSid, user.id, 'USER');
+    release();
+    const result = await deletion;
+    expect(result.deleted).toBe(true);
+
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${racedSid}`;
+    expect(rows).toEqual([]);
+    // ping is requireAuth only: /me re-reads User and would 401 because the
+    // account is gone even if this sid had survived.
+    expect((await request(app).get('/api/auth/ping').set('Cookie', cookieFor(racedSid))).status).toBe(401);
+  });
+
+  it('is gone after demotion to USER, and the next HTTP request is 401', async () => {
+    const admin = await createTestUser({
+      email: `pg-store-serializable-demote-admin-${stamp}@test.cozyvtt.local`,
+      role: 'ADMIN',
+    });
+    const target = await createTestUser({
+      email: `pg-store-serializable-demote-target-${stamp}@test.cozyvtt.local`,
+      role: 'ADMIN',
+    });
+    created.push(admin.id, target.id);
+    const asAdmin = await signIn(admin.email);
+    const racedSid = `raced-demote-${stamp}`;
+
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      destroyUserLoginSessionsBarrier.reached = resolve;
+    });
+    destroyUserLoginSessionsBarrier.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const demotion = Promise.resolve(asAdmin.put(`/api/users/${target.id}`).send({ platformRole: 'USER' }));
+    await reached;
+    await insertRacedSid(racedSid, target.id, 'USER');
+    release();
+    const res = await demotion;
+    expect(res.status).toBe(200);
+
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${racedSid}`;
+    expect(rows).toEqual([]);
+    expect((await request(app).get('/api/auth/me').set('Cookie', cookieFor(racedSid))).status).toBe(401);
   });
 });
 

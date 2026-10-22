@@ -149,6 +149,12 @@ it('blocks the deleted sids and not the session it is asked to keep', async () =
   expect(isLoginSessionBlocked('kept-sid')).toBe(false);
 });
 
+it('keeps all lock and session work on a caller-held client when isolation is not serializable', async () => {
+  queryRaw.mockResolvedValue([{ sid: 'a' }]);
+  await expect(destroyUserLoginSessions('u1', undefined, callerTx())).resolves.toBe(1);
+  expect(blockLoginSessions).not.toHaveBeenCalled();
+});
+
 it('does not leave the sid blocked when the revoked-row insert fails', async () => {
   queryRaw
     .mockResolvedValueOnce([])
