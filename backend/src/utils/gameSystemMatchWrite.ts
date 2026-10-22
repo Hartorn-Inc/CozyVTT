@@ -40,8 +40,11 @@
  * held membership, updateMany matched zero rows and did not wait; DELETE
  * waited; the join wrote campaignId and committed; kick deleted the seat —
  * leftover `Character.campaignId` again. Kick now FOR UPDATE the membership
- * before updateMany. It does not take Campaign FOR UPDATE after the seat
- * (join is Campaign then membership; the reverse deadlocks).
+ * before updateMany. The DM/owner refusal is an unlocked membership
+ * findUnique before that lock, so a concurrent hand-over can commit during
+ * that read; the seat is still locked before Character.campaignId is
+ * cleared. It does not take Campaign FOR UPDATE after the seat (join is
+ * Campaign then membership; the reverse deadlocks).
  */
 
 import type { CampaignRole, Prisma } from '@prisma/client';

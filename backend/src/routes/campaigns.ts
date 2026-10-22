@@ -975,6 +975,31 @@ router.delete('/:campaignId/members/:userId', campaignDM, async (req: Authentica
     // otherwise give this member the seat just before they were removed,
     // leaving the campaign with no DM.
     const refusal = await inSerializableTransaction(async (tx): Promise<{ status: number; message: string } | null> => {
+      // Unlocked findUnique before FOR UPDATE: the DM/owner refusal must
+      // see a concurrent hand-over. The seat lock still happens before
+      // clearing Character.campaignId.
+      const seen = await tx.campaignMembership.findUnique({
+        where: { userId_campaignId: { userId, campaignId } },
+        select: { role: true },
+      });
+      if (!seen) {
+        return { status: 404, message: 'User is not a member of this campaign' };
+      }
+
+      // CRITICAL: Cannot remove the DM
+      if (seen.role === 'DM') {
+        return { status: 400, message: 'Cannot remove the Dungeon Master from the campaign' };
+      }
+
+      // Nor the owner, who is often sitting as a player after handing the seat
+      // over. Taking the seat back needs a membership, and only the DM can add
+      // one, so removing the owner would shut them out of their own campaign with
+      // no way in except deleting it.
+      const campaign = await tx.campaign.findUnique({ where: { id: campaignId }, select: { ownerId: true } });
+      if (campaign?.ownerId === userId) {
+        return { status: 400, message: 'Cannot remove the campaign owner from their own campaign' };
+      }
+
       // Lock the seat before updateMany: a join that already holds membership
       // can write Character.campaignId after an unlocked updateMany matched
       // zero rows; DELETE waited; the join committed; kick deleted the seat
@@ -990,18 +1015,10 @@ router.delete('/:campaignId/members/:userId', campaignDM, async (req: Authentica
         'User is not a member of this campaign',
       );
 
-      // CRITICAL: Cannot remove the DM
+      // The unlocked read may have seen PLAYER; the locked row is who sits
+      // after a hand-over that committed in between.
       if (membership.role === 'DM') {
         return { status: 400, message: 'Cannot remove the Dungeon Master from the campaign' };
-      }
-
-      // Nor the owner, who is often sitting as a player after handing the seat
-      // over. Taking the seat back needs a membership, and only the DM can add
-      // one, so removing the owner would shut them out of their own campaign with
-      // no way in except deleting it.
-      const campaign = await tx.campaign.findUnique({ where: { id: campaignId }, select: { ownerId: true } });
-      if (campaign?.ownerId === userId) {
-        return { status: 400, message: 'Cannot remove the campaign owner from their own campaign' };
       }
 
       // Delete the membership, and take their characters out of the campaign
