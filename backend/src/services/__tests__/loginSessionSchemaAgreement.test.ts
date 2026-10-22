@@ -54,7 +54,7 @@ beforeAll(async () => {
 afterAll(async () => {
   const store = sessionConfig.store as { close?: () => Promise<void> } | undefined;
   if (store?.close) await store.close();
-  await sessionPool.end();
+  if (!sessionPool.ending) await sessionPool.end();
   await db.$disconnect();
   process.env.DATABASE_URL = savedUrl;
   isolated.drop();

@@ -86,16 +86,26 @@ function isPgDeadlock(err: unknown, depth = 0): boolean {
   return false;
 }
 
-async function inLoginSessionWriteTx(pool: Pool, work: (client: PoolClient) => Promise<void>): Promise<void> {
+/**
+ * One session-store-pool connection, BEGIN, deadlock retry, COMMIT.
+ * Default isolation is Read Committed. Used by production set/touch and by
+ * serializable destroy's session-row revoke, which must not check out a
+ * second Prisma connection.
+ */
+export async function inLoginSessionWriteTx<T>(
+  pool: Pool,
+  work: (client: PoolClient) => Promise<T>,
+): Promise<T> {
   const client = await pool.connect();
   try {
     let lastErr: unknown;
     for (let attempt = 0; attempt < 8; attempt++) {
       try {
         await client.query('BEGIN');
-        await work(client);
+        await client.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+        const result = await work(client);
         await client.query('COMMIT');
-        return;
+        return result;
       } catch (err) {
         lastErr = err;
         try {

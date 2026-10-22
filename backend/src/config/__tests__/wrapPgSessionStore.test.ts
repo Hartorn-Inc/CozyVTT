@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  await sessionPool.end();
+  if (!sessionPool.ending) await sessionPool.end();
 });
 
 const SECRET = 'wrap-pg-session-store-test-secret-32chars';

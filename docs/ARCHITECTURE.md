@@ -652,7 +652,7 @@ erDiagram
 
 ### Session Authentication
 
-CozyVTT uses **express-session** with **connect-pg-simple** to store sessions in PostgreSQL, through a `pg` pool of its own (`sessionPool` in `config/session.ts`), apart from the Prisma client's. The session pool is built from `databaseConnectionSettings` so login sessions live in the configured schema with Prisma's raw session SQL. This means sessions survive server restarts. The in-memory block of revoked sids is one backend process (ADR 0007). The durable path is cluster-wide: revocation takes a user-scoped advisory lock, increments `User.loginSessionEpoch`, writes `revoked_login_session` in the same transaction as DELETE, and production set takes the user then per-sid `pg_advisory_xact_lock` (touch stays per-sid), then skips a new INSERT when the stamped epoch no longer matches or the sid is revoked, so a concurrent UPSERT cannot recreate the row after DELETE commits and a concurrent first login after reset cannot land; a trigger on `session` is a second skip. Serializable account deletion and USER demotion take that user advisory lock as their first statement; session-row DELETE then uses a read-committed view on another connection while the lock is held, because the SERIALIZABLE snapshot cannot see a sid committed after the first statement.
+CozyVTT uses **express-session** with **connect-pg-simple** to store sessions in PostgreSQL, through a `pg` pool of its own (`sessionPool` in `config/session.ts`), apart from the Prisma client's. The session pool is built from `databaseConnectionSettings` so login sessions live in the configured schema with Prisma's raw session SQL. This means sessions survive server restarts. The in-memory block of revoked sids is one backend process (ADR 0007). The durable path is cluster-wide: revocation takes a user-scoped advisory lock, increments `User.loginSessionEpoch`, writes `revoked_login_session` in the same transaction as DELETE, and production set takes the user then per-sid `pg_advisory_xact_lock` (touch stays per-sid), then skips a new INSERT when the stamped epoch no longer matches or the sid is revoked, so a concurrent UPSERT cannot recreate the row after DELETE commits and a concurrent first login after reset cannot land; a trigger on `session` is a second skip. Serializable account deletion and USER demotion take that user advisory lock as their first statement; session-row DELETE then uses a read-committed view on the session-store pool, not a second Prisma connection, because the SERIALIZABLE snapshot cannot see a sid committed after the first statement and the serializable transaction already holds the Prisma connection (`connection_limit=1` would otherwise wait out and 503). That Read Committed revoke is durable if the serializable transaction later rolls back, and it ends the user's live sockets even when the write later answers 409.
 
 ```mermaid
 sequenceDiagram
@@ -724,7 +724,10 @@ Taking access away works the same way. Removing a member and deleting a
 campaign make the affected sockets leave the room and forget the campaign
 (`clearCampaignFromLiveSockets`, `clearDeletedCampaignFromLiveSockets`), and
 ending a sign-in closes its sockets (`endLiveSockets`; a restore ends every
-socket with `endEveryLiveSocket`). Each socket is first sent
+socket with `endEveryLiveSocket`). Serializable account deletion and USER
+demotion end those sockets as soon as the Read Committed session revoke
+commits, including when the serializable transaction later answers 409.
+Each socket is first sent
 `campaign.access.revoked` with the reason (`removed`, `campaign-deleted`,
 `signed-out`). On the client, `socket.ts` stops reconnecting after it, the
 connection badge shows the reason, and `hooks/useAccessRevoked.ts` on the

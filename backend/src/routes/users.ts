@@ -298,10 +298,10 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
       ? await inSerializableTransaction(async (tx): Promise<Written> => {
         // First statement: production logins take this lock before INSERT.
         // The SERIALIZABLE snapshot is still taken at the start of this
-        // statement; destroy deletes session rows from a read-committed view
-        // so a sid committed during a lock wait is still revoked. Returning
-        // after the lock (gone / only-admin) is fine; destroy is not called
-        // on those paths.
+        // statement; destroy deletes session rows on the session-store pool
+        // at Read Committed so a sid committed during a lock wait is still
+        // revoked. Returning after the lock (gone / only-admin) is fine;
+        // destroy is not called on those paths.
         await lockLoginSessionUser(tx, id);
         const current = await tx.user.findUnique({ where: { id } });
         if (!current) return { kind: 'gone' };
@@ -309,7 +309,7 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
         const row = await tx.user.update({ where: { id }, data: updateData });
         if (emailChangedFrom !== null) await voidOutstandingResetLinks(id, tx);
         if (updateData.platformRole !== current.platformRole) {
-          await destroyUserLoginSessions(id, undefined, tx);
+          await destroyUserLoginSessions(id, undefined, tx, 'Your platform role changed. Sign in again.');
         }
         return { kind: 'written', before: current, row };
       })

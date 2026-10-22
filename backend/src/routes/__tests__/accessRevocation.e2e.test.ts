@@ -88,14 +88,19 @@ describe('revoking access ends the sessions already issued', () => {
   it('when an admin is demoted', async () => {
     const res = await acting.put(`/api/users/${targetId}`).send({ platformRole: 'USER' });
     expect(res.status).toBe(200);
-    expect(destroyed).toHaveBeenCalledWith(targetId, undefined, expect.anything());
+    expect(destroyed).toHaveBeenCalledWith(
+      targetId,
+      undefined,
+      expect.anything(),
+      'Your platform role changed. Sign in again.',
+    );
   });
 
   it('when an account is deleted', async () => {
     const res = await acting.delete(`/api/users/${doomedId}`);
     expect(res.status).toBe(200);
     // Ended inside the deletion's own transaction (services/accountDeletion).
-    expect(destroyed).toHaveBeenCalledWith(doomedId, undefined, expect.anything());
+    expect(destroyed).toHaveBeenCalledWith(doomedId, undefined, expect.anything(), 'Your account was deleted.');
   });
 
   it('when a user deletes their own account, on every device', async () => {
@@ -109,7 +114,7 @@ describe('revoking access ends the sessions already issued', () => {
 
     const res = await agent.delete('/api/auth/account').send({ password: TEST_PASSWORD });
     expect(res.status).toBe(200);
-    expect(destroyed).toHaveBeenCalledWith(self.id, undefined, expect.anything());
+    expect(destroyed).toHaveBeenCalledWith(self.id, undefined, expect.anything(), 'Your account was deleted.');
   });
 });
 

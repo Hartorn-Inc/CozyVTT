@@ -71,9 +71,9 @@ export async function deleteAccount(userId: string): Promise<AccountDeletion> {
     // SERIALIZABLE snapshot is still taken at the start of this statement
     // (before a lock wait); a sid committed during the wait is invisible on
     // this client, which is why destroy deletes session rows from a
-    // read-committed view. Returning after the lock (onlyAdmin /
-    // runsCampaigns) is fine; the lock is transaction-scoped. Destroy is not
-    // called on those paths.
+    // read-committed view on the session-store pool. Returning after the
+    // lock (onlyAdmin / runsCampaigns) is fine; the lock is
+    // transaction-scoped. Destroy is not called on those paths.
     await lockLoginSessionUser(tx, userId);
     const account = await tx.user.findUnique({ where: { id: userId }, select: { platformRole: true } });
     if (account?.platformRole === 'ADMIN' && (await isOnlyAdmin(userId, tx))) {
@@ -137,10 +137,13 @@ export async function deleteAccount(userId: string): Promise<AccountDeletion> {
     // revoked row, then DELETE) skips a later store write. Destroy's
     // session-row DELETE uses a read-committed view on another connection
     // while this transaction holds the user lock: the SERIALIZABLE snapshot
-    // cannot see a sid committed after the first statement. That DELETE is
-    // durable if this transaction later rolls back (fail-closed).
+    // cannot see a sid committed after the first statement. That DELETE
+    // runs on the session-store pool, not a second Prisma checkout, and is
+    // durable if this transaction later rolls back (fail-closed). Live
+    // sockets end when that RC revoke commits, so a later 409 still drops
+    // an already-open connection.
     await tx.user.delete({ where: { id: userId } });
-    await destroyUserLoginSessions(userId, undefined, tx);
+    await destroyUserLoginSessions(userId, undefined, tx, 'Your account was deleted.');
     return { deleted: true, campaignIds, personal };
   });
 }

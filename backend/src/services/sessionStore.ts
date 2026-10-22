@@ -1,9 +1,16 @@
 import { Prisma } from '@prisma/client';
+import type { PoolClient } from 'pg';
 import { prisma } from '../config/database';
+import { sessionPool } from '../config/session';
 import { rememberMeMaxAge } from '../config/sessionDurations';
-import { LOGIN_SESSION_SID_LOCK, LOGIN_SESSION_USER_LOCK } from '../config/loginSessionRevocationGuard';
+import {
+  inLoginSessionWriteTx,
+  LOGIN_SESSION_SID_LOCK,
+  LOGIN_SESSION_USER_LOCK,
+} from '../config/loginSessionRevocationGuard';
 import logger from '../utils/logger';
 import { isSerializationFailure } from '../utils/serializable';
+import { endLiveSockets } from '../websocket/utils';
 import { blockLoginSessions, unblockLoginSessions } from './revokedLoginSessions';
 
 /**
@@ -163,24 +170,84 @@ async function callerHoldsSerializableTransaction(db: Prisma.TransactionClient):
   return rows[0]?.isolation === 'serializable';
 }
 
+async function lockLoginSessionSidOnClient(client: PoolClient, sid: string): Promise<void> {
+  await client.query(
+    `SELECT pg_advisory_xact_lock(${LOGIN_SESSION_SID_LOCK}, hashtext($1::text))`,
+    [sid],
+  );
+}
+
+async function selectUserLoginSessionSidsOnClient(
+  client: PoolClient,
+  userId: string,
+  exceptSessionId: string | undefined,
+  forUpdate: boolean,
+): Promise<string[]> {
+  const lock = forUpdate ? ' FOR UPDATE' : '';
+  const result = exceptSessionId
+    ? await client.query<{ sid: string }>(
+        `SELECT sid FROM session
+         WHERE (sess->>'userId' = $1 OR sess->>'mfaPendingUserId' = $1)
+           AND sid <> $2${lock}`,
+        [userId, exceptSessionId],
+      )
+    : await client.query<{ sid: string }>(
+        `SELECT sid FROM session
+         WHERE sess->>'userId' = $1 OR sess->>'mfaPendingUserId' = $1${lock}`,
+        [userId],
+      );
+  return result.rows.map((row) => row.sid);
+}
+
 /**
- * Session-row DELETE for a serializable caller, on a different connection at
- * Read Committed. The singleton `prisma` is used, not `db`: `db.$transaction`
- * would only open a savepoint on the serializable snapshot, which still
- * cannot see a sid committed after the first statement. The RC connection
- * must not take LOGIN_SESSION_USER_LOCK; the serializable connection already
- * holds it. After this commits, the rows are durable even if the serializable
- * transaction later rolls back (fail-closed: the user row/epoch roll back and
- * a new login can succeed).
+ * Same order as revokeSessionRows, on a session-store-pool client: expired
+ * markers, sid SELECT, per-sid locks, FOR UPDATE, revoked_login_session
+ * INSERT, session DELETE. Does not take LOGIN_SESSION_USER_LOCK.
+ */
+async function revokeSessionRowsOnClient(
+  userId: string,
+  exceptSessionId: string | undefined,
+  client: PoolClient,
+): Promise<string[]> {
+  await client.query('DELETE FROM revoked_login_session WHERE expires_at <= NOW()');
+  const preview = await selectUserLoginSessionSidsOnClient(client, userId, exceptSessionId, false);
+  if (preview.length === 0) return preview;
+  for (const sid of preview) await lockLoginSessionSidOnClient(client, sid);
+  const sids = await selectUserLoginSessionSidsOnClient(client, userId, exceptSessionId, true);
+  if (sids.length === 0) return sids;
+  for (const sid of sids) {
+    if (!preview.includes(sid)) await lockLoginSessionSidOnClient(client, sid);
+  }
+  const expiresAt = new Date(Date.now() + rememberMeMaxAge);
+  await client.query(
+    `INSERT INTO revoked_login_session (sid, expires_at)
+     SELECT sid, $2::timestamptz
+     FROM unnest($1::varchar[]) AS sid
+     ON CONFLICT (sid) DO UPDATE SET expires_at = EXCLUDED.expires_at
+     RETURNING sid`,
+    [sids, expiresAt],
+  );
+  await client.query('DELETE FROM session WHERE sid = ANY($1::varchar[])', [sids]);
+  return sids;
+}
+
+/**
+ * Session-row DELETE for a serializable caller, at Read Committed on the
+ * session-store pool, not a second Prisma checkout, because the serializable
+ * transaction already holds the only Prisma connection when
+ * `connection_limit=1`. Nested `db.$transaction` would only open a savepoint
+ * on the serializable snapshot, which still cannot see a sid committed after
+ * the first statement. This connection must not take LOGIN_SESSION_USER_LOCK;
+ * the serializable connection already holds it. After this commits, the rows
+ * are durable even if the serializable transaction later rolls back
+ * (fail-closed: the user row/epoch roll back and a new login can succeed).
  */
 async function revokeSessionRowsOnReadCommitted(
   userId: string,
   exceptSessionId: string | undefined,
 ): Promise<string[]> {
-  return withDeadlockRetry(() =>
-    prisma.$transaction((tx) => revokeSessionRows(userId, exceptSessionId, tx), {
-      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
-    }),
+  return inLoginSessionWriteTx(sessionPool, (client) =>
+    revokeSessionRowsOnClient(userId, exceptSessionId, client),
   );
 }
 
@@ -233,12 +300,17 @@ export const destroyUserLoginSessionsBarrier: { wait?: Promise<void>; reached?: 
  * password change wants: the other devices are signed out and the person who
  * just changed it stays where they are.
  *
+ * `liveSocketMessage` is sent on `campaign.access.revoked` when the
+ * serializable path's Read Committed revoke commits. Password / MFA / reset
+ * leave sockets to the caller so a rollback keeps the current device.
+ *
  * @returns number of sessions removed
  */
 export async function destroyUserLoginSessions(
   userId: string,
   exceptSessionId?: string,
-  db: Prisma.TransactionClient = prisma
+  db: Prisma.TransactionClient = prisma,
+  liveSocketMessage = 'Your sign-in ended. Sign in again.',
 ): Promise<number> {
   // A revocation that did not take must fail the request that asked for it,
   // so the person is told, instead of reporting success while the old
@@ -253,10 +325,12 @@ export async function destroyUserLoginSessions(
   // caller-supplied Read Committed client is already in a transaction, and a
   // rollback must not leave a block that would refuse a later write of a sid
   // that is still in the table. A serializable caller deletes session rows on
-  // a different Read Committed connection (those DELETEs are durable even if
+  // the session-store pool at Read Committed, not a second Prisma checkout,
+  // because the serializable transaction already holds the only Prisma
+  // connection when connection_limit=1 (those DELETEs are durable even if
   // the serializable transaction later rolls back — fail-closed), then
-  // blocks in memory after that connection commits. If this helper fails
-  // after blocking, those sids are unblocked.
+  // blocks in memory after that connection commits and ends live sockets.
+  // If this helper fails after blocking, those sids are unblocked.
   let sids: string[] = [];
   try {
     destroyUserLoginSessionsBarrier.reached?.();
@@ -273,6 +347,10 @@ export async function destroyUserLoginSessions(
       `;
       sids = await revokeSessionRowsOnReadCommitted(userId, exceptSessionId);
       blockLoginSessions(sids);
+      // After the RC revoke commits, including last-admin 409 after 40001.
+      // Called even when this SELECT found no sids: epoch was incremented
+      // and lastAdminRace may have memory HTTP sessions while sockets exist.
+      await endLiveSockets(userId, liveSocketMessage);
     } else {
       sids = await deleteAndRevokeLoginSessions(userId, exceptSessionId, db);
     }

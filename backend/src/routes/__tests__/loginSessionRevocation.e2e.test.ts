@@ -128,7 +128,7 @@ afterEach(() => {
 afterAll(async () => {
   await cleanupUsers(created);
   await prisma.$disconnect();
-  await sessionPool.end();
+  if (!sessionPool.ending) await sessionPool.end();
 });
 
 describe('a self-service password change', () => {

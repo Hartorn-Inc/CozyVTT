@@ -38,6 +38,12 @@ jest.mock('../revokedLoginSessions', () => {
     blockLoginSessions: (sids: readonly string[]) => blockLoginSessions(sids),
   };
 });
+jest.mock('../../config/session', () => ({
+  sessionPool: {},
+}));
+jest.mock('../../websocket/utils', () => ({
+  endLiveSockets: jest.fn(async () => 0),
+}));
 
 import { Prisma } from '@prisma/client';
 import { destroyUserLoginSessions, LoginSessionStoreUnavailable } from '../sessionStore';
