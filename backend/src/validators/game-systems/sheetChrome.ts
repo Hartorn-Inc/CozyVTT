@@ -6,7 +6,7 @@ import { HEX_COLOR_PATTERN, THEME_COLOR_PATTERN } from '../../utils/styleAllowli
  *
  * `themeColor` is the header colour chosen in the editor: the name of one of
  * the editor's presets ("Classic Red") or a `#RRGGBB` colour from the custom
- * picker. It ends up inside a CSS gradient on the sheet, so the pattern the
+ * picker. The sheet paints that hex as an opaque fill, so the pattern the
  * sheets re-check at render is the one enforced here.
  *
  * A custom hex is also held to WCAG 2.1 contrast of 4.5:1 against fixed white

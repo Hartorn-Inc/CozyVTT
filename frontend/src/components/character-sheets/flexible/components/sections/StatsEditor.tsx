@@ -17,6 +17,7 @@ interface StatsEditorProps {
 
 export const StatsEditor: React.FC<StatsEditorProps> = ({ section, onUpdate }) => {
   const fieldsFull = listIsFull(section.fields, FLEXIBLE_MAX_FIELDS);
+  const fieldsLimitNoteId = `flexible-stats-limit-${section.id}`;
 
   const addField = () => {
     if (!listChangeAllowed(section.fields.length + 1, section.fields.length, FLEXIBLE_MAX_FIELDS)) return;
@@ -100,12 +101,13 @@ export const StatsEditor: React.FC<StatsEditorProps> = ({ section, onUpdate }) =
       <button
         onClick={addField}
         disabled={fieldsFull}
+        aria-describedby={fieldsFull ? fieldsLimitNoteId : undefined}
         className={`flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center ${ADD_BUTTON_OFF}`}
       >
         <Plus className="w-4 h-4" />
         Add Stat
       </button>
-      <ListLimitNote full={fieldsFull} max={FLEXIBLE_MAX_FIELDS} className={LIMIT_NOTE_CLASS} />
+      <ListLimitNote id={fieldsLimitNoteId} full={fieldsFull} max={FLEXIBLE_MAX_FIELDS} className={LIMIT_NOTE_CLASS} />
     </div>
   );
 };

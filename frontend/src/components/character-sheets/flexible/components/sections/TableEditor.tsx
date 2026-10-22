@@ -16,6 +16,7 @@ import ListLimitNote, { ADD_BUTTON_OFF, listChangeAllowed, listIsFull } from '..
 import { LIMIT_NOTE_CLASS } from '../../limitNoteClass';
 
 const columnLimitNoteId = (sectionId: string) => `flexible-table-column-limit-${sectionId}`;
+const rowLimitNoteId = (sectionId: string) => `flexible-table-row-limit-${sectionId}`;
 
 interface TableEditorProps {
   section: TableSection;
@@ -165,12 +166,18 @@ export const TableEditor: React.FC<TableEditorProps> = ({ section, onUpdate }) =
       <button
         onClick={addRow}
         disabled={rowsFull}
+        aria-describedby={rowsFull ? rowLimitNoteId(section.id) : undefined}
         className={`flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center ${ADD_BUTTON_OFF}`}
       >
         <Plus className="w-4 h-4" />
         Add Row
       </button>
-      <ListLimitNote full={rowsFull} max={FLEXIBLE_MAX_ROWS} className={LIMIT_NOTE_CLASS} />
+      <ListLimitNote
+        id={rowLimitNoteId(section.id)}
+        full={rowsFull}
+        max={FLEXIBLE_MAX_ROWS}
+        className={LIMIT_NOTE_CLASS}
+      />
       <ListLimitNote
         id={columnLimitNoteId(section.id)}
         full={columnsFull}

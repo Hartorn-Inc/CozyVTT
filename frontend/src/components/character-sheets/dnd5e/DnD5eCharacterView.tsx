@@ -47,6 +47,7 @@ import { dnd5eInitiativeModifier } from '../../../utils/rules/initiative';
 import { collectSheetFeatures } from '../../../utils/featureEntries';
 import { readProficiencyGroups } from '../../../utils/proficiencies';
 import { isHexColor } from '@/utils/styleAllowlists';
+import { customHeaderFill } from '@/utils/themeColor';
 
 interface DnD5eCharacterViewProps {
   character: Character;
@@ -157,9 +158,7 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
   // Render character header
   const renderHeader = () => {
     // Determine the current background style
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
     // Pale custom colours are refused on save (4.5:1 against this light text)
     // rather than flipping the header to dark text. Already-stored pale hex

@@ -12,8 +12,11 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { DnD5eCharacterEditor } from '../dnd5e/DnD5eCharacterEditor';
+import { DnD5eCharacterView } from '../dnd5e/DnD5eCharacterView';
 import { Pathfinder2eCharacterEditor } from '../pathfinder2e/Pathfinder2eCharacterEditor';
+import { Pathfinder2eCharacterView } from '../pathfinder2e/Pathfinder2eCharacterView';
 import { CallOfCthulhu7eCharacterEditor } from '../call-of-cthulhu-7e/CallOfCthulhu7eCharacterEditor';
+import { CallOfCthulhu7eCharacterView } from '../call-of-cthulhu-7e/CallOfCthulhu7eCharacterView';
 import { pf2eCharacter } from '../pathfinder2e/__tests__/pf2eFixture';
 import { cocCharacter } from '../call-of-cthulhu-7e/__tests__/cocFixture';
 import { PALE_HEADER_COLOUR_MESSAGE } from '@/utils/themeColor';
@@ -72,6 +75,7 @@ function open({ Editor, character }: (typeof EDITORS)[number], sheet: Record<str
 const hexBox = () => screen.getByLabelText('Custom colour hex code') as HTMLInputElement;
 const savedColour = (onSave: ReturnType<typeof open>) =>
   (onSave.mock.calls[0][0] as unknown as { themeColor?: string }).themeColor;
+const nameBox = () => screen.getByPlaceholderText(/^(Character|Investigator) Name$/);
 
 describe.each(EDITORS)('$system custom colour', (entry) => {
   it('saves a three-digit colour as the six-digit form the server accepts', async () => {
@@ -128,5 +132,39 @@ describe.each(EDITORS)('$system custom colour', (entry) => {
     render(<Editor character={character({ themeColor: '#FFFF00' })} onSave={vi.fn()} onCancel={vi.fn()} />);
     expect(screen.getByText(PALE_HEADER_COLOUR_MESSAGE)).toBeTruthy();
     expect(screen.queryByLabelText('Custom colour hex code')).toBeNull();
+  });
+
+  it('paints a custom header as the stored hex, not a translucent gradient', () => {
+    open(entry, { themeColor: '#14532d' });
+    const name = nameBox();
+    const header = name.closest('[style]');
+    expect(header?.getAttribute('style') ?? '').toMatch(/background:\s*(#14532d|rgb\(20,\s*83,\s*45\))/i);
+    expect(header?.getAttribute('style') ?? '').not.toMatch(/linear-gradient/i);
+    expect(name.className).toContain('placeholder:text-white');
+    expect(name.className).not.toMatch(/placeholder-current\/50|placeholder:text-white\/50/);
+  });
+
+  it('keeps white header text for a stored pale custom colour', () => {
+    const { Editor, character } = entry;
+    render(<Editor character={character({ themeColor: '#FFFF00' })} onSave={vi.fn()} onCancel={vi.fn()} />);
+    const name = nameBox();
+    expect(name.className).toContain('text-white');
+    expect(name.className).not.toContain('text-stone-900');
+  });
+});
+
+const VIEWS: { system: string; View: React.FC<{ character: Character }>; character: (o?: Record<string, unknown>) => Character }[] = [
+  { system: 'D&D 5e', View: DnD5eCharacterView, character: dndCharacter },
+  { system: 'Pathfinder 2e', View: Pathfinder2eCharacterView, character: pf2eCharacter },
+  { system: 'Call of Cthulhu 7e', View: CallOfCthulhu7eCharacterView, character: cocCharacter },
+];
+
+describe.each(VIEWS)('$system custom colour view', ({ View, character }) => {
+  it('paints a custom header as the stored hex, not a translucent gradient', () => {
+    render(<View character={character({ themeColor: '#14532d' })} />);
+    const header = document.querySelector('[style*="background"]');
+    expect(header?.getAttribute('style') ?? '').toMatch(/background:\s*(#14532d|rgb\(20,\s*83,\s*45\))/i);
+    expect(header?.getAttribute('style') ?? '').not.toMatch(/linear-gradient/i);
+    expect(header?.className).toContain('text-white');
   });
 });

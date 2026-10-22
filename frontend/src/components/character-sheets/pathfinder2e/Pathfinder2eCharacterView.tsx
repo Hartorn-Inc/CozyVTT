@@ -39,6 +39,7 @@ import type {
   SheetChrome,
 } from '../../../types/game-systems';
 import { isHexColor } from '@/utils/styleAllowlists';
+import { customHeaderFill } from '@/utils/themeColor';
 
 interface Pathfinder2eCharacterViewProps {
   character: Character;
@@ -133,9 +134,7 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
 
   // Render character header with name, class, level, and basic info
   const renderHeader = () => {
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
     // Custom hex headers keep fixed light text so a pale pick looks unreadable,
     // matching the save rule. Presets stay light as they always were.

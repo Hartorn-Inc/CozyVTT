@@ -24,6 +24,20 @@ export const PALE_HEADER_COLOUR_MESSAGE =
 /** Id of the theme-colour error, for `aria-describedby` on the hex box. */
 export const THEME_COLOR_ERROR_ID = 'sheet-theme-color-error';
 
+/**
+ * Inline fill for a custom header. The hex the save rule checks is the
+ * painted colour — no translucent gradient endpoint that would lighten it.
+ */
+export function customHeaderFill(hex: string): { background: string } {
+  return { background: hex };
+}
+
+/**
+ * Placeholder classes on custom-header fields. Half-opacity white would fail
+ * 4.5:1 on a colour that only just passes for solid white.
+ */
+export const CUSTOM_HEADER_PLACEHOLDER_CLASS = 'placeholder:text-white';
+
 const WHITE: Rgb = [255, 255, 255];
 
 /** `value` as `#rrggbb`, or null when it is not a hex colour. */

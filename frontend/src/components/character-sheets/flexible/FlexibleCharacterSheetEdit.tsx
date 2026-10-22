@@ -25,6 +25,8 @@ import { FLEXIBLE_MAX_SECTIONS } from '@/constants/sheetLimits';
 import ListLimitNote, { ADD_BUTTON_OFF, listChangeAllowed, listIsFull } from '../ListLimitNote';
 import { LIMIT_NOTE_CLASS } from './limitNoteClass';
 
+const SECTION_LIMIT_NOTE_ID = 'flexible-section-limit';
+
 interface FlexibleCharacterSheetEditProps {
   character: Character;
   onSave: (data: CharacterData, showToast?: boolean, tokenImageUrl?: string) => Promise<void>;
@@ -321,6 +323,7 @@ export const FlexibleCharacterSheetEdit: React.FC<FlexibleCharacterSheetEditProp
             setShowAddMenu(!showAddMenu);
           }}
           disabled={sectionsFull}
+          aria-describedby={sectionsFull ? SECTION_LIMIT_NOTE_ID : undefined}
           className={`flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center ${ADD_BUTTON_OFF}`}
         >
           <Plus className="w-4 h-4" />
@@ -329,7 +332,7 @@ export const FlexibleCharacterSheetEdit: React.FC<FlexibleCharacterSheetEditProp
         {showAddMenu && !sectionsFull && (
           <AddSectionMenu onSelect={addSection} onClose={() => setShowAddMenu(false)} />
         )}
-        <ListLimitNote full={sectionsFull} max={FLEXIBLE_MAX_SECTIONS} className={LIMIT_NOTE_CLASS} />
+        <ListLimitNote id={SECTION_LIMIT_NOTE_ID} full={sectionsFull} max={FLEXIBLE_MAX_SECTIONS} className={LIMIT_NOTE_CLASS} />
       </div>
     </div>
   );

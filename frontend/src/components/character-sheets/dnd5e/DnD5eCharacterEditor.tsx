@@ -73,6 +73,8 @@ import {
 import {
   toStoredHexColor,
   customHeaderColourError,
+  customHeaderFill,
+  CUSTOM_HEADER_PLACEHOLDER_CLASS,
   THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
 import { SHEET_LIST_MAX, SHEET_NAME_MAX, SPELL_SLOTS_MAX } from '@/constants/sheetLimits';
@@ -1049,15 +1051,16 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   // Render character header with token upload and color picker
   const renderHeader = () => {
     // Determine the current background style
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
     // Custom hex headers keep fixed light text so a pale pick looks unreadable
     // in the editor, matching the save rule. Presets still pick by luminance.
     const headerTextColor = isCustomColor
       ? 'text-white'
       : (shouldUseWhiteText(selectedColor.hex) ? 'text-white' : 'text-stone-900');
+    const headerPlaceholder = isCustomColor
+      ? CUSTOM_HEADER_PLACEHOLDER_CLASS
+      : 'placeholder-current/50';
 
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative`
@@ -1174,7 +1177,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
                 <div className="flex items-center space-x-2 p-2 bg-stone-50 rounded">
                   <div
                     className="w-8 h-8 rounded"
-                    style={{ background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }}
+                    style={customHeaderFill(customColorHex)}
                   />
                   <span className="text-sm font-medium">Custom: {customColorHex}</span>
                 </div>
@@ -1242,7 +1245,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
               placeholder="Character Name"
               className={`w-full text-3xl font-bold bg-white/10 border-2 ${
                 errors.characterName ? 'border-red-300' : 'border-white/20'
-              } rounded px-3 py-1 ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`}
+              } rounded px-3 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`}
             />
             {/* Player name is who owns this character, not free text — it is
                 filled from their display name when the character is created
@@ -1271,14 +1274,14 @@ min={1}
                 value={formData.race || ''}
                 onChange={(e) => updateField('race', e.target.value)}
                 placeholder="Race"
-                className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`}
+                className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`}
               />
               <input
                 type="text"
                 value={formData.class || ''}
                 onChange={(e) => updateField('class', e.target.value)}
                 placeholder="Class"
-                className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`}
+                className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`}
               />
             </div>
           </div>

@@ -18,6 +18,7 @@ interface ListEditorProps {
 
 export const ListEditor: React.FC<ListEditorProps> = ({ section, onUpdate }) => {
   const itemsFull = listIsFull(section.items, FLEXIBLE_MAX_ROWS);
+  const itemsLimitNoteId = `flexible-list-limit-${section.id}`;
 
   const addItem = () => {
     if (!listChangeAllowed(section.items.length + 1, section.items.length, FLEXIBLE_MAX_ROWS)) return;
@@ -99,12 +100,13 @@ export const ListEditor: React.FC<ListEditorProps> = ({ section, onUpdate }) => 
       <button
         onClick={addItem}
         disabled={itemsFull}
+        aria-describedby={itemsFull ? itemsLimitNoteId : undefined}
         className={`flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center ${ADD_BUTTON_OFF}`}
       >
         <Plus className="w-4 h-4" />
         Add Item
       </button>
-      <ListLimitNote full={itemsFull} max={FLEXIBLE_MAX_ROWS} className={LIMIT_NOTE_CLASS} />
+      <ListLimitNote id={itemsLimitNoteId} full={itemsFull} max={FLEXIBLE_MAX_ROWS} className={LIMIT_NOTE_CLASS} />
     </div>
   );
 };

@@ -62,6 +62,8 @@ import { LIMIT_NOTE_CLASS } from './limitNoteClass';
 import {
   toStoredHexColor,
   customHeaderColourError,
+  customHeaderFill,
+  CUSTOM_HEADER_PLACEHOLDER_CLASS,
   THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
 import { omitUnnamedRows } from '@/utils/sheetNamedRows';
@@ -538,14 +540,12 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
   // Render header with save/cancel buttons
   const renderHeader = () => {
     // Determine the current background style
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
     // Custom hex headers keep fixed light text so a pale pick looks unreadable,
     // matching the save rule against #FFFFFF. Preset chrome stays parchment.
     const headerTextColor = isCustomColor ? 'text-white' : 'text-parchment';
-    const headerPlaceholder = isCustomColor ? 'placeholder:text-white/50' : 'placeholder:text-parchment-light/50';
+    const headerPlaceholder = isCustomColor ? CUSTOM_HEADER_PLACEHOLDER_CLASS : 'placeholder:text-parchment-light/50';
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
       : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
@@ -642,7 +642,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
                 <div className="flex items-center space-x-2 p-2 bg-stone-50 rounded">
                   <div
                     className="w-8 h-8 rounded"
-                    style={{ background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }}
+                    style={customHeaderFill(customColorHex)}
                   />
                   <span className="text-sm font-medium">Custom: {customColorHex}</span>
                 </div>

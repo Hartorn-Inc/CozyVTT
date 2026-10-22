@@ -25,6 +25,13 @@ vi.mock('@/constants/sheetLimits', async (importOriginal) => ({
 
 const FULL = /This list is full: a sheet holds at most 2 entries here/;
 
+function expectAddDescribedByNote(name: string) {
+  const button = screen.getByRole('button', { name });
+  const note = screen.getByText(FULL);
+  expect(note).toHaveAttribute('id');
+  expect(button).toHaveAttribute('aria-describedby', note.getAttribute('id'));
+}
+
 function characterWith(sections: FlexibleSection[]): Character {
   return {
     id: 'flex-1',
@@ -68,12 +75,13 @@ describe('Add Section', () => {
   it('turns its add button off at the limit, and says why', () => {
     open([textSection('a', 'One'), textSection('b', 'Two')]);
     expect(screen.getByRole('button', { name: 'Add Section' })).toBeDisabled();
-    expect(screen.getByText(FULL)).toBeInTheDocument();
+    expectAddDescribedByNote('Add Section');
   });
 
   it('keeps its add button on while there is room', () => {
     open([textSection('a', 'One')]);
     expect(screen.getByRole('button', { name: 'Add Section' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add Section' })).not.toHaveAttribute('aria-describedby');
     expect(screen.queryByText(FULL)).toBeNull();
   });
 });
@@ -82,12 +90,13 @@ describe('Add Stat', () => {
   it('turns its add button off at the limit, and says why', () => {
     open([statsSection([stat('f1', 'Str'), stat('f2', 'Dex')])]);
     expect(screen.getByRole('button', { name: 'Add Stat' })).toBeDisabled();
-    expect(screen.getByText(FULL)).toBeInTheDocument();
+    expectAddDescribedByNote('Add Stat');
   });
 
   it('keeps its add button on while there is room', () => {
     open([statsSection([stat('f1', 'Str')])]);
     expect(screen.getByRole('button', { name: 'Add Stat' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add Stat' })).not.toHaveAttribute('aria-describedby');
     expect(screen.queryByText(FULL)).toBeNull();
   });
 });
@@ -96,12 +105,13 @@ describe('Add Item', () => {
   it('turns its add button off at the limit, and says why', () => {
     open([listSection([item('i1', 'Rope'), item('i2', 'Torch')])]);
     expect(screen.getByRole('button', { name: 'Add Item' })).toBeDisabled();
-    expect(screen.getByText(FULL)).toBeInTheDocument();
+    expectAddDescribedByNote('Add Item');
   });
 
   it('keeps its add button on while there is room', () => {
     open([listSection([item('i1', 'Rope')])]);
     expect(screen.getByRole('button', { name: 'Add Item' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add Item' })).not.toHaveAttribute('aria-describedby');
     expect(screen.queryByText(FULL)).toBeNull();
   });
 });
@@ -110,12 +120,13 @@ describe('Add Row', () => {
   it('turns its add button off at the limit, and says why', () => {
     open([tableSection([column('c1', 'Item')], [row('r1', { c1: 'Sword' }), row('r2', { c1: 'Axe' })])]);
     expect(screen.getByRole('button', { name: 'Add Row' })).toBeDisabled();
-    expect(screen.getByText(FULL)).toBeInTheDocument();
+    expectAddDescribedByNote('Add Row');
   });
 
   it('keeps its add button on while there is room', () => {
     open([tableSection([column('c1', 'Item')], [row('r1', { c1: 'Sword' })])]);
     expect(screen.getByRole('button', { name: 'Add Row' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add Row' })).not.toHaveAttribute('aria-describedby');
     expect(screen.queryByText(FULL)).toBeNull();
   });
 });
@@ -129,12 +140,13 @@ describe('Add Column', () => {
       ),
     ]);
     expect(screen.getByRole('button', { name: 'Add column' })).toBeDisabled();
-    expect(screen.getByText(FULL)).toBeInTheDocument();
+    expectAddDescribedByNote('Add column');
   });
 
   it('keeps its add button on while there is room', () => {
     open([tableSection([column('c1', 'Item')], [row('r1', { c1: 'Sword' })])]);
     expect(screen.getByRole('button', { name: 'Add column' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add column' })).not.toHaveAttribute('aria-describedby');
     expect(screen.queryByText(FULL)).toBeNull();
   });
 });

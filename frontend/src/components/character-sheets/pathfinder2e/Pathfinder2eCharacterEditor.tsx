@@ -55,6 +55,8 @@ import { omitUnnamedRows } from '@/utils/sheetNamedRows';
 import {
   toStoredHexColor,
   customHeaderColourError,
+  customHeaderFill,
+  CUSTOM_HEADER_PLACEHOLDER_CLASS,
   THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
 import {
@@ -853,10 +855,11 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
   );
 
   const renderHeader = () => {
-    const headerStyle = isCustomColor ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` } : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
     // Custom hex headers keep fixed light text so a pale pick looks unreadable
     // in the editor, matching the save rule. Presets still pick by luminance.
     const headerTextColor = isCustomColor ? 'text-white' : (shouldUseWhiteText(selectedColor.hex) ? 'text-white' : 'text-stone-900');
+    const headerPlaceholder = isCustomColor ? CUSTOM_HEADER_PLACEHOLDER_CLASS : 'placeholder-current/50';
     const headerClasses = isCustomColor ? `${headerTextColor} p-6 rounded-t-lg relative` : `bg-gradient-to-r ${selectedColor.from} ${selectedColor.to} ${headerTextColor} p-6 rounded-t-lg relative`;
 
     return (
@@ -944,7 +947,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
             </div>
 
             <div className="space-y-2 min-w-0">
-              <input type="text" value={formData.characterName || ''} onChange={(e) => updateField('characterName', e.target.value)} maxLength={SHEET_NAME_MAX} placeholder="Character Name" className={`w-full text-3xl font-bold bg-white/10 border-2 ${errors.characterName ? 'border-red-300' : 'border-white/20'} rounded px-3 py-1 ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`} />
+              <input type="text" value={formData.characterName || ''} onChange={(e) => updateField('characterName', e.target.value)} maxLength={SHEET_NAME_MAX} placeholder="Character Name" className={`w-full text-3xl font-bold bg-white/10 border-2 ${errors.characterName ? 'border-red-300' : 'border-white/20'} rounded px-3 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
               <div className="flex items-center flex-wrap gap-2 opacity-90">
                 {/* Read-only: the player name is whoever owns the character,
                     filled from their display name at creation. */}
@@ -956,15 +959,15 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
                   <NumberField
 min={1} max={20} value={formData.level} onChange={(v: number) => updateField('level', v)} className={`w-16 bg-white/10 border ${errors.level ? 'border-red-300' : 'border-white/20'} rounded px-2 py-0.5 text-sm ${headerTextColor} focus:outline-none focus:border-white/40`} fallback={1} />
                 </div>
-                <input type="text" value={formData.class || ''} onChange={(e) => updateField('class', e.target.value)} placeholder="Class" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`} />
-                <input type="text" value={formData.ancestry || ''} onChange={(e) => updateField('ancestry', e.target.value)} placeholder="Ancestry" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`} />
-                <input type="text" value={formData.heritage || ''} onChange={(e) => updateField('heritage', e.target.value)} placeholder="Heritage" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`} />
-                <input type="text" value={formData.background || ''} onChange={(e) => updateField('background', e.target.value)} placeholder="Background" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`} />
+                <input type="text" value={formData.class || ''} onChange={(e) => updateField('class', e.target.value)} placeholder="Class" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
+                <input type="text" value={formData.ancestry || ''} onChange={(e) => updateField('ancestry', e.target.value)} placeholder="Ancestry" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
+                <input type="text" value={formData.heritage || ''} onChange={(e) => updateField('heritage', e.target.value)} placeholder="Heritage" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
+                <input type="text" value={formData.background || ''} onChange={(e) => updateField('background', e.target.value)} placeholder="Background" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
                 {/* Deity and alignment are part of the sheet the schema
                     describes, and matter for a cleric, champion or oracle, but
                     had no field anywhere in the app until now. */}
-                <input type="text" value={formData.deity || ''} onChange={(e) => updateField('deity', e.target.value)} placeholder="Deity" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`} />
-                <input type="text" value={formData.alignment || ''} onChange={(e) => updateField('alignment', e.target.value)} placeholder="Alignment" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} placeholder-current/50 focus:outline-none focus:border-white/40`} />
+                <input type="text" value={formData.deity || ''} onChange={(e) => updateField('deity', e.target.value)} placeholder="Deity" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
+                <input type="text" value={formData.alignment || ''} onChange={(e) => updateField('alignment', e.target.value)} placeholder="Alignment" className={`bg-white/10 border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
               </div>
             </div>
           </div>

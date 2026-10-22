@@ -32,6 +32,7 @@ import { cocDodgeBase } from './dodge';
 import { WeaponsList } from './components/WeaponsList';
 import { BackstorySection } from './components/BackstorySection';
 import { isHexColor } from '@/utils/styleAllowlists';
+import { customHeaderFill } from '@/utils/themeColor';
 
 interface CallOfCthulhu7eCharacterViewProps {
   character: Character;
@@ -116,15 +117,13 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
   // Render character header with vintage styling
   const renderHeader = () => {
     // Determine the current background style
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
     // Pale custom colours are refused on save (4.5:1 against #FFFFFF) rather
     // than flipping the header. Custom hex keeps fixed white text so a pale
     // pick looks unreadable; preset chrome stays parchment.
     const headerTextColor = isCustomColor ? 'text-white' : 'text-parchment';
-    const headerMuted = isCustomColor ? 'text-white/80' : 'text-parchment-light';
+    const headerMuted = isCustomColor ? 'text-white' : 'text-parchment-light';
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
       : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
@@ -205,7 +204,7 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
                 <div className="flex items-center space-x-2 p-2 bg-stone-50 rounded">
                   <div
                     className="w-8 h-8 rounded"
-                    style={{ background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }}
+                    style={customHeaderFill(customColorHex)}
                   />
                   <span className="text-sm font-medium">Custom: {customColorHex}</span>
                 </div>
