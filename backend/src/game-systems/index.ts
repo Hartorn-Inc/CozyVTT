@@ -11,6 +11,8 @@ export * from './pathfinder2e';
 export * from './shadowrun6e';
 // Export all Call of Cthulhu 7e types
 export * from './callOfCthulhu7e';
+// Frozen-sheet predicate and stable refusal payload (ADR 0013)
+export * from './frozen';
 
 import { DnD5eCharacterData } from './dnd5e';
 import { PF2eCharacterData } from './pathfinder2e';

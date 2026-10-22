@@ -17,6 +17,7 @@ export const Shadowrun6eCharacterSheet: React.FC<CharacterSheetProps> = () => {
         </h3>
         <p className="text-stone-gray text-center max-w-md">
           The Shadowrun 6th Edition character sheet is not yet implemented.
+          Existing Characters remain readable but cannot be edited until the sheet ships.
         </p>
         <p className="text-sm text-stone-gray/70">
           Shadowrun 6e support is on the roadmap for a future release.

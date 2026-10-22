@@ -7,7 +7,12 @@ import { useState, FormEvent, useEffect, useRef } from 'react';
 import { Loader2, User, Sparkles } from 'lucide-react';
 import { Modal } from '@/components/ui';
 import { Character, GameSystem, Campaign } from '@/types';
-import { GAME_SYSTEM_OPTIONS, getGameSystemLabel } from '@/constants/game-systems';
+import {
+  GAME_SYSTEM_LABELS,
+  GAME_SYSTEM_OPTIONS,
+  getGameSystemLabel,
+  isChoosableGameSystem,
+} from '@/constants/game-systems';
 import api from '@/services/api';
 import Button from '@/components/ui/Button';
 import { apiErrorMessage, apiValidationIssues, errorMessage } from '@/utils/errors';
@@ -145,7 +150,9 @@ export default function NewCharacterModal({
     setLoadingCampaigns(true);
     try {
       const response = await api.listCampaigns();
-      setAvailableCampaigns(response.campaigns);
+      setAvailableCampaigns(
+        response.campaigns.filter((c) => isChoosableGameSystem(c.gameSystem))
+      );
     } catch (err) {
       console.error('Failed to fetch campaigns:', err);
     } finally {
@@ -204,6 +211,13 @@ export default function NewCharacterModal({
     // Validation
     if (name.trim().length < 2) {
       setError('Character name must be at least 2 characters');
+      return;
+    }
+
+    if (!isChoosableGameSystem(gameSystem)) {
+      setError(
+        'New Characters cannot be created for that system until the sheet ships.'
+      );
       return;
     }
 
@@ -296,15 +310,23 @@ export default function NewCharacterModal({
   };
 
   const isFormValid = name.trim().length >= 2;
+  const gameSystemChoosable = isChoosableGameSystem(gameSystem);
+  const unchoosableSystemStatusId = 'unchoosable-system-status';
 
-  // Flexible (unset) lists every membership Campaign so campaign-first inherit
-  // still works. A typed Game system offers only compatible Campaigns: same
-  // system, plus Campaigns with no game system. ADR 0015 / systemsCompatible.
+  // Flexible (unset) lists choosable membership Campaigns so campaign-first
+  // inherit still works for shipped sheets. Campaigns whose game system is set
+  // and not in GAME_SYSTEM_OPTIONS are omitted so inherit cannot lock Game
+  // system to an unmatched select value. A typed Game system offers only
+  // compatible choosable Campaigns: same system, plus Campaigns with no game
+  // system. ADR 0015 / systemsCompatible.
+  const choosableCampaigns = availableCampaigns.filter((c) =>
+    isChoosableGameSystem(c.gameSystem)
+  );
   const offeredCampaigns = gameSystem
-    ? availableCampaigns.filter((c) =>
+    ? choosableCampaigns.filter((c) =>
         systemsCompatible(gameSystem, c.gameSystem)
       )
-    : availableCampaigns;
+    : choosableCampaigns;
 
   const campaignHintId = 'campaign-hint';
   const campaignFilterHintId = 'campaign-filter-hint';
@@ -382,7 +404,7 @@ export default function NewCharacterModal({
                       {offeredCampaigns.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
-                          {c.gameSystem && ` (${c.gameSystem})`}
+                          {c.gameSystem && ` (${getGameSystemLabel(c.gameSystem)})`}
                         </option>
                       ))}
                     </select>
@@ -438,6 +460,9 @@ export default function NewCharacterModal({
                     }}
                     disabled={loading || isGameSystemLocked()}
                     className="input-cozy w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-describedby={
+                      gameSystemChoosable ? undefined : unchoosableSystemStatusId
+                    }
                   >
                     <option value="">Flexible (No System)</option>
                     {GAME_SYSTEM_OPTIONS.map((option) => (
@@ -445,16 +470,32 @@ export default function NewCharacterModal({
                         {option.label}
                       </option>
                     ))}
+                    {gameSystem && !gameSystemChoosable && (
+                      <option value={gameSystem}>
+                        {GAME_SYSTEM_LABELS[gameSystem]}
+                      </option>
+                    )}
                   </select>
                   <p className="mt-1 text-xs text-ink-muted">
                     {isGameSystemLocked()
                       ? 'Game system is inherited from the selected campaign'
                       : 'Select a game system to use pre-built templates'}
                   </p>
+                  {!gameSystemChoosable && (
+                    <p
+                      id={unchoosableSystemStatusId}
+                      role="status"
+                      className="mt-1 text-xs text-ink-muted"
+                    >
+                      New Characters cannot be created for{' '}
+                      {gameSystem ? getGameSystemLabel(gameSystem) : 'that system'}{' '}
+                      until the sheet ships.
+                    </p>
+                  )}
                 </div>
 
-                {/* Template Selection (only if game system is selected) */}
-                {gameSystem && (
+                {/* Template Selection (only if a choosable game system is selected) */}
+                {gameSystem && gameSystemChoosable && (
                   <div>
                     <label
                       htmlFor="template"
@@ -525,7 +566,7 @@ export default function NewCharacterModal({
 
                   <Button
                     type="submit"
-                    disabled={loading || !isFormValid}
+                    disabled={loading || !isFormValid || !gameSystemChoosable}
                     className="flex-1 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     {loading ? (
@@ -547,7 +588,7 @@ export default function NewCharacterModal({
                   <Button
                     type="submit"
                     variant="secondary"
-                    disabled={loading || !isFormValid}
+                    disabled={loading || !isFormValid || !gameSystemChoosable}
                     onClick={() => { alsoPublishTemplate.current = true; }}
                     title="Create this character and also publish it as a template others can copy"
                     className="w-full disabled:opacity-50 disabled:cursor-not-allowed"

@@ -421,10 +421,10 @@ export const dnd5eCharacterDataSchema = z.object({
     ])
     .optional(),
   proficienciesAndLanguages: sheetList(proficiencyBoxSchema).optional(),
-  // Features carry a name and an optional description. The built-in templates
-  // always had descriptions — Second Wind's full rules text, and so on — but
-  // wrote them to an undeclared `features` field that nothing read, so no
-  // player has ever seen one.
+  // Features carry a name and an optional description. Shipped starters keep
+  // the names (Second Wind, Fighting Style: Defense) and drop rules prose
+  // (ADR 0013). Older templates wrote descriptions to an undeclared `features`
+  // field that nothing read, so no player has ever seen one.
   //
   // Plain strings are still accepted, and always will be: every sheet written
   // before this change holds them, exported JSON in someone's backups holds

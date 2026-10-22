@@ -290,7 +290,8 @@ const bulkSchema = z.object({
 /**
  * Feat
  * Notes optional for quick feat addition. `description` is what the editor's
- * text box under each feat writes; the built-in templates write `notes`.
+ * text box under each feat writes; shipped starters keep feat names and leave
+ * `notes` empty (ADR 0013).
  */
 const featSchema = z.object({
   level: z.number().int().min(1).max(20).optional(),
@@ -492,9 +493,10 @@ export const pathfinder2eCharacterDataSchema = z.object({
   bulk: bulkSchema.optional(),
   languages: sheetList(shortText).optional(),
   feats: featsSchema.optional(),
-  // Named class features with optional rules text. Strings are still
-  // accepted — that is what every sheet written so far holds, and what a
-  // feature with no description is. See validators/game-systems/featureEntry.
+  // Named class features with an optional description. Shipped starters keep
+  // names (Attack of Opportunity, Shield Block) and drop rules prose (ADR 0013).
+  // Strings are still accepted — that is what every sheet written so far holds,
+  // and what a feature with no description is. See validators/game-systems/featureEntry.
   classFeatures: sheetNamedList(featureEntrySchema, 'name').optional(),
   spellcasting: spellcastingSchema.optional(),
   appearance: appearanceSchema.optional(),

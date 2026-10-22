@@ -240,7 +240,7 @@ export const coc7ePrivateInvestigatorTemplate: CharacterTemplate = {
           attacks: 1,
           ammo: null,
           malfunction: null,
-          notes: 'Damage includes damage bonus',
+          notes: '',
         },
       ],
     },

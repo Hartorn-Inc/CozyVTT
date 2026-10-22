@@ -3,6 +3,7 @@
  * Provides blank and example character templates for quick character creation
  * Character Management
  * Note: the Shadowrun 6e backend is complete; the character sheet UI is not yet built.
+ * Create and edit stay closed until the sheet and an attribution section exist (ADR 0013).
  */
 
 import { GameSystem } from '@prisma/client';
@@ -137,7 +138,7 @@ export const shadowrun6eStreetsamurai: CharacterTemplate = {
         name: 'Ambidextrous',
         type: 'positive',
         cost: 4,
-        notes: 'No penalty for using off-hand weapon',
+        notes: '',
       },
     ],
     weapons: {
@@ -180,14 +181,14 @@ export const shadowrun6eStreetsamurai: CharacterTemplate = {
         rating: 1,
         essenceCost: 2.0,
         type: 'cyberware',
-        notes: '+1 Reaction, +1d6 Initiative',
+        notes: '',
       },
       {
         name: 'Cybereyes',
         rating: 2,
         essenceCost: 0.3,
         type: 'cyberware',
-        notes: 'Low-light vision, Image Link, Smartlink',
+        notes: '',
       },
     ],
     contacts: [

@@ -5,7 +5,7 @@ import { prisma } from '../config/database';
 import type { CampaignRole, Prisma } from '@prisma/client';
 import { normalizeAssetUrl } from '../utils/asset-urls';
 import { canReferenceAsset } from '../services/permissions';
-import { GameSystem } from '../game-systems';
+import { GameSystem, gameSystemSheetFrozenError, isGameSystemSheetFrozen } from '../game-systems';
 import { validateCharacterData, sheetNameFor } from '../validators/game-systems';
 import { CreateCharacterSchema, UpdateCharacterSchema } from '../validators/characters';
 import { broadcastToCampaign, emitCharacterUpdated } from '../websocket/utils';
@@ -68,6 +68,17 @@ class SheetValidationError extends Error {
     super(message);
     this.name = 'SheetValidationError';
     this.validationErrors = validationErrors;
+  }
+}
+
+/**
+ * Create-in inherit resolved to a frozen system at commit. Mapped to the same
+ * 400 envelope as the outer freeze check.
+ */
+class FrozenSheetError extends Error {
+  constructor() {
+    super(gameSystemSheetFrozenError().message);
+    this.name = 'FrozenSheetError';
   }
 }
 
@@ -263,6 +274,7 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
 
     // Determine final gameSystem value
     let finalGameSystem = gameSystem;
+    let campaignGameSystem: string | null | undefined;
 
     // Creating straight into a campaign. Membership is checked here for a
     // 403, and `characterIds` is updated inside the write transaction,
@@ -298,6 +310,8 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         });
       }
 
+      campaignGameSystem = campaign.gameSystem;
+
       // Inherit when omitted or null so create-in into a typed Campaign
       // without specifying a system still creates a matching Character, not
       // a Flexible sheet. Then refuse unless the resolved Character game
@@ -307,10 +321,20 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         // type finalGameSystem was inferred from (identical string values).
         finalGameSystem = campaign.gameSystem as GameSystem | null;
       }
+    }
+
+    // Frozen systems (ADR 0013): refuse create before sheet validation.
+    // Explicit SHADOWRUN_6E uses this envelope even when the Campaign would
+    // also mismatch. Inherit from a frozen Campaign is the same refusal.
+    if (isGameSystemSheetFrozen(finalGameSystem)) {
+      return res.status(400).json(gameSystemSheetFrozenError());
+    }
+
+    if (campaignId) {
       // Fast-fail before sheet validation. The write transaction locks the
       // Campaign and checks again against the committed gameSystem.
       try {
-        assertCompatible(finalGameSystem, campaign.gameSystem);
+        assertCompatible(finalGameSystem, campaignGameSystem);
       } catch (error) {
         if (error instanceof GameSystemMismatchError) {
           return res.status(400).json({ error: error.error, message: error.message });
@@ -394,6 +418,9 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         if (!gameSystem) {
           storedGameSystem = locked as GameSystem | null;
         }
+        if (isGameSystemSheetFrozen(storedGameSystem)) {
+          throw new FrozenSheetError();
+        }
         assertCompatible(storedGameSystem, locked);
         // A concurrent kick can delete the seat without taking Campaign
         // FOR UPDATE, so it can finish while this join waits on (or holds)
@@ -464,6 +491,9 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
   } catch (error) {
     if (error instanceof CharacterLimitReached) {
       return res.status(400).json({ error: 'Validation Error', message: CHARACTER_LIMIT_REACHED });
+    }
+    if (error instanceof FrozenSheetError) {
+      return res.status(400).json(gameSystemSheetFrozenError());
     }
     if (error instanceof SheetValidationError) {
       return res.status(400).json({
@@ -808,6 +838,12 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
         error: 'Bad Request',
         message: 'Cannot change game system after character creation. Create a new character instead.',
       });
+    }
+
+    // Frozen systems (ADR 0013): sheet-data updates stay closed. Name-only
+    // and tokenImageUrl-only PUTs still succeed. Strangers already 403'd.
+    if (data !== undefined && isGameSystemSheetFrozen(character.gameSystem)) {
+      return res.status(400).json(gameSystemSheetFrozenError());
     }
 
     // Validate the sheet against its game system's schema, or the Flexible
@@ -1349,6 +1385,11 @@ router.post('/:id/copy', authenticated, async (req: AuthenticatedRequest, res: R
         error: 'Forbidden',
         message: 'You do not have permission to copy this character',
       });
+    }
+
+    // Copying a frozen Character is creation (ADR 0013).
+    if (isGameSystemSheetFrozen(originalCharacter.gameSystem)) {
+      return res.status(400).json(gameSystemSheetFrozenError());
     }
 
     // Create a copy with modified name. Not the Keeper's Notes: they are the
