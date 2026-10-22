@@ -177,4 +177,23 @@ describe('the read-only sheet', () => {
     const row = screen.getByText('Athletics').closest('div')!.parentElement!;
     expect(row.textContent).toContain('+3');
   });
+
+  it('projects a stale Stealth bonus before the sheet renders', () => {
+    const character = dnd5eCharacter({
+      level: 5,
+      proficiencyBonus: 3,
+      stats: { ...stats, dexterity: { score: 16, modifier: 3 } },
+      skills: {
+        ...skills,
+        stealth: { proficient: true, expertise: true, bonus: 99, otherBonus: 1 },
+      },
+    });
+
+    render(<DnD5eCharacterView character={character} />);
+
+    // Dexterity 16 (+3), proficiency +3 doubled for expertise, plus other 1.
+    const row = screen.getByText('Stealth').closest('div')!.parentElement!;
+    expect(row.textContent).toContain('+10');
+    expect(row.textContent).not.toContain('+99');
+  });
 });

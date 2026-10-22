@@ -6,7 +6,9 @@ import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { StatsSection } from '../../../../../types/flexible-character-sheet';
 import { calculateModifier, formatModifier, generateId } from '../../utils/section-helpers';
-import { SHEET_NAME_MAX } from '@/constants/sheetLimits';
+import { FLEXIBLE_MAX_FIELDS, SHEET_NAME_MAX } from '@/constants/sheetLimits';
+import ListLimitNote, { ADD_BUTTON_OFF, listChangeAllowed, listIsFull } from '../../../ListLimitNote';
+import { LIMIT_NOTE_CLASS } from '../../limitNoteClass';
 
 interface StatsEditorProps {
   section: StatsSection;
@@ -14,11 +16,11 @@ interface StatsEditorProps {
 }
 
 export const StatsEditor: React.FC<StatsEditorProps> = ({ section, onUpdate }) => {
-  // TODO(sheets): the server keeps at most 200 stats in a section (FLEXIBLE_MAX_FIELDS) and this
-  // has no limit, so one more makes a sheet that cannot be saved. Turn the
-  // add button off at the limit, as the typed sheets' lists do with listIsFull
-  // and ListLimitNote.
+  const fieldsFull = listIsFull(section.fields, FLEXIBLE_MAX_FIELDS);
+  const fieldsLimitNoteId = `flexible-stats-limit-${section.id}`;
+
   const addField = () => {
+    if (!listChangeAllowed(section.fields.length + 1, section.fields.length, FLEXIBLE_MAX_FIELDS)) return;
     const newField = {
       id: generateId(),
       name: 'New Stat',
@@ -59,8 +61,11 @@ export const StatsEditor: React.FC<StatsEditorProps> = ({ section, onUpdate }) =
           >
             <button
               onClick={() => removeField(field.id)}
-              className="absolute top-2 right-2 p-1 rounded bg-red-50 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-100"
+              className={`absolute top-2 right-2 p-1 rounded bg-red-50 text-red-600 transition-opacity hover:bg-red-100 ${
+                fieldsFull ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+              }`}
               title="Remove stat"
+              aria-label="Remove stat"
             >
               <Trash2 className="w-4 h-4" />
             </button>
@@ -95,11 +100,14 @@ export const StatsEditor: React.FC<StatsEditorProps> = ({ section, onUpdate }) =
 
       <button
         onClick={addField}
-        className="flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center"
+        disabled={fieldsFull}
+        aria-describedby={fieldsFull ? fieldsLimitNoteId : undefined}
+        className={`flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center ${ADD_BUTTON_OFF}`}
       >
         <Plus className="w-4 h-4" />
         Add Stat
       </button>
+      <ListLimitNote id={fieldsLimitNoteId} full={fieldsFull} max={FLEXIBLE_MAX_FIELDS} className={LIMIT_NOTE_CLASS} />
     </div>
   );
 };

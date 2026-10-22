@@ -77,7 +77,7 @@ A hardcoded starting sheet for a game system, offered by the Instance.
 _Avoid_: Template (unqualified), example sheet (for this object)
 
 **Published character template**:
-A shareable sheet in the Instance library, readable by every signed-in user. Distinct from a starter template and from a token template.
+A shareable sheet in the Instance library, readable by every signed-in user. Distinct from a starter template and from a token template. Never carries Keeper's Notes.
 _Avoid_: Public template, character template (unqualified), shared template
 
 **Token template**:
@@ -85,7 +85,7 @@ A reusable token definition that belongs to one Campaign.
 _Avoid_: Template (unqualified), token preset
 
 **Keeper's Notes**:
-The Call of Cthulhu field on a Character that only the DM of that Character's Campaign may read or write. It is a field, not a role.
+The Call of Cthulhu field on a Character that only the DM of that Character's Campaign may read or write. It is a field, not a role. Published character templates never carry it.
 _Avoid_: Keeper (as a role), GM notes, private notes (for this field)
 
 **Derived value**:
@@ -151,3 +151,17 @@ _Avoid_: Spirit plane (for this view)
 **Initiative**:
 The DM's combat turn order for a campaign. Distinct from the dice history of those rolls.
 _Avoid_: Encounter, combat log (for this object)
+
+## Contribution
+
+**Advisory review**:
+An opt-in, non-blocking GitHub COMMENT on a pull request, assembled from readonly roster reviewer passes. Distinct from a required check and from Cloud Agent work.
+_Avoid_: Codex review (for this object), Luna review, Bugbot, merge review
+
+**Reviewer pass**:
+One readonly roster role run against a pull request. Its findings feed the advisory review. Distinct from the advisory review itself and from a Cloud Agent.
+_Avoid_: Codex pass, Luna pass, review (unqualified)
+
+**Cloud Agent**:
+A Cursor-hosted implementer on this repository, started by a write collaborator's `@cursor` issue comment. Distinct from the advisory review.
+_Avoid_: Agent (unqualified), Bugbot, Copilot

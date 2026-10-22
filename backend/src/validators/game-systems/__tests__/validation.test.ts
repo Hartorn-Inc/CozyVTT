@@ -321,12 +321,17 @@ describe('Game Systems Validation', () => {
         }
       });
 
-      it('rejects an entry with no name at all', () => {
+      it('omits an entry with no name rather than refusing the sheet', () => {
         const result = validateCharacterData(
           GameSystem.DND_5E,
-          sheetWith([{ description: 'orphaned' }])
+          sheetWith([{ name: 'Rage' }, { description: 'orphaned' }])
         );
-        expect(result.success).toBe(false);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          expect((result.data as { featuresAndTraits: unknown }).featuresAndTraits).toEqual([
+            { name: 'Rage', description: '' },
+          ]);
+        }
       });
     });
 
@@ -467,9 +472,17 @@ describe('Game Systems Validation', () => {
         expect(withRituals(['Consecrate', { name: 'Planar Binding', rank: 6 }]).success).toBe(true);
       });
 
-      it('still rejects a ritual with no name', () => {
-        expect(withRituals([{ rank: 2 }]).success).toBe(false);
-        expect(withRituals([{ name: '', rank: 2 }]).success).toBe(false);
+      it('omits a ritual with no name rather than refusing the sheet', () => {
+        const result = withRituals([
+          { name: 'Consecrate', rank: 2 },
+          { rank: 2 },
+          { name: '', rank: 2 },
+        ]);
+        expect(result.success).toBe(true);
+        if (result.success) {
+          const sheet = result.data as { spellcasting?: { rituals?: unknown } };
+          expect(sheet.spellcasting?.rituals).toEqual([{ name: 'Consecrate', rank: 2 }]);
+        }
       });
 
       it('still rejects a rank outside 1-10', () => {

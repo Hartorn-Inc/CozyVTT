@@ -421,6 +421,9 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
           select: { gameSystem: true, data: true },
         });
         if (character) {
+          // The helper projects derived values first, so a stale stored
+          // Perception bonus is not what gets rolled. Do not re-derive here,
+          // and do not take a player's dice expression as the initiative rule.
           resolution = resolveCharacterInitiative(character.gameSystem, character.data);
         }
       }

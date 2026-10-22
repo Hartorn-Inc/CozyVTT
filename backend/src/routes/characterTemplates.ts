@@ -26,6 +26,7 @@ import {
 import { extractAssetId, isExactAssetAddress, normalizeAssetUrl } from '../utils/asset-urls';
 import { toJson } from '../utils/prisma-json';
 import { holdOwnerCreates } from '../utils/ownerLimit';
+import { sheetWithoutKeeperNotes } from '../utils/keeperNotes';
 import logger from '../utils/logger';
 
 const router = Router();
@@ -63,6 +64,9 @@ const TEMPLATE_LIMIT_REACHED =
 
 /** Refused inside the create's transaction when the author is at the ceiling. */
 class TemplateLimitReached extends Error {}
+
+/** Thrown when a metadata-only PUT's locked re-read finds the row gone. */
+class TemplateGone extends Error {}
 
 /**
  * May this user modify this template?
@@ -238,7 +242,12 @@ router.get('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       return res.status(404).json({ error: 'Not Found', message: 'Character template not found' });
     }
 
-    return res.json(template);
+    // Published templates are Instance-wide: never send Keeper's Notes, even
+    // from a row that still has the key.
+    return res.json({
+      ...template,
+      data: sheetWithoutKeeperNotes(template.gameSystem, template.data),
+    });
   } catch (error) {
     logger.error('Error getting character template', { err: error });
     return res
@@ -272,6 +281,11 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         .json({ error: 'Validation Error', message: sheet.message, validationErrors: sheet.issues });
     }
 
+    // A Call of Cthulhu sheet may include Keeper's Notes; Zod accepts the
+    // key. Strip it so a published template never stores it. Presence is
+    // not a 400.
+    const storedSheet = sheetWithoutKeeperNotes(gameSystem ?? null, sheet.data);
+
     const image = await resolveTemplateImage(tokenImageUrl);
     if ('error' in image) {
       return res.status(400).json({ error: 'Validation Error', message: image.error });
@@ -289,14 +303,17 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
           description: description ?? null,
           gameSystem: gameSystem ?? null,
           tokenImageUrl: image.url,
-          data: toJson(sheet.data),
+          data: toJson(storedSheet),
           createdById: userId,
         },
         include: { createdBy: { select: AUTHOR_SELECT } },
       });
     });
 
-    return res.status(201).json(template);
+    return res.status(201).json({
+      ...template,
+      data: sheetWithoutKeeperNotes(template.gameSystem, template.data),
+    });
   } catch (error) {
     if (error instanceof TemplateLimitReached) {
       return res.status(400).json({ error: 'Validation Error', message: TEMPLATE_LIMIT_REACHED });
@@ -323,8 +340,9 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       });
     }
     const data = parsed.data;
+    const id = req.params.id;
 
-    const existing = await prisma.characterTemplate.findUnique({ where: { id: req.params.id } });
+    const existing = await prisma.characterTemplate.findUnique({ where: { id } });
     if (!existing) {
       return res.status(404).json({ error: 'Not Found', message: 'Character template not found' });
     }
@@ -336,21 +354,7 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       });
     }
 
-    // The game system is fixed at creation, exactly as it is for a character —
-    // the sheet data is only meaningful against the system it was built for.
-    let sheetData: unknown;
-    if (data.data !== undefined) {
-      const sheet = validateSheet(existing.gameSystem as GameSystem | null, data.data);
-      if (!sheet.ok) {
-        return res.status(400).json({
-          error: 'Validation Error',
-          message: sheet.message,
-          validationErrors: sheet.issues,
-        });
-      }
-      sheetData = sheet.data;
-    }
-
+    // Image and auth awaits stay outside the row lock: they must not hold it.
     let imageUrl: string | null | undefined;
     if (data.tokenImageUrl !== undefined) {
       const image = await resolveTemplateImage(data.tokenImageUrl);
@@ -360,19 +364,65 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       imageUrl = image.url;
     }
 
-    const updated = await prisma.characterTemplate.update({
-      where: { id: req.params.id },
-      data: {
-        ...(data.name !== undefined && { name: data.name }),
-        ...(data.description !== undefined && { description: data.description ?? null }),
-        ...(sheetData !== undefined && { data: toJson(sheetData) }),
-        ...(imageUrl !== undefined && { tokenImageUrl: imageUrl }),
-      },
-      include: { createdBy: { select: AUTHOR_SELECT } },
-    });
+    const metadata = {
+      ...(data.name !== undefined && { name: data.name }),
+      ...(data.description !== undefined && { description: data.description ?? null }),
+      ...(imageUrl !== undefined && { tokenImageUrl: imageUrl }),
+    };
+    const withAuthor = { createdBy: { select: AUTHOR_SELECT } } as const;
 
-    return res.json(updated);
+    let updated;
+    if (data.data !== undefined) {
+      // The game system is fixed at creation, exactly as it is for a character —
+      // the sheet data is only meaningful against the system it was built for.
+      const sheet = validateSheet(existing.gameSystem as GameSystem | null, data.data);
+      if (!sheet.ok) {
+        return res.status(400).json({
+          error: 'Validation Error',
+          message: sheet.message,
+          validationErrors: sheet.issues,
+        });
+      }
+      // Same strip as publish: a present notes key is dropped, not refused.
+      const sheetData = sheetWithoutKeeperNotes(existing.gameSystem, sheet.data);
+      updated = await prisma.characterTemplate.update({
+        where: { id },
+        data: { ...metadata, data: toJson(sheetData) },
+        include: withAuthor,
+      });
+    } else {
+      // A metadata-only update still strips stored Keeper's Notes so a legacy
+      // row cannot keep the key after any PUT. The sheet is the one stored at
+      // write time, under the row's lock: a sheet PUT landing after the read
+      // above is not put back. `data` is written only when the helper dropped
+      // the key, matching Character's clearKeeperNotes.
+      updated = await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "CharacterTemplate" WHERE id = ${id} FOR UPDATE`;
+        const fresh = await tx.characterTemplate.findUnique({
+          where: { id },
+          select: { gameSystem: true, data: true },
+        });
+        if (!fresh) throw new TemplateGone();
+        const stripped = sheetWithoutKeeperNotes(fresh.gameSystem, fresh.data);
+        return tx.characterTemplate.update({
+          where: { id },
+          data: {
+            ...metadata,
+            ...(stripped !== fresh.data && { data: toJson(stripped) }),
+          },
+          include: withAuthor,
+        });
+      });
+    }
+
+    return res.json({
+      ...updated,
+      data: sheetWithoutKeeperNotes(updated.gameSystem, updated.data),
+    });
   } catch (error) {
+    if (error instanceof TemplateGone) {
+      return res.status(404).json({ error: 'Not Found', message: 'Character template not found' });
+    }
     logger.error('Error updating character template', { err: error });
     return res
       .status(500)

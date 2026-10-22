@@ -10,7 +10,7 @@ import {
   sheetShortTextSchema as shortText,
   sheetLongTextSchema as longText,
 } from './sheetText';
-import { sheetList } from './sheetLists';
+import { sheetList, sheetNamedList } from './sheetLists';
 import { SHEET_ROW_TAGS_MAX } from './sheetLimits';
 
 /**
@@ -278,8 +278,8 @@ const meleeWeaponSchema = z.object({
  * Weapons
  */
 const weaponsSchema = z.object({
-  ranged: sheetList(rangedWeaponSchema),
-  melee: sheetList(meleeWeaponSchema),
+  ranged: sheetNamedList(rangedWeaponSchema, 'name'),
+  melee: sheetNamedList(meleeWeaponSchema, 'name'),
 });
 
 /**
@@ -453,18 +453,18 @@ export const shadowrun6eCharacterDataSchema = z.object({
   woundModifier: z.number().int().optional(),
   conditions: sheetList(shortText).optional(),
   skills: skillsSchema.optional(),
-  knowledgeSkills: sheetList(knowledgeSkillSchema).optional(),
-  languages: sheetList(languageSchema).optional(),
-  qualities: sheetList(qualitySchema).optional(),
+  knowledgeSkills: sheetNamedList(knowledgeSkillSchema, 'name').optional(),
+  languages: sheetNamedList(languageSchema, 'name').optional(),
+  qualities: sheetNamedList(qualitySchema, 'name').optional(),
   weapons: weaponsSchema.optional(),
-  armor: sheetList(armorSchema).optional(),
-  augmentations: sheetList(augmentationSchema).optional(),
+  armor: sheetNamedList(armorSchema, 'name').optional(),
+  augmentations: sheetNamedList(augmentationSchema, 'name').optional(),
   matrixStats: matrixStatsSchema.optional(),
   magic: magicSchema.optional(),
-  contacts: sheetList(contactSchema).optional(),
-  ids: sheetList(fakeIDSchema).optional(),
+  contacts: sheetNamedList(contactSchema, 'name').optional(),
+  ids: sheetNamedList(fakeIDSchema, 'name').optional(),
   currency: currencySchema.optional(),
-  gear: sheetList(gearItemSchema).optional(),
+  gear: sheetNamedList(gearItemSchema, 'name').optional(),
   vehicles: sheetList(shortText).optional(),
   appearance: appearanceSchema.optional(),
   personality: personalitySchema.optional(),

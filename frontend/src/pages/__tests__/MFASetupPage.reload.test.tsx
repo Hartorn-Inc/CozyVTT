@@ -72,8 +72,8 @@ describe('leaving with the backup codes on screen', () => {
     fireEvent.change(screen.getByPlaceholderText('000000'), { target: { value: '123456' } });
     fireEvent.click(screen.getByRole('button', { name: /verify & enable/i }));
     await screen.findByText('ABCD-EFGH');
-
-    expect(leavingIsQuestioned()).toBe(true);
+    // The leave-guard is armed in an effect after the codes paint.
+    await waitFor(() => expect(leavingIsQuestioned()).toBe(true));
 
     fireEvent.click(screen.getByRole('checkbox'));
     expect(leavingIsQuestioned()).toBe(false);

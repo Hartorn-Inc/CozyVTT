@@ -1,5 +1,5 @@
 """
-scripts/ci/codex_pr_review.py maps CozyVTT paths to a small reviewer set,
+scripts/ci/advisory_pr_review.py maps CozyVTT paths to a small reviewer set,
 resolves trusted /review triggers, and assembles advisory markdown from
 untrusted reviewer JSON. No network.
 
@@ -15,7 +15,7 @@ import unittest
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.dirname(SCRIPTS)
 spec = importlib.util.spec_from_file_location(
-    'codex_pr_review', os.path.join(SCRIPTS, 'ci', 'codex_pr_review.py')
+    'advisory_pr_review', os.path.join(SCRIPTS, 'ci', 'advisory_pr_review.py')
 )
 cpr = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(cpr)
@@ -291,7 +291,7 @@ class TrustedTriggers(unittest.TestCase):
             'head': {'sha': 'abc', 'repo': {'full_name': 'fork/CozyVTT'}},
             'base': {'sha': 'def', 'repo': {'full_name': 'Hartorn-Inc/CozyVTT'}},
         }
-        outputs = cpr.resolve_outputs(event, 'pull_request', pr, {'CODEX_ASSESS_REQUIRE_SAME_REPO': 'true'})
+        outputs = cpr.resolve_outputs(event, 'pull_request', pr, {'ADVISORY_REVIEW_REQUIRE_SAME_REPO': 'true'})
         self.assertEqual(outputs['should_run'], 'false')
 
     def test_same_repo_open_pr_runs(self):
@@ -325,7 +325,20 @@ class TrustedTriggers(unittest.TestCase):
         self.assertEqual(outputs['should_run'], 'false')
         self.assertEqual(outputs['pr_number'], '7')
 
-    def test_workflow_run_with_codex_review_label_runs(self):
+    def test_workflow_run_with_advisory_review_label_runs(self):
+        event = {
+            'workflow_run': {
+                'conclusion': 'success',
+                'event': 'pull_request',
+                'pull_requests': [{'number': 7}],
+            }
+        }
+        pr = self._same_repo_pr(labels=[{'name': 'advisory-review'}])
+        outputs = cpr.resolve_outputs(event, 'workflow_run', pr)
+        self.assertEqual(outputs['should_run'], 'true')
+        self.assertEqual(outputs['head_sha'], 'abc')
+
+    def test_workflow_run_with_retired_codex_review_label_does_not_run(self):
         event = {
             'workflow_run': {
                 'conclusion': 'success',
@@ -335,8 +348,7 @@ class TrustedTriggers(unittest.TestCase):
         }
         pr = self._same_repo_pr(labels=[{'name': 'codex-review'}])
         outputs = cpr.resolve_outputs(event, 'workflow_run', pr)
-        self.assertEqual(outputs['should_run'], 'true')
-        self.assertEqual(outputs['head_sha'], 'abc')
+        self.assertEqual(outputs['should_run'], 'false')
 
     def test_review_comment_does_not_require_the_label(self):
         event = {
@@ -354,7 +366,7 @@ class TrustedTriggers(unittest.TestCase):
 
 
 class AssembleReview(unittest.TestCase):
-    def test_prefixes_advisory_codex_luna_header(self):
+    def test_prefixes_advisory_grok_header(self):
         body = cpr.assemble_review(
             [
                 {
@@ -364,9 +376,15 @@ class AssembleReview(unittest.TestCase):
                 }
             ]
         )
-        self.assertTrue(body.startswith('## Advisory Codex review (GPT-6 Luna Flex)'))
+        self.assertTrue(body.startswith('## Advisory review (Grok 4.7)'))
         self.assertIn('not a required GitHub check', body)
+        self.assertIn('`advisory-review` label or `/review`', body)
         self.assertIn('### backend-reviewer', body)
+
+    def test_recognizes_prior_codex_advisory_bodies(self):
+        self.assertTrue(cpr.is_advisory_review_body('## Advisory Codex review (GPT-6 Luna Flex)\n'))
+        self.assertTrue(cpr.is_advisory_review_body('## Advisory review (Grok 4.7)\n'))
+        self.assertFalse(cpr.is_advisory_review_body('## Unrelated review\n'))
 
     def test_redacts_secrets_and_defangs_mentions(self):
         body = cpr.assemble_review(
@@ -430,7 +448,7 @@ class AssembleReview(unittest.TestCase):
         }
         body = cpr.assemble_review([review])
         self.assertLessEqual(len(body), cpr.MAX_REVIEW_BODY_CHARS + 40)
-        self.assertIn('Advisory Codex review', body)
+        self.assertIn('Advisory review', body)
 
 
 class Sanitize(unittest.TestCase):
@@ -452,7 +470,7 @@ class PostReview(unittest.TestCase):
         original = cpr.run_text
         cpr.run_text = fake_run
         try:
-            cpr.post_review('Hartorn-Inc/CozyVTT', 3, '## Advisory Codex review\n')
+            cpr.post_review('Hartorn-Inc/CozyVTT', 3, '## Advisory review (Grok 4.7)\n')
         finally:
             cpr.run_text = original
         payload = json.loads(captured['stdin'])
@@ -461,28 +479,59 @@ class PostReview(unittest.TestCase):
         self.assertNotEqual(payload['event'], 'REQUEST_CHANGES')
 
 
-class CodexPrReviewWorkflow(unittest.TestCase):
-    def test_reviewer_job_runs_codex_as_an_unprivileged_unix_user(self):
-        path = os.path.join(ROOT, '.github', 'workflows', 'codex-pr-review.yml')
+class AdvisoryPrReviewWorkflow(unittest.TestCase):
+    def _secret_workflow(self):
+        path = os.path.join(ROOT, '.github', 'workflows', 'advisory-pr-review.yml')
         with open(path, encoding='utf-8') as handle:
-            text = handle.read()
-        self.assertIn('safety-strategy: unprivileged-user', text)
+            return handle.read()
+
+    def _request_workflow(self):
+        path = os.path.join(ROOT, '.github', 'workflows', 'advisory-review-request.yml')
+        with open(path, encoding='utf-8') as handle:
+            return handle.read()
+
+    def test_reviewer_job_runs_cursor_cli_as_an_unprivileged_unix_user(self):
+        text = self._secret_workflow()
+        self.assertIn('useradd --system --create-home advisoryreview', text)
         self.assertNotIn('safety-strategy: drop-sudo', text)
-        self.assertNotIn('safety-strategy: unsafe', text)
-        self.assertNotIn('safety-strategy: read-only', text)
-        self.assertIn('codex-user:', text)
-        user = None
-        for line in text.splitlines():
-            stripped = line.strip()
-            if stripped.startswith('codex-user:'):
-                user = stripped.split(':', 1)[1].strip()
-                break
-        self.assertTrue(user)
-        self.assertIn('useradd --system --create-home ' + user, text)
         self.assertNotIn('usermod', text)
         self.assertNotIn('gpasswd', text)
         self.assertNotIn('-G sudo', text)
         self.assertNotIn('adduser', text)
+        self.assertIn('--mode=ask', text)
+        self.assertIn('grok-4.7', text)
+        self.assertIn('CURSOR_API_KEY', text)
+        self.assertIn('name: advisory-review', text)
+        self.assertIn('# renovate: datasource=', text)
+        self.assertIn('CURSOR_CLI_VERSION', text)
+        self.assertIn('CURSOR_CLI_INSTALL_SHA256', text)
+        self.assertNotIn('openai/codex-action', text)
+        self.assertNotIn('OPENROUTER', text)
+        self.assertNotIn('curl https://cursor.com/install -fsS | bash', text)
+        self.assertNotIn('--force', text)
+        self.assertNotIn('--yolo', text)
+        self.assertNotRegex(text, r'(?m)^  pull_request:')
+        self.assertNotRegex(text, r'(?m)^  pull_request_target:')
+        self.assertIn('workflows: ["Advisory review request"]', text)
+
+    def test_request_workflow_is_gated_on_advisory_review_label(self):
+        text = self._request_workflow()
+        self.assertIn("github.event.pull_request.labels.*.name, 'advisory-review'", text)
+        self.assertNotIn('codex-review', text)
+        self.assertNotIn('OPENROUTER', text)
+        self.assertNotIn('${{ secrets.CURSOR_API_KEY }}', text)
+        self.assertNotIn('environment:', text)
+
+    def test_contributing_has_operator_cutover_checklist(self):
+        path = os.path.join(ROOT, 'docs', 'CONTRIBUTING.md')
+        with open(path, encoding='utf-8') as handle:
+            text = handle.read()
+        self.assertIn('Environment `advisory-review`', text)
+        self.assertIn('CURSOR_API_KEY', text)
+        self.assertIn('OPENROUTER_API_KEY', text)
+        self.assertIn('codex-review', text)
+        self.assertIn('refs/pull/*/merge', text)
+        self.assertIn('label `advisory-review`', text)
 
 
 if __name__ == '__main__':

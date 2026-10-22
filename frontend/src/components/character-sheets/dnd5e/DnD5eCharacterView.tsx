@@ -44,9 +44,11 @@ import {
   dnd5eSaveBonus,
 } from '../../../utils/rules/dnd5e';
 import { dnd5eInitiativeModifier } from '../../../utils/rules/initiative';
+import { projectCharacterData } from '../../../utils/sheetProjection';
 import { collectSheetFeatures } from '../../../utils/featureEntries';
 import { readProficiencyGroups } from '../../../utils/proficiencies';
 import { isHexColor } from '@/utils/styleAllowlists';
+import { customHeaderFill, customHeaderTextClass, CUSTOM_HEADER_CONTROL_SURFACE } from '@/utils/themeColor';
 
 interface DnD5eCharacterViewProps {
   character: Character;
@@ -105,7 +107,7 @@ const COLOR_PRESETS = [
  */
 export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ character, onEdit, onRoll, onSpendHitDie }) => {
   const [activeTab, setActiveTab] = useState<TabId>('stats');
-  const data = character.data as DnD5eCharacterData & SheetChrome;
+  const data = projectCharacterData(character.gameSystem, character.data) as DnD5eCharacterData & SheetChrome;
   const [themeColor, setThemeColor] = useState(COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');
@@ -157,15 +159,13 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
   // Render character header
   const renderHeader = () => {
     // Determine the current background style
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
-    // TODO(ui): the header text is always white, so a pale custom colour such
-    // as white makes the character's name unreadable. Choose the text colour
-    // from the background, with readableTextOn in utils/color.ts.
+    // Passing custom hex keeps white name text. Stored pale hex uses dark
+    // text so the view is readable; the next save is still refused.
+    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-white';
     const headerClasses = isCustomColor
-      ? 'text-white p-6 rounded-t-lg relative'
+      ? `${headerTextColor} p-6 rounded-t-lg relative`
       : `bg-gradient-to-r ${themeColor.from} ${themeColor.to} text-white p-6 rounded-t-lg relative`;
 
     return (
@@ -174,7 +174,9 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
         {onEdit && (
           <button
             onClick={onEdit}
-            className="absolute top-4 right-4 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors flex items-center space-x-2 font-medium"
+            className={`absolute top-4 right-4 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 font-medium ${
+              isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'
+            }`}
             title="Edit character"
           >
             <Edit className="w-4 h-4" />
@@ -202,7 +204,7 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
           {/* Character Info */}
           <div>
             <h2 className="text-3xl font-bold mb-1">{data.characterName || 'Unnamed Character'}</h2>
-            <div className="flex items-center space-x-4 text-red-100">
+            <div className={`flex items-center space-x-4 ${isCustomColor ? '' : 'text-red-100'}`}>
               <span>
                 Level {data.level} {data.race} {data.class}
               </span>
@@ -214,7 +216,7 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
 
         {data.experiencePoints !== undefined && (
           <div className="text-right">
-            <div className="text-xs text-red-200">Experience</div>
+            <div className={`text-xs ${isCustomColor ? '' : 'text-red-200'}`}>Experience</div>
             <div className="text-xl font-bold">{data.experiencePoints.toLocaleString()}</div>
           </div>
         )}

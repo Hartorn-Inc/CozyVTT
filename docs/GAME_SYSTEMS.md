@@ -60,7 +60,7 @@ A sheet is shown to the whole table, so the schemas hold it to sizes a page can 
 | Any other one-line text: at most 1,000 characters | `SHEET_SHORT_TEXT_MAX` | `sheetShortTextSchema` in `sheetText.ts` |
 | Text that holds paragraphs (notes, descriptions, backstory, personality, a feature, which an older sheet may hold as one long line): at most 100,000 characters | `SHEET_LONG_TEXT_MAX` | `sheetLongTextSchema` in `sheetText.ts` |
 | The name in Allies & Organizations (D&D 5e and Pathfinder 2e): the paragraph limit, since a sheet written before 1.3.0 had its whole allies paragraph moved into it | `SHEET_LONG_TEXT_MAX` | `alliesAndOrganizations.schema.ts`, imported by both schemas |
-| A list on a D&D 5e, Pathfinder 2e, Call of Cthulhu or Shadowrun 6e sheet (inventory or possessions, attacks, strikes or weapons, spells, cantrips, conditions, hit dice, features, feats, languages, contacts and the rest): at most 500 entries, five times what the longest real list holds | `SHEET_LIST_MAX` | `sheetList` in `sheetLists.ts`; `listLimits.test.ts` walks every system's schema and fails on a list without a maximum. The editor turns each add button off at the limit and says why (`ListLimitNote`); a comma-separated box (`ListField`, the cantrips box) turns away the entry that would pass it |
+| A list on a D&D 5e, Pathfinder 2e, Call of Cthulhu or Shadowrun 6e sheet (inventory or possessions, attacks, strikes or weapons, spells, cantrips, conditions, hit dice, features, feats, languages, contacts and the rest): at most 500 entries, five times what the longest real list holds | `SHEET_LIST_MAX` | `sheetList` in `sheetLists.ts`; `listLimits.test.ts` walks every system's schema and fails on a list without a maximum. The editor turns each add button off at the limit and says why (`ListLimitNote`); a comma-separated box (`ListField`, the cantrips box) turns away the entry that would pass it. Object lists whose entry requires a non-empty name (or a hit-die `class`) use `sheetNamedList`, which drops a row whose required name is missing or whitespace-only before the count limit and `min(1)` run — a blank row may sit in the editor and is omitted on parse, not stored as a draft |
 | Entries in a list inside one row (the traits of one Pathfinder 2e strike, the firing modes of one Shadowrun weapon): at most 50, because it multiplies by the rows around it | `SHEET_ROW_TAGS_MAX` | `pathfinder2e.schema.ts` and `shadowrun6e.schema.ts`; the strike's traits box turns away the 51st |
 | Pathfinder 2e item bonus (saving throws, Perception, skills, lore skills, armor class, strikes, spell attack and spell DC): -30 to +30. The Core Rulebook's run from +4 down to -2 | `PF2E_ITEM_BONUS_MIN`, `PF2E_ITEM_BONUS_MAX` | `itemBonusSchema` in `pathfinder2e.schema.ts`; the editor's boxes clamp to the range when left |
 | D&D 5e and Pathfinder 2e spell slots of one rank or level: 0 to 20 for the total and for the used count (D&D 5e: and no more used than the total) | `SPELL_SLOTS_MAX` | `dnd5e.schema.ts` and `pathfinder2e.schema.ts`; the D&D editor clamps a stored sheet's slots when it opens and on save, and the Spells tab writes a larger stored total as a count; the Pathfinder editor's boxes stop at 20 |
@@ -75,8 +75,9 @@ A sheet is read by the whole table, its player included, so a field meant for th
 - **Reading.** Only the DM of the character's campaign (the Keeper) is sent it, on `GET /api/characters/:id`, every save's reply and every `character.updated` event (the character list, `GET /api/characters`, carries no sheets). The Keeper is always sent it, as an empty string when nothing is written, and the editor offers the box exactly when the field arrives; anyone else, the character's owner included, never gets the key.
 - **Writing.** Only the Keeper can change it. A save by anyone else (the owner, a script) keeps the stored value, whatever it sent for the field. A character created by anyone but the DM of the campaign it is created in is stored without it.
 - **Moving.** A character entering a campaign it was not in (assigned to another campaign, or brought in when its owner accepts an invitation) loses it, and so does a copy. The notes were the last campaign's Keeper's, and a player who moved their investigator into a campaign they run would otherwise be its Keeper and read them.
+- **Published character templates.** A published character template in the Instance library (`GET/POST/PUT /api/character-templates`) never includes the key: every publish, update, and template read strips it via `sheetWithoutKeeperNotes`. Presence on publish or update does not 400. Using a template (the client POSTs the GET sheet to `/api/characters`) creates a Character without the key; the sitting DM of that Character's Campaign can later write Keeper's Notes there and still receives them on Character GET; a Character owner who is not that DM still does not get the key.
 
-The notes stay inside the stored sheet, so an instance backup keeps them. A campaign export carries no character sheets at all, and a character's JSON export, made from `GET /api/characters/:id`, holds the notes only when the person exporting is the character's Keeper. To give another system such a field, add it to `KEEPER_ONLY_FIELD`; every route already goes through the helpers.
+On a Character the notes stay inside the stored sheet, so an instance backup keeps them. A campaign export carries no character sheets at all, and a character's JSON export, made from `GET /api/characters/:id`, holds the notes only when the person exporting is the character's Keeper. To give another system such a field, add it to `KEEPER_ONLY_FIELD`; every route already goes through the helpers.
 
 ### Flexible sheets
 
@@ -89,7 +90,7 @@ A character or template with no game system has a **Flexible** sheet: a list of 
 | `text` | `value` | up to 100,000 characters |
 | `table` | `columns`: `{ id, name, width? }`; `rows`: `{ id, cells }` | at most 50 columns and 1,000 rows; `cells` maps a column id to text of up to 1,000 characters |
 
-Every section also has an `id` (1 to 100 characters), a `title` (up to 200) and an optional `collapsed`; a sheet holds at most 100 sections. Keys beside `sections` are stored as sent, since an import or a program may keep its own there and the editor sends them back. A sheet stored before these checks still loads, and its next save is checked. On the page, `initializeFlexibleData` (`frontend/src/components/character-sheets/flexible/utils/section-helpers.ts`) puts each stored section into the shape its type reads before the view or the editor sees it: a section of an unknown type is left out, a missing list is empty, and a value that is not text is shown as text or as nothing, so an old malformed sheet opens and can be saved in the checked shape.
+Every section also has an `id` (1 to 100 characters), a `title` (up to 200) and an optional `collapsed`; a sheet holds at most 100 sections. Keys beside `sections` are stored as sent, since an import or a program may keep its own there and the editor sends them back. A sheet stored before these checks still loads, and its next save is checked. On the page, `initializeFlexibleData` (`frontend/src/components/character-sheets/flexible/utils/section-helpers.ts`) puts each stored section into the shape its type reads before the view or the editor sees it: a section of an unknown type is left out, a missing list is empty, and a value that is not text is shown as text or as nothing, so an old malformed sheet opens and can be saved in the checked shape. The Flexible editor turns each add control off at those same ceilings (`FLEXIBLE_MAX_SECTIONS`, `FLEXIBLE_MAX_FIELDS`, `FLEXIBLE_MAX_ROWS`, `FLEXIBLE_MAX_COLUMNS`) with `listIsFull` and `ListLimitNote`, and keeps remove controls available so a stored over-limit sheet can be edited down.
 
 ---
 
@@ -150,7 +151,10 @@ question, and getting it wrong invents numbers the designers never intended.
   — proficiency rank, item bonus, Dex cap, key attribute — so Armor Class, Class
   DC and initiative *are* derivable, and `rules/pathfinder2e.ts` derives them.
   The distinction is where the number comes from: a creature's is printed by
-  Paizo, a character's is built from their own sheet.
+  Paizo, a character's is built from their own sheet. Character derived values
+  are compatibility caches on disk and are projected at read (view, REST,
+  character.updated, initiative) when inputs exist; current resources are never
+  overwritten; out-of-bounds projections are clamped (Mythos 100 → sanity max 0).
 - **Call of Cthulhu 7e and Shadowrun 6e have no equivalent.** Percentile and
   dice-pool systems have neither ability modifiers nor a proficiency bonus, so
   there is nothing to derive and nothing sensible to offer from this data.
@@ -429,6 +433,7 @@ Create `backend/src/validators/game-systems/mySystem.schema.ts`. This is the **r
 // backend/src/validators/game-systems/mySystem.schema.ts
 import { z } from 'zod';
 import { themeColorSchema } from './sheetChrome';
+import { sheetNamedList } from './sheetLists';
 import {
   sheetCharacterNameSchema,
   sheetShortTextSchema as shortText,
@@ -457,16 +462,16 @@ export const mySystemCharacterDataSchema = z.object({
     temporary: z.number().int().min(0).optional(),
   }).optional(),
 
-  skills: z.array(mySystemSkillSchema).optional(),
+  skills: sheetNamedList(mySystemSkillSchema, 'name').optional(),
   notes: longText.optional(),
 });
 
 export type MySystemCharacterData = z.infer<typeof mySystemCharacterDataSchema>;
 ```
 
-> Every text field needs a length limit, from `sheetText.ts`: `sheetCharacterNameSchema` for the character's own name, `shortText` for a one-line box, `longText` for anything that holds paragraphs. `sheetTextLimits.test.ts` walks every system's schema and fails on a string without one, so add your schema to its list. Every list needs a count limit too: build it with `sheetList(entry)` from `sheetLists.ts`, which `listLimits.test.ts` checks the same way. In the editor, turn the list's add button off at the limit with `listIsFull` and `ListLimitNote` from `components/character-sheets/ListLimitNote.tsx`.
+> Every text field needs a length limit, from `sheetText.ts`: `sheetCharacterNameSchema` for the character's own name, `shortText` for a one-line box, `longText` for anything that holds paragraphs. `sheetTextLimits.test.ts` walks every system's schema and fails on a string without one, so add your schema to its list. Every list needs a count limit too: build it with `sheetList(entry)` from `sheetLists.ts`, or `sheetNamedList(entry, 'name')` when the entry requires a non-empty name (or a hit-die `class`) so a blank editor row is omitted on parse instead of refusing the save. `listLimits.test.ts` checks the same way. In the editor, turn the list's add button off at the limit with `listIsFull` and `ListLimitNote` from `components/character-sheets/ListLimitNote.tsx`, and point the disabled add control at the note with `aria-describedby`. Flexible add controls use those helpers with `FLEXIBLE_MAX_SECTIONS`, `FLEXIBLE_MAX_FIELDS`, `FLEXIBLE_MAX_ROWS` and `FLEXIBLE_MAX_COLUMNS`.
 >
-> Every system's schema starts with `themeColor: themeColorSchema` from `sheetChrome.ts`. The header colour the editor saves is not a game-system field, and the routes store the parsed sheet, so a key no schema declares does not survive a save.
+> Every system's schema starts with `themeColor: themeColorSchema` from `sheetChrome.ts`. The header colour the editor saves is not a game-system field, and the routes store the parsed sheet, so a key no schema declares does not survive a save. A custom `#RRGGBB` must meet WCAG 2.1 contrast of 4.5:1 against the **fixed light header text** (`#FFFFFF`); a pale pick is refused, not auto-adjusted. The sheet paints that hex as an opaque fill (no translucent gradient endpoint, and custom header fields sit on that fill rather than a 10% white wash). Custom-header palette buttons and field borders use current-color on a transparent surface (no white/20 wash); focused fields use a current-color ring. Preset names and empty string skip the check. An already-stored pale colour still loads on GET; the view and editor paint white or black name text, whichever has the higher contrast against that hex, so the sheet is readable, and the next save is refused until it is a passing hex or a preset. The stored colour is not rewritten.
 >
 > Match the permissiveness of the existing schemas. Look at `shadowrun6e.schema.ts` before finalizing — the shipped schemas are intentionally lenient so partial and in-progress sheets save cleanly.
 

@@ -95,6 +95,29 @@ describe('a D&D 5e sheet', () => {
     expect(res.status).toBe(400);
     expect(named(res.body)).toEqual(refusal('spellcasting.spells'));
   });
+
+  it('refuses to copy a sheet stored over the list limit, without truncating', async () => {
+    const id = await create();
+    const over = rows(SHEET_LIST_MAX + 1);
+    await prisma.character.update({
+      where: { id },
+      data: { data: { ...blank(), inventory: over } as Prisma.InputJsonValue },
+    });
+    const beforeCount = await prisma.character.count({ where: { userId } });
+
+    const copy = await agent.post(`/api/characters/${id}/copy`);
+    expect(copy.status).toBe(400);
+    expect(copy.body.error).toBe('Validation Error');
+    expect(named(copy.body)).toEqual(refusal('inventory'));
+
+    const put = await agent.put(`/api/characters/${id}`).send({ data: { ...blank(), inventory: over } });
+    expect(put.status).toBe(400);
+    expect(put.body.validationErrors).toEqual(copy.body.validationErrors);
+
+    const stored = await prisma.character.findUniqueOrThrow({ where: { id } });
+    expect((stored.data as { inventory: unknown[] }).inventory).toHaveLength(SHEET_LIST_MAX + 1);
+    expect(await prisma.character.count({ where: { userId } })).toBe(beforeCount);
+  });
 });
 
 describe('a Pathfinder 2e sheet', () => {

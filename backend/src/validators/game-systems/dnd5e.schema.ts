@@ -13,7 +13,7 @@ import {
 import { featureEntrySchema } from './featureEntry.schema';
 import { alliesAndOrganizationsSchema } from './alliesAndOrganizations.schema';
 import { SPELL_SLOTS_MAX } from './sheetLimits';
-import { sheetList } from './sheetLists';
+import { sheetList, sheetNamedList } from './sheetLists';
 import { MAX_BONUS_OVERRIDE, MIN_BONUS_OVERRIDE } from '../../utils/rules/dnd5e';
 
 /**
@@ -157,11 +157,8 @@ const hitPointsSchema = z.object({
  * Hit dice
  */
 const hitDiceSchema = z.object({
-  // TODO(sheets): the editor's "+ Add" buttons create hit-dice rows with an
-  // empty class, and attack, inventory and spell rows with an empty name, and
-  // this minimum and the three below refuse the whole save until each is filled
-  // in. Have the buttons seed a name, or let a new row save with the field
-  // empty.
+  // A row the editor adds with an empty class is omitted by sheetNamedList
+  // before this minimum runs, so it does not block the save.
   class: shortText.min(1),
   // The older field, packing count and die into one string ("5d10"). Optional
   // now that `die` and `maximum` carry those separately; still accepted so
@@ -309,7 +306,7 @@ const spellcastingSchema = z.object({
   spellAttackOtherBonus: manualBonusSchema.optional(),
   cantrips: sheetList(shortText).optional(),
   slots: spellSlotsSchema.optional(),
-  spells: sheetList(spellSchema).optional(),
+  spells: sheetNamedList(spellSchema, 'name').optional(),
 });
 
 /**
@@ -389,11 +386,11 @@ export const dnd5eCharacterDataSchema = z.object({
   // level 6 is death. It used to be a checkbox in the list above, which could
   // not tell those apart. 0 means none.
   exhaustionLevel: z.number().int().min(0).max(6).optional(),
-  hitDice: sheetList(hitDiceSchema).optional(),
+  hitDice: sheetNamedList(hitDiceSchema, 'class').optional(),
   deathSaves: deathSavesSchema.optional(),
-  attacks: sheetList(attackSchema).optional(),
+  attacks: sheetNamedList(attackSchema, 'name').optional(),
   currency: currencySchema.optional(),
-  inventory: sheetList(inventoryItemSchema).optional(),
+  inventory: sheetNamedList(inventoryItemSchema, 'name').optional(),
   // The four proficiency boxes as the player typed them: armour, weapons,
   // tools and languages, each free text.
   //
@@ -434,7 +431,7 @@ export const dnd5eCharacterDataSchema = z.object({
   // them, and a string is exactly what a feature with no description is. They
   // are read as a name with an empty description — never split up to invent one.
   // See utils/featureEntries.
-  featuresAndTraits: sheetList(featureEntrySchema).optional(),
+  featuresAndTraits: sheetNamedList(featureEntrySchema, 'name').optional(),
   spellcasting: spellcastingSchema.optional(),
   appearance: appearanceSchema.optional(),
   personality: personalitySchema.optional(),

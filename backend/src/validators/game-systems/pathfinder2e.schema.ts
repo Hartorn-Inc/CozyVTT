@@ -12,7 +12,7 @@ import {
 } from './sheetText';
 import { featureEntrySchema } from './featureEntry.schema';
 import { alliesAndOrganizationsSchema } from './alliesAndOrganizations.schema';
-import { sheetList } from './sheetLists';
+import { sheetList, sheetNamedList } from './sheetLists';
 import { PF2E_ITEM_BONUS_MAX, PF2E_ITEM_BONUS_MIN, SHEET_ROW_TAGS_MAX, SPELL_SLOTS_MAX } from './sheetLimits';
 
 /**
@@ -303,11 +303,11 @@ const featSchema = z.object({
  * All feats
  */
 const featsSchema = z.object({
-  ancestryAndHeritage: sheetList(featSchema),
-  class: sheetList(featSchema),
-  skill: sheetList(featSchema),
-  general: sheetList(featSchema),
-  bonus: sheetList(featSchema),
+  ancestryAndHeritage: sheetNamedList(featSchema, 'name'),
+  class: sheetNamedList(featSchema, 'name'),
+  skill: sheetNamedList(featSchema, 'name'),
+  general: sheetNamedList(featSchema, 'name'),
+  bonus: sheetNamedList(featSchema, 'name'),
 });
 
 /**
@@ -387,7 +387,7 @@ const focusSpellsSchema = z.object({
     total: z.number().int().min(0).max(3),
     current: z.number().int().min(0).max(3),
   }),
-  spells: sheetList(spellSchema),
+  spells: sheetNamedList(spellSchema, 'name'),
 });
 
 /**
@@ -413,12 +413,12 @@ const spellcastingSchema = z.object({
   keyAttribute: shortText.min(1).optional(),
   spellAttackBonus: spellAttackBonusSchema.optional(),
   spellDC: spellDCSchema.optional(),
-  cantrips: sheetList(cantripSchema).optional(),
+  cantrips: sheetNamedList(cantripSchema, 'name').optional(),
   slots: spellSlotsSchema.optional(),
-  spells: sheetList(spellSchema).optional(),
+  spells: sheetNamedList(spellSchema, 'name').optional(),
   focusSpells: focusSpellsSchema.optional(),
-  innateSpells: sheetList(innateSpellSchema).optional(),
-  rituals: sheetList(ritualSchema).optional(),
+  innateSpells: sheetNamedList(innateSpellSchema, 'name').optional(),
+  rituals: sheetNamedList(ritualSchema, 'name').optional(),
 });
 
 /**
@@ -477,7 +477,7 @@ export const pathfinder2eCharacterDataSchema = z.object({
   savingThrows: savingThrowsSchema.optional(),
   perception: perceptionSchema.optional(),
   skills: skillsSchema.optional(),
-  loreSkills: sheetList(loreSkillSchema).optional(),
+  loreSkills: sheetNamedList(loreSkillSchema, 'name').optional(),
   armorClass: armorClassSchema.optional(),
   classDC: classDCSchema.optional(),
   initiative: initiativeSchema.optional(),
@@ -486,16 +486,16 @@ export const pathfinder2eCharacterDataSchema = z.object({
   conditions: sheetList(shortText).optional(),
   deathAndDying: deathAndDyingSchema.optional(),
   proficiencies: proficienciesSchema.optional(),
-  strikes: sheetList(strikeSchema).optional(),
+  strikes: sheetNamedList(strikeSchema, 'name').optional(),
   currency: currencySchema.optional(),
-  inventory: sheetList(inventoryItemSchema).optional(),
+  inventory: sheetNamedList(inventoryItemSchema, 'name').optional(),
   bulk: bulkSchema.optional(),
   languages: sheetList(shortText).optional(),
   feats: featsSchema.optional(),
   // Named class features with optional rules text. Strings are still
   // accepted — that is what every sheet written so far holds, and what a
   // feature with no description is. See validators/game-systems/featureEntry.
-  classFeatures: sheetList(featureEntrySchema).optional(),
+  classFeatures: sheetNamedList(featureEntrySchema, 'name').optional(),
   spellcasting: spellcastingSchema.optional(),
   appearance: appearanceSchema.optional(),
   personality: personalitySchema.optional(),

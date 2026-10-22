@@ -214,4 +214,24 @@ describe('saving', () => {
       { name: 'Ability Score Improvement', description: '+1 DEX, +1 CON (level 8)' },
     ]);
   });
+
+  it('drops a blank feature from the save payload and keeps a named one', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(
+      <DnD5eCharacterEditor
+        character={characterWith({ featuresAndTraits: [{ name: 'Second Wind', description: '' }] })}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Features' }));
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Feature' }));
+    expect(featureNames()).toEqual(['Second Wind', '']);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    const saved = onSave.mock.calls[0][0] as Record<string, unknown>;
+    expect(saved.featuresAndTraits).toEqual([{ name: 'Second Wind', description: '' }]);
+  });
 });

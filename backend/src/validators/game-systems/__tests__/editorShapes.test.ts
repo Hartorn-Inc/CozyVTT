@@ -55,7 +55,7 @@ describe('what the D&D 5e editor writes', () => {
       // Protection, a Ring of Protection.
       skills: { ...skills, stealth: { ...skills.stealth, bonus: 1, otherBonus: 1 } },
       savingThrows: { ...saves, wisdom: { ...saves.wisdom, bonus: 3, otherBonus: 3 } },
-      themeColor: '#aabbcc',
+      themeColor: '#b91c1c',
       background: '',
       alignment: '',
       experiencePoints: 0,

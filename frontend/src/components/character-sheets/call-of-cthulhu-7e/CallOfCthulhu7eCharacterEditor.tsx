@@ -59,7 +59,19 @@ import { api } from '../../../services/api';
 import NumberField from '../../ui/NumberField';
 import ListField, { parseLineList, formatLineList } from '../../ui/ListField';
 import { LIMIT_NOTE_CLASS } from './limitNoteClass';
-import { toStoredHexColor, HEX_COLOUR_HINT } from '@/utils/themeColor';
+import {
+  toStoredHexColor,
+  customHeaderColourError,
+  customHeaderFill,
+  customHeaderTextClass,
+  customHeaderPlaceholderClass,
+  CUSTOM_HEADER_FIELD_SURFACE,
+  CUSTOM_HEADER_CONTROL_SURFACE,
+  CUSTOM_HEADER_FIELD_BORDER,
+  CUSTOM_HEADER_FIELD_FOCUS,
+  THEME_COLOR_ERROR_ID,
+} from '@/utils/themeColor';
+import { omitUnnamedRows } from '@/utils/sheetNamedRows';
 import { setCoC7eSkillField } from './skillEdits';
 import { cocDodgeBase, settleDodge } from './dodge';
 import {
@@ -159,6 +171,8 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const hexInputRef = useRef<HTMLInputElement>(null);
+  const [hexFocusNonce, setHexFocusNonce] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
   const data = character.data as CoC7eFormData;
@@ -408,10 +422,13 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
       // Typed while the save was in flight: the editor keeps it, unsaved.
       if (!stillDirty) onDone?.();
     };
-    // The server refuses a colour it cannot read, and the whole save with it.
-    if (isCustomColor && customColorHex !== '' && !toStoredHexColor(customColorHex)) {
-      setErrors((prev) => ({ ...prev, themeColor: HEX_COLOUR_HINT }));
+    // The server refuses a colour it cannot read, and a custom hex too pale
+    // for the fixed light header text, and the whole save with it.
+    const colourError = customHeaderColourError(isCustomColor, customColorHex);
+    if (colourError) {
+      setErrors((prev) => ({ ...prev, themeColor: colourError }));
       setShowColorPicker(true);
+      setHexFocusNonce((n) => n + 1);
       return;
     }
     setIsSaving(true);
@@ -420,6 +437,18 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
       const updatedData = {
         ...formData,
         themeColor: isCustomColor ? (toStoredHexColor(customColorHex) ?? '') : themeColor.name,
+        possessions: omitUnnamedRows(formData.possessions, 'name'),
+        contacts: omitUnnamedRows(formData.contacts, 'name'),
+        combat: formData.combat
+          ? { ...formData.combat, weapons: omitUnnamedRows(formData.combat.weapons, 'name') ?? [] }
+          : formData.combat,
+        skills: formData.skills
+          ? {
+              ...formData.skills,
+              languageOther: omitUnnamedRows(formData.skills.languageOther, 'language') ?? [],
+              science: omitUnnamedRows(formData.skills.science, 'specialization') ?? [],
+            }
+          : formData.skills,
       };
 
       // The derived copy of Dodge follows the skill, which is the one edited
@@ -485,10 +514,18 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
         if (hex) {
           setCustomColorHex(hex);
           setIsCustomColor(true);
+          const colourError = customHeaderColourError(true, hex);
+          if (colourError) setErrors((prev) => ({ ...prev, themeColor: colourError }));
         }
       }
     }
   }, [formData.themeColor]);
+
+  useEffect(() => {
+    if (!showColorPicker || hexFocusNonce === 0) return;
+    hexInputRef.current?.focus();
+    hexInputRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [showColorPicker, hexFocusNonce]);
 
   // Handle custom color change
   const handleCustomColorChange = (hex: string) => {
@@ -502,29 +539,47 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
     setThemeColor(color);
     setIsCustomColor(false);
     setShowColorPicker(false);
+    setErrors((prev) => ({ ...prev, themeColor: '' }));
   };
 
   // Render header with save/cancel buttons
   const renderHeader = () => {
     // Determine the current background style
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
+    // Passing custom hex keeps white name text. Stored pale hex uses dark
+    // text so the header is readable; save still refuses until it is a
+    // passing hex or a preset. Preset chrome stays parchment.
+    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-parchment';
+    const headerPlaceholder = isCustomColor ? customHeaderPlaceholderClass(customColorHex) : 'placeholder:text-parchment-light/50';
+    const headerFieldBg = isCustomColor ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10';
+    const headerFieldBorder = isCustomColor ? CUSTOM_HEADER_FIELD_BORDER : 'border-white/30';
+    const headerFieldFocus = isCustomColor ? CUSTOM_HEADER_FIELD_FOCUS : 'focus:ring-2 focus:ring-amber-500';
     const headerClasses = isCustomColor
-      ? 'text-parchment p-6 rounded-t-lg relative border-b-4 border-amber-600'
-      : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} text-parchment p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
+      ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
+      : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
 
     return (
       <div className={headerClasses} style={headerStyle}>
         {/* Color Picker Button */}
         <button
           onClick={() => setShowColorPicker(!showColorPicker)}
-          className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors"
+          className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`}
           title="Change theme color"
+          aria-invalid={Boolean(errors.themeColor)}
+          aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}
         >
           <Palette className="w-5 h-5" />
         </button>
+        {errors.themeColor && !showColorPicker && (
+          <p
+            id={THEME_COLOR_ERROR_ID}
+            role="alert"
+            className="absolute top-14 right-4 z-10 max-w-xs rounded-lg bg-white px-3 py-2 text-xs text-red-600 shadow-lg"
+          >
+            {errors.themeColor}
+          </p>
+        )}
 
         {/* Color Picker Dropdown */}
         {showColorPicker && (
@@ -567,6 +622,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
                 <div className="flex-1">
                   <input
                     type="text"
+                    ref={hexInputRef}
                     value={customColorHex}
                     onChange={(e) => {
                       const hex = e.target.value;
@@ -577,10 +633,16 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
                     }}
                     placeholder="#14532d"
                     aria-label="Custom colour hex code"
+                    aria-invalid={Boolean(errors.themeColor)}
+                    aria-describedby={errors.themeColor ? THEME_COLOR_ERROR_ID : undefined}
                     className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="text-xs text-stone-500 mt-1">Enter hex code (e.g., #14532d)</div>
-                  {errors.themeColor && <div className="text-xs text-red-600 mt-1">{errors.themeColor}</div>}
+                  {errors.themeColor && (
+                    <p id={THEME_COLOR_ERROR_ID} role="alert" className="text-xs text-red-600 mt-1">
+                      {errors.themeColor}
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -589,7 +651,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
                 <div className="flex items-center space-x-2 p-2 bg-stone-50 rounded">
                   <div
                     className="w-8 h-8 rounded"
-                    style={{ background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }}
+                    style={customHeaderFill(customColorHex)}
                   />
                   <span className="text-sm font-medium">Custom: {customColorHex}</span>
                 </div>
@@ -664,13 +726,13 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
             onChange={(e) => setFormData({ ...formData, investigatorName: e.target.value })}
             maxLength={SHEET_NAME_MAX}
             placeholder="Investigator Name"
-            className="text-3xl font-bold bg-white/10 border-2 border-white/30 rounded px-3 py-1 w-full text-parchment placeholder:text-parchment-light/50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            className={`text-3xl font-bold ${headerFieldBg} border-2 ${headerFieldBorder} rounded px-3 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
           />
 
           <div className="grid grid-cols-3 gap-3">
             {/* Read-only: the player name is whoever owns this investigator,
                 filled from their display name at creation. */}
-            <span className="text-sm px-2 py-1 text-parchment self-center">
+            <span className={`text-sm px-2 py-1 ${headerTextColor} self-center`}>
               {formData.playerName || '—'}
             </span>
             <input
@@ -678,14 +740,14 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.occupation || ''}
               onChange={(e) => setFormData({ ...formData, occupation: e.target.value })}
               placeholder="Occupation"
-              className="text-sm bg-white/10 border border-white/30 rounded px-2 py-1 text-parchment placeholder:text-parchment-light/50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
             <input
               type="text"
               value={formData.era || ''}
               onChange={(e) => setFormData({ ...formData, era: e.target.value })}
               placeholder="Era (e.g., 1920s)"
-              className="text-sm bg-white/10 border border-white/30 rounded px-2 py-1 text-parchment placeholder:text-parchment-light/50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
           </div>
 
@@ -694,7 +756,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.age ?? 0}
               onChange={(v: number) => setFormData({ ...formData, age: v })}
               placeholder="Age"
-              className="text-sm bg-white/10 border border-white/30 rounded px-2 py-1 text-parchment placeholder:text-parchment-light/50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
               fallback={0}
             />
             <input
@@ -702,14 +764,14 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.sex || ''}
               onChange={(e) => setFormData({ ...formData, sex: e.target.value })}
               placeholder="Sex"
-              className="text-sm bg-white/10 border border-white/30 rounded px-2 py-1 text-parchment placeholder:text-parchment-light/50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
             <input
               type="text"
               value={formData.residence || ''}
               onChange={(e) => setFormData({ ...formData, residence: e.target.value })}
               placeholder="Residence"
-              className="text-sm bg-white/10 border border-white/30 rounded px-2 py-1 col-span-2 text-parchment placeholder:text-parchment-light/50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 col-span-2 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
           </div>
 
@@ -718,7 +780,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
             value={formData.birthplace || ''}
             onChange={(e) => setFormData({ ...formData, birthplace: e.target.value })}
             placeholder="Birthplace"
-            className="text-sm bg-white/10 border border-white/30 rounded px-2 py-1 w-full text-parchment placeholder:text-parchment-light/50 focus:outline-none focus:ring-2 focus:ring-amber-500"
+            className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
           />
         </div>
       </div>

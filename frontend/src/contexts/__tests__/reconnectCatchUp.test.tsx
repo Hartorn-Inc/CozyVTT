@@ -119,6 +119,57 @@ it('refreshes the character list when a character is brought in', async () => {
   await waitFor(() => expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-new']));
 });
 
+// Taking a character out of the campaign is announced the same way. The
+// roster's character list decides which tokens offer View Character Sheet
+// and Roll..., so an unassign with campaignId must drop that character.
+it('refreshes the character list when a character is taken out', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    characters: [{ id: 'char-old', userId: 'me', name: 'Harvey' }],
+  });
+  render(
+    <MemoryRouter initialEntries={['/campaigns/c1']}>
+      <Routes>
+        <Route path="/campaigns/:id" element={<CampaignProvider><Probe /></CampaignProvider>} />
+      </Routes>
+    </MemoryRouter>
+  );
+  await waitFor(() => expect(latest?.campaign?.characters?.map((c) => c.id)).toEqual(['char-old']));
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    characters: [],
+  });
+  await act(async () => { onRoster!({ action: 'character.unassigned', campaignId: 'c1', characterId: 'char-old', userId: 'me' }); });
+  await waitFor(() => expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual([]));
+});
+
+// An unassign that omitted campaignId used to leave the roster stale: the
+// handler refuses to refetch without it, so the character stayed listed.
+it('leaves the character list unchanged when an unassign has no campaignId', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    characters: [{ id: 'char-old', userId: 'me', name: 'Harvey' }],
+  });
+  render(
+    <MemoryRouter initialEntries={['/campaigns/c1']}>
+      <Routes>
+        <Route path="/campaigns/:id" element={<CampaignProvider><Probe /></CampaignProvider>} />
+      </Routes>
+    </MemoryRouter>
+  );
+  await waitFor(() => expect(latest?.campaign?.characters?.map((c) => c.id)).toEqual(['char-old']));
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+
+  expect(getCampaign).toHaveBeenCalledTimes(1);
+  await act(async () => { onRoster!({ action: 'character.unassigned', characterId: 'char-old', userId: 'me' }); });
+  expect(getCampaign).toHaveBeenCalledTimes(1);
+  expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-old']);
+});
+
 
 // A catch-up still waiting on the server when the page moves to another
 // campaign wrote the first campaign's map, tokens and session over the new

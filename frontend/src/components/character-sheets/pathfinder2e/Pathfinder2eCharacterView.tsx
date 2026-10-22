@@ -31,6 +31,7 @@ import { withAdvantage, withDisadvantage } from '../../../utils/characterRolls';
 import { readFeatureEntries } from '../../../utils/featureEntries';
 import { pf2eInitiativeBonus } from '../../../utils/rules/initiative';
 import { pf2eArmorClass, pf2eClassDC } from '../../../utils/rules/pathfinder2e';
+import { projectCharacterData } from '../../../utils/sheetProjection';
 import type { Character } from '../../../types';
 import type {
   PF2eCharacterData,
@@ -39,6 +40,7 @@ import type {
   SheetChrome,
 } from '../../../types/game-systems';
 import { isHexColor } from '@/utils/styleAllowlists';
+import { customHeaderFill, customHeaderTextClass, CUSTOM_HEADER_CONTROL_SURFACE } from '@/utils/themeColor';
 
 interface Pathfinder2eCharacterViewProps {
   character: Character;
@@ -83,21 +85,12 @@ const COLOR_PRESETS = [
   { name: 'Slate', from: 'from-slate-700', to: 'to-slate-900', accent: 'slate-700', hex: '#334155' },
 ];
 
-const shouldUseWhiteText = (hexColor: string): boolean => {
-  const hex = hexColor.replace('#', '');
-  const r = parseInt(hex.substr(0, 2), 16);
-  const g = parseInt(hex.substr(2, 2), 16);
-  const b = parseInt(hex.substr(4, 2), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance < 0.5;
-};
-
 export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps> = ({
   character,
   onEdit,
   onRoll,
 }) => {
-  const data = character.data as PF2eCharacterData & SheetChrome;
+  const data = projectCharacterData(character.gameSystem, character.data) as PF2eCharacterData & SheetChrome;
   const [selectedColor, setSelectedColor] = useState(COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');
@@ -142,13 +135,17 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
 
   // Render character header with name, class, level, and basic info
   const renderHeader = () => {
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
-    const headerTextColor = isCustomColor
-      ? (shouldUseWhiteText(customColorHex) ? 'text-white' : 'text-stone-900')
-      : 'text-white';
+    // Passing custom hex keeps white name text. Stored pale hex uses dark
+    // text so the view is readable; the next save is still refused.
+    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-white';
+    const chipClass = isCustomColor
+      ? 'px-3 py-1 rounded-full text-sm border border-current'
+      : 'px-3 py-1 bg-white/10 rounded-full text-sm';
+    const chipStrongClass = isCustomColor
+      ? 'px-3 py-1 rounded-full text-sm font-medium border border-current'
+      : 'px-3 py-1 bg-white/20 rounded-full text-sm font-medium';
 
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative`
@@ -160,7 +157,9 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
         {onEdit && (
           <button
             onClick={onEdit}
-            className="absolute top-4 right-4 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors flex items-center space-x-2 font-medium"
+            className={`absolute top-4 right-4 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 font-medium ${
+              isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'
+            }`}
             title="Edit character"
           >
             <Edit className="w-4 h-4" />
@@ -182,31 +181,31 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
           {/* Character Info */}
           <div>
             <h2 className="text-3xl font-bold mb-2">{data.characterName}</h2>
-            <div className="flex items-center flex-wrap gap-2 opacity-90">
-              <span className="px-3 py-1 bg-white/20 rounded-full text-sm font-medium">
+            <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
+              <span className={chipStrongClass}>
                 Level {data.level} {data.class}
               </span>
-              <span className="px-3 py-1 bg-white/10 rounded-full text-sm">
+              <span className={chipClass}>
                 {data.ancestry} ({data.heritage})
               </span>
-              <span className="px-3 py-1 bg-white/10 rounded-full text-sm">
+              <span className={chipClass}>
                 {data.background}
               </span>
               {/* Deity and alignment: on the sheet and in the schema, but shown
                   nowhere in the app until now. */}
               {data.deity && (
-                <span className="px-3 py-1 bg-white/10 rounded-full text-sm">
+                <span className={chipClass}>
                   {data.deity}
                 </span>
               )}
               {data.alignment && (
-                <span className="px-3 py-1 bg-white/10 rounded-full text-sm">
+                <span className={chipClass}>
                   {data.alignment}
                 </span>
               )}
             </div>
             {data.playerName && (
-              <div className="mt-2 text-sm opacity-80">
+              <div className={`mt-2 text-sm ${isCustomColor ? '' : 'opacity-80'}`}>
                 Player: {data.playerName}
               </div>
             )}
@@ -214,11 +213,11 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
         </div>
 
         <div className="text-right">
-          <div className="text-xs opacity-70 mb-1">Experience Points</div>
+          <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
           <div className="text-2xl font-bold">{data.experiencePoints || 0}</div>
           {data.heroPoints !== undefined && (
             <div className="mt-2">
-              <div className="text-xs opacity-70 mb-1">Hero Points</div>
+              <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
               <div className="text-xl font-bold">
                 {data.heroPoints} / 3
               </div>

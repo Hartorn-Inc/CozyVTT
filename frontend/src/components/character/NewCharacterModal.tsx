@@ -7,10 +7,11 @@ import { useState, FormEvent, useEffect, useRef } from 'react';
 import { Loader2, User, Sparkles } from 'lucide-react';
 import { Modal } from '@/components/ui';
 import { Character, GameSystem, Campaign } from '@/types';
-import { GAME_SYSTEM_OPTIONS } from '@/constants/game-systems';
+import { GAME_SYSTEM_OPTIONS, getGameSystemLabel } from '@/constants/game-systems';
 import api from '@/services/api';
 import Button from '@/components/ui/Button';
 import { apiErrorMessage, apiValidationIssues, errorMessage } from '@/utils/errors';
+import { systemsCompatible } from '@/utils/gameSystemCompatibility';
 
 interface NewCharacterModalProps {
   isOpen: boolean;
@@ -98,6 +99,7 @@ export default function NewCharacterModal({
   const [loading, setLoading] = useState(false);
   const [loadingCampaigns, setLoadingCampaigns] = useState(false);
   const [error, setError] = useState('');
+  const [campaignResetStatus, setCampaignResetStatus] = useState('');
 
   // Fetch user's campaigns when modal opens
   useEffect(() => {
@@ -117,6 +119,27 @@ export default function NewCharacterModal({
       }
     }
   }, [selectedCampaignId, availableCampaigns]);
+
+  // A typed Game system that no longer matches the selected Campaign (for
+  // example D&D after the user had Pathfinder selected) falls back to Unassigned.
+  // Flexible must not clear a typed Campaign: that is the inherit path above.
+  useEffect(() => {
+    if (!gameSystem || !selectedCampaignId) {
+      return;
+    }
+    const selectedCampaign = availableCampaigns.find(
+      (c) => c.id === selectedCampaignId
+    );
+    if (
+      selectedCampaign &&
+      !systemsCompatible(gameSystem, selectedCampaign.gameSystem)
+    ) {
+      setSelectedCampaignId(null);
+      setCampaignResetStatus(
+        'Campaign selection reset to Unassigned because it is not compatible with the selected Game system.'
+      );
+    }
+  }, [gameSystem, selectedCampaignId, availableCampaigns]);
 
   const fetchUserCampaigns = async () => {
     setLoadingCampaigns(true);
@@ -236,6 +259,7 @@ export default function NewCharacterModal({
       setSelectedCampaignId(campaign?.id || null);
       setGameSystem(preselectedGameSystem || campaign?.gameSystem || null);
       setSelectedTemplate('blank');
+      setCampaignResetStatus('');
 
       // Notify parent
       onSuccess(response.character);
@@ -265,6 +289,7 @@ export default function NewCharacterModal({
       setSelectedCampaignId(campaign?.id || null);
       setGameSystem(preselectedGameSystem || campaign?.gameSystem || null);
       setSelectedTemplate('blank');
+      setCampaignResetStatus('');
       setError('');
       onClose();
     }
@@ -272,11 +297,36 @@ export default function NewCharacterModal({
 
   const isFormValid = name.trim().length >= 2;
 
+  // Flexible (unset) lists every membership Campaign so campaign-first inherit
+  // still works. A typed Game system offers only compatible Campaigns: same
+  // system, plus Campaigns with no game system. ADR 0015 / systemsCompatible.
+  const offeredCampaigns = gameSystem
+    ? availableCampaigns.filter((c) =>
+        systemsCompatible(gameSystem, c.gameSystem)
+      )
+    : availableCampaigns;
+
+  const campaignHintId = 'campaign-hint';
+  const campaignFilterHintId = 'campaign-filter-hint';
+  const campaignEmptyHintId = 'campaign-empty-hint';
+  const showEmptyFilterCopy =
+    Boolean(gameSystem) && !loadingCampaigns && offeredCampaigns.length === 0;
+  const campaignEmptyCopy = gameSystem
+    ? `None of your Campaigns use ${getGameSystemLabel(gameSystem)}. Leave Unassigned, or choose Flexible (No System) to see every Campaign.`
+    : '';
+  const campaignDescribedBy = [
+    campaignHintId,
+    gameSystem && !showEmptyFilterCopy ? campaignFilterHintId : '',
+    showEmptyFilterCopy ? campaignEmptyHintId : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
   return (
     <Modal open={isOpen} onClose={handleClose} title="Create New Character" icon={User} size="lg" closeDisabled={loading}>
       {/* Error Alert */}
       {error && (
-                <div className="mb-4 bg-spirit-red/10 border border-spirit-red/30 rounded-lg p-4 max-h-60 overflow-y-auto">
+                <div role="alert" className="mb-4 bg-spirit-red/10 border border-spirit-red/30 rounded-lg p-4 max-h-60 overflow-y-auto">
                   <p className="text-sm text-spirit-red font-medium whitespace-pre-wrap font-mono">
                     {error}
                   </p>
@@ -326,18 +376,43 @@ export default function NewCharacterModal({
                       }
                       disabled={loading || loadingCampaigns}
                       className="input-cozy w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                      aria-describedby={campaignDescribedBy}
                     >
                       <option value="">Unassigned Character</option>
-                      {availableCampaigns.map((c) => (
+                      {offeredCampaigns.map((c) => (
                         <option key={c.id} value={c.id}>
                           {c.name}
                           {c.gameSystem && ` (${c.gameSystem})`}
                         </option>
                       ))}
                     </select>
-                    <p className="mt-1 text-xs text-ink-muted">
+                    <p id={campaignHintId} className="mt-1 text-xs text-ink-muted">
                       Assign to a campaign now, or leave unassigned for later
                     </p>
+                    {gameSystem && !showEmptyFilterCopy && (
+                      <p
+                        id={campaignFilterHintId}
+                        role="status"
+                        className="mt-1 text-xs text-ink-muted"
+                      >
+                        Only compatible Campaigns are listed. Campaigns with no
+                        game system are included.
+                      </p>
+                    )}
+                    {showEmptyFilterCopy && (
+                      <p
+                        id={campaignEmptyHintId}
+                        role="status"
+                        className="mt-1 text-xs text-ink-muted"
+                      >
+                        {campaignEmptyCopy}
+                      </p>
+                    )}
+                    {campaignResetStatus && (
+                      <p role="status" className="sr-only">
+                        {campaignResetStatus}
+                      </p>
+                    )}
                   </div>
                 )}
 
