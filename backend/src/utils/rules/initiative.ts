@@ -27,6 +27,7 @@
  */
 
 import { abilityModifier, formatModifier } from './dnd5e';
+import { projectCharacterData } from '../sheetProjection';
 
 // ---------------------------------------------------------------------------
 // Result type
@@ -252,25 +253,26 @@ export function resolveCharacterInitiative(
   data: unknown
 ): InitiativeResolution | null {
   if (!data) return null;
+  const sheet = projectCharacterData(gameSystem, data);
 
   switch (gameSystem) {
     case 'DND_5E':
-      return d20With(dnd5eInitiativeModifier(data));
+      return d20With(dnd5eInitiativeModifier(sheet));
 
     case 'PATHFINDER_2E':
-      return d20With(pf2eInitiativeBonus(data));
+      return d20With(pf2eInitiativeBonus(sheet));
 
     case 'CALL_OF_CTHULHU_7E': {
       // Deliberately not a roll. Call of Cthulhu ranks combatants in DEX order,
       // highest first — there is no initiative die in the game. (A readied
       // firearm acts at DEX + 50, but that is a property of the round rather
       // than of the investigator, so the Keeper applies it by hand.)
-      const dex = cocDexterity(data);
+      const dex = cocDexterity(sheet);
       return { kind: 'fixed', value: dex, label: `DEX ${dex}` };
     }
 
     case 'SHADOWRUN_6E': {
-      const meat = rec(rec(rec(data)?.derivedStats)?.initiative)?.meatspace;
+      const meat = rec(rec(rec(sheet)?.derivedStats)?.initiative)?.meatspace;
       const pool = parseDicePool(rec(meat)?.dicePools);
       if (!pool) return null;
       const base = num(rec(meat)?.base);

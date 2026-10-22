@@ -72,10 +72,12 @@ describe('move rate', () => {
 });
 
 describe('maximum sanity', () => {
-  it('is 99 less the Cthulhu Mythos skill', () => {
+  it('is 99 less the Cthulhu Mythos skill, clamped to [0, 99]', () => {
     // Harvey Walters, with 8% Cthulhu Mythos.
     expect(cocMaxSanity(8)).toBe(91);
     expect(cocMaxSanity(0)).toBe(99);
+    expect(cocMaxSanity(99)).toBe(0);
+    expect(cocMaxSanity(100)).toBe(0);
   });
 });
 

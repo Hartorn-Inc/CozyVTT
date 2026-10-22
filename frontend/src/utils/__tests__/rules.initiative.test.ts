@@ -188,6 +188,20 @@ describe('Pathfinder 2e initiative', () => {
     const noChoice = { perception: { bonus: 6 }, skills: {} };
     expect(pf2eInitiativeBonus(noChoice)).toBe(6);
   });
+
+  it('projects a stale Perception bonus before resolving', () => {
+    const stale = {
+      level: 1,
+      attributes: { wisdom: { score: 18, modifier: 4 } },
+      perception: { proficiencyRank: 'expert', itemBonus: 0, bonus: 0, senses: [] },
+      initiative: { usedStat: 'perception', bonus: 0 },
+    };
+    expect(resolveCharacterInitiative('PATHFINDER_2E', stale)).toEqual({
+      kind: 'roll',
+      expression: '1d20+9',
+      label: '1d20+9',
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------

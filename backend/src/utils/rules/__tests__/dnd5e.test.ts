@@ -289,6 +289,16 @@ describe('parity with the frontend copy', () => {
 
     expect(backendCopy).toBe(frontendCopy);
   });
+
+  it('rules/callOfCthulhu7e.ts is byte-for-byte identical to the frontend copy', () => {
+    const backendCopy = readFileSync(path.resolve(__dirname, '../callOfCthulhu7e.ts'), 'utf8');
+    const frontendCopy = readFileSync(
+      path.resolve(__dirname, '../../../../../frontend/src/utils/rules/callOfCthulhu7e.ts'),
+      'utf8'
+    );
+
+    expect(backendCopy).toBe(frontendCopy);
+  });
 });
 
 describe('skill and saving throw totals on a character sheet', () => {
