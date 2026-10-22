@@ -3,6 +3,7 @@ import { prisma } from '../config/database';
 import { rememberMeMaxAge } from '../config/sessionDurations';
 import { LOGIN_SESSION_SID_LOCK, LOGIN_SESSION_USER_LOCK } from '../config/loginSessionRevocationGuard';
 import logger from '../utils/logger';
+import { isSerializationFailure } from '../utils/serializable';
 import { blockLoginSessions, unblockLoginSessions } from './revokedLoginSessions';
 
 /**
@@ -20,8 +21,11 @@ import { blockLoginSessions, unblockLoginSessions } from './revokedLoginSessions
  * and does not describe the database.
  */
 export class LoginSessionStoreUnavailable extends Error {
-  constructor() {
-    super('The login session could not be confirmed. Try again in a moment.');
+  constructor(cause?: unknown) {
+    super(
+      'The login session could not be confirmed. Try again in a moment.',
+      cause !== undefined ? { cause } : undefined,
+    );
     this.name = 'LoginSessionStoreUnavailable';
   }
 }
@@ -192,8 +196,13 @@ export async function destroyUserLoginSessions(
   } catch (err) {
     unblockLoginSessions(sids);
     if (err instanceof LoginSessionStoreUnavailable) throw err;
-    logger.error('Login session revocation failed', { err });
-    throw new LoginSessionStoreUnavailable();
+    // Always wrap so credential routes stay 503. SERIALIZABLE last-admin
+    // retries still run: isSerializationFailure walks this error's cause.
+    // A 40001/40P01 is that retry, not a store outage.
+    if (!isSerializationFailure(err)) {
+      logger.error('Login session revocation failed', { err });
+    }
+    throw new LoginSessionStoreUnavailable(err);
   }
 }
 

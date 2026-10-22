@@ -43,15 +43,23 @@ function isDriverConflict(error: unknown): boolean {
  * Whether PostgreSQL refused a transaction for overlapping another, so it may
  * be run again. The refusal arrives in one of three forms: P2034 from a
  * query Prisma built; P2010 from a raw query, carrying the driver's error;
- * and, when it comes at COMMIT, the driver's error itself.
+ * and, when it comes at COMMIT, the driver's error itself. A
+ * LoginSessionStoreUnavailable that wraps one of those is the same refusal.
  */
-export function isSerializationFailure(error: unknown): boolean {
+export function isSerializationFailure(error: unknown, depth = 0): boolean {
   if (error instanceof Prisma.PrismaClientKnownRequestError) {
     // P2034: "Transaction failed due to a write conflict or a deadlock".
     if (error.code === 'P2034') return true;
-    return error.code === 'P2010' && isRecord(error.meta) && isDriverConflict(error.meta.driverAdapterError);
+    if (error.code === 'P2010' && isRecord(error.meta) && isDriverConflict(error.meta.driverAdapterError)) {
+      return true;
+    }
+  } else if (isDriverConflict(error)) {
+    return true;
   }
-  return isDriverConflict(error);
+  if (depth < 5 && typeof error === 'object' && error !== null && 'cause' in error) {
+    return isSerializationFailure(error.cause, depth + 1);
+  }
+  return false;
 }
 
 export async function inSerializableTransaction<T>(work: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> {

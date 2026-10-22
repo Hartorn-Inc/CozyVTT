@@ -10,7 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Security
 
-- **Login-session revocation is fail-closed on HTTP.** After a password change, MFA change, administrator password reset, administrator MFA reset, or platform-role change, the next HTTP request with a revoked cookie is 401. Self-service password and MFA keep the initiating login session and revoke the others; an administrator reset kills every login session for that user. If the login-session store cannot be confirmed, the mutation answers 503 `{ error: 'Service Unavailable', message }` and does not persist. The backend starts listening only after the revocation guard is installed. A concurrent session-store write cannot recreate a revoked cookie. Expired `revoked_login_session` rows are purged when login sessions are revoked.
+- **Login-session revocation is fail-closed on HTTP.** After a password change, MFA change, administrator password reset, administrator MFA reset, or platform-role change, the next HTTP request with a revoked cookie is 401. Self-service password and MFA keep the initiating login session and revoke the others; an administrator reset kills every login session for that user. If the login-session store cannot be confirmed, the mutation answers 503 `{ error: 'Service Unavailable', message }` and does not persist. The backend starts listening only after the revocation guard is installed. A concurrent session-store write cannot recreate a revoked cookie. Expired `revoked_login_session` rows are purged when login sessions are revoked. Two administrators deleting their own accounts at once still leave one administrator (409), including when PostgreSQL refuses the overlapping revoke as 40001.
 
 ### Fixed
 
