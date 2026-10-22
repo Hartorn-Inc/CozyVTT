@@ -47,8 +47,8 @@ export type SheetHeaderMeta =
  * Calculate luminance of a hex color to determine if text should be white or black.
  * Returns true if text should be white (dark background), false if text should be black (light background).
  *
- * Used by gradient editors (D&D 5e, Pathfinder 2e). Do not apply it to CoC
- * parchment chrome or to D&D/PF2e views, which hardcode white on presets.
+ * Used by gradient editors and views (D&D 5e, Pathfinder 2e). Do not apply it
+ * to vintage CoC presets, which always use white text.
  */
 export const shouldUseWhiteText = (hexColor: string): boolean => {
   // Remove # if present
@@ -77,7 +77,7 @@ export function headerPaint(args: {
   customColorHex: string;
   presetHex: string;
 }): HeaderPaint {
-  const { variant, mode, isCustomColor, customColorHex, presetHex } = args;
+  const { variant, isCustomColor, customColorHex, presetHex } = args;
   if (isCustomColor) {
     return {
       text: customHeaderTextClass(customColorHex),
@@ -89,8 +89,8 @@ export function headerPaint(args: {
   }
   if (variant === 'vintage') {
     return {
-      text: 'text-parchment',
-      placeholder: 'placeholder:text-parchment-light/50',
+      text: 'text-white',
+      placeholder: 'placeholder:text-white',
       fieldBg: 'bg-white/10',
       fieldBorder: 'border-white/30',
       fieldFocus: 'focus:ring-2 focus:ring-amber-500',
@@ -98,14 +98,9 @@ export function headerPaint(args: {
   }
   // Passing custom hex keeps white name text. Stored pale hex uses dark
   // text so the header is readable; save still refuses until it is a
-  // passing hex or a preset. Presets still pick by luminance in editors;
-  // D&D/PF2e views hardcode white on presets.
-  const text =
-    mode === 'view'
-      ? 'text-white'
-      : shouldUseWhiteText(presetHex)
-        ? 'text-white'
-        : 'text-stone-900';
+  // passing hex or a preset. Gradient presets pick by luminance in both
+  // editors and views. Vintage CoC presets always use white text.
+  const text = shouldUseWhiteText(presetHex) ? 'text-white' : 'text-stone-900';
   return {
     text,
     placeholder: 'placeholder-current/50',
@@ -137,6 +132,8 @@ export interface SheetHeaderName {
   onChange?: (value: string) => void;
   placeholder: string;
   invalid?: boolean;
+  /** Shown under the name input as role=alert and wired with aria-describedby. */
+  error?: string;
   /** Extra classes on the view heading (`mb-1`, CoC `mb-2 drop-shadow-lg`). */
   headingClassName?: string;
   /** View-only fallback when value is empty. Omit to leave the heading empty. */
@@ -213,8 +210,12 @@ export const SheetHeader: React.FC<SheetHeaderProps> = ({
   });
   const [showColorPicker, setShowColorPicker] = useState(false);
   const hexInputRef = useRef<HTMLInputElement>(null);
+  const nameInputRef = useRef<HTMLInputElement>(null);
+  const prevColorPickerFocusKey = useRef(colorPickerFocusKey);
   const [hexFocusNonce, setHexFocusNonce] = useState(0);
   const tokenInputId = `token-upload-${useId()}`;
+  const tokenErrorId = `${tokenInputId}-error`;
+  const nameErrorId = useId();
 
   useEffect(() => {
     if (colorPickerFocusKey === 0) return;
@@ -227,6 +228,14 @@ export const SheetHeader: React.FC<SheetHeaderProps> = ({
     hexInputRef.current?.focus();
     hexInputRef.current?.scrollIntoView?.({ block: 'nearest' });
   }, [showColorPicker, hexFocusNonce]);
+
+  useEffect(() => {
+    const pickerOpenedThisPass =
+      colorPickerFocusKey !== prevColorPickerFocusKey.current && colorPickerFocusKey !== 0;
+    prevColorPickerFocusKey.current = colorPickerFocusKey;
+    if (!name.error || pickerOpenedThisPass) return;
+    nameInputRef.current?.focus();
+  }, [name.error, colorPickerFocusKey]);
 
   const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
   const vintageBorder = isCustomColor
@@ -256,13 +265,17 @@ export const SheetHeader: React.FC<SheetHeaderProps> = ({
       src={token.preview}
       alt={token.alt}
       className={`${token.sizeClass} rounded-full ${token.circleClass} object-cover${
-        token.hover === 'fade' ? ' group-hover:opacity-75 transition-opacity' : ''
+        token.hover === 'fade'
+          ? ' group-hover:opacity-75 group-focus-within:opacity-75 transition-opacity'
+          : ''
       }`}
     />
   ) : (
     <div
       className={`${token.sizeClass} rounded-full ${token.circleClass} ${token.emptyClass} flex items-center justify-center${
-        token.hover === 'fade' ? ' group-hover:bg-sepia-800 transition-colors' : ''
+        token.hover === 'fade'
+          ? ' group-hover:bg-sepia-800 group-focus-within:bg-sepia-800 transition-colors'
+          : ''
       }`}
     >
       {token.placeholder}
@@ -270,55 +283,59 @@ export const SheetHeader: React.FC<SheetHeaderProps> = ({
   );
 
   const tokenChrome = !showToken ? null : mode === 'edit' && token.onFileChange ? (
-    <div className={`flex-shrink-0 relative${token.hover === 'overlay' ? ' group' : ''}`}>
-      {token.hover === 'fade' ? (
-        <label htmlFor={tokenInputId} className="cursor-pointer group">
-          {tokenPicture}
-        </label>
-      ) : (
-        <label htmlFor={tokenInputId} className="cursor-pointer block relative">
-          {tokenPicture}
-          <div className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-            <Upload className="w-12 h-12 text-white" />
-          </div>
-        </label>
-      )}
+    <div className="flex-shrink-0 relative group">
+      <label htmlFor={tokenInputId} className="cursor-pointer block relative">
+        {tokenPicture}
+        <div className="absolute inset-0 rounded-full bg-black/50 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity flex items-center justify-center">
+          <Upload className="w-12 h-12 text-white" />
+        </div>
+      </label>
       <input
         type="file"
         id={tokenInputId}
         accept="image/*"
         onChange={token.onFileChange}
-        className="hidden"
+        className="sr-only"
+        aria-label="Upload token image"
+        aria-describedby={token.error ? tokenErrorId : undefined}
       />
       {token.error && (
-        <div className="absolute top-full mt-1 text-xs text-red-200 whitespace-nowrap">
+        <div id={tokenErrorId} role="alert" className={`mt-1 text-xs ${paint.text}`}>
           {token.error}
         </div>
       )}
       {token.personalHint && (
-        <div className="absolute top-full mt-1 text-xs text-amber-200 whitespace-nowrap">
-          Saves as personal token
-        </div>
+        <div className={`mt-1 text-xs ${paint.text}`}>Saves as personal token</div>
       )}
     </div>
   ) : (
     <div className="flex-shrink-0">{tokenPicture}</div>
   );
 
+  const nameInvalid = Boolean(name.invalid || name.error);
   const nameControl =
     mode === 'edit' ? (
-      <input
-        type="text"
-        value={name.value}
-        onChange={(e) => name.onChange?.(e.target.value)}
-        maxLength={SHEET_NAME_MAX}
-        placeholder={name.placeholder}
-        className={`w-full text-3xl font-bold ${paint.fieldBg} border-2 ${
-          name.invalid ? 'border-red-300' : paint.fieldBorder
-        } rounded px-3 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
-        aria-label={name.placeholder}
-        aria-invalid={Boolean(name.invalid)}
-      />
+      <>
+        <input
+          ref={nameInputRef}
+          type="text"
+          value={name.value}
+          onChange={(e) => name.onChange?.(e.target.value)}
+          maxLength={SHEET_NAME_MAX}
+          placeholder={name.placeholder}
+          className={`w-full text-3xl font-bold ${paint.fieldBg} border-2 ${
+            nameInvalid ? 'border-red-300' : paint.fieldBorder
+          } rounded px-3 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
+          aria-label={name.placeholder}
+          aria-invalid={nameInvalid}
+          aria-describedby={name.error ? nameErrorId : undefined}
+        />
+        {name.error && (
+          <p id={nameErrorId} role="alert" className={`mt-1 text-sm ${paint.text}`}>
+            {name.error}
+          </p>
+        )}
+      </>
     ) : (
       <h2 className={`text-3xl font-bold ${paint.text} ${name.headingClassName ?? ''}`.trim()}>
         {name.value || name.emptyDisplay || ''}
@@ -330,7 +347,7 @@ export const SheetHeader: React.FC<SheetHeaderProps> = ({
     : 'bg-white/20 hover:bg-white/30';
   const editSurface =
     variant === 'vintage'
-      ? 'bg-amber-600/80 hover:bg-amber-600 text-white shadow-lg'
+      ? 'bg-amber-900 hover:bg-amber-950 text-white border border-current shadow-lg'
       : isCustomColor
         ? CUSTOM_HEADER_CONTROL_SURFACE
         : 'bg-white/20 hover:bg-white/30';
@@ -344,7 +361,7 @@ export const SheetHeader: React.FC<SheetHeaderProps> = ({
               type="button"
               onClick={onSave}
               disabled={isSaving}
-              className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg disabled:opacity-50"
+              className="px-4 py-2 bg-green-900 hover:bg-green-950 text-white border border-current rounded-lg transition-colors flex items-center space-x-2 font-medium shadow-lg disabled:opacity-50"
             >
               <Save className="w-4 h-4" />
               <span>{isSaving ? 'Saving...' : 'Save'}</span>

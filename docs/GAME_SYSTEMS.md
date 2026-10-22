@@ -656,7 +656,7 @@ frontend/src/components/character-sheets/mySystem/
   components/                   ← reusable sub-sections (stat block, skills, etc.)
 ```
 
-**Shared header chrome.** D&D 5e, Pathfinder 2e, and Call of Cthulhu 7e views and editors use `SheetHeader` in `frontend/src/components/character-sheets/SheetHeader.tsx` for presets, custom hex, the 4.5:1 contrast rule, name, token picture, and Save/Cancel/Edit. Pass that system's preset list (keep it in `{system}/colorPresets.ts`, not a shared rainbow), a `gradient` or `vintage` variant, Tailwind token size classes, and an unconstrained `meta` slot for system fields. Flexible stays off this primitive. Colour changes belong in the editor; views paint the stored colour only.
+**Shared header chrome.** D&D 5e, Pathfinder 2e, and Call of Cthulhu 7e views and editors use `SheetHeader` in `frontend/src/components/character-sheets/SheetHeader.tsx` for presets, custom hex, the 4.5:1 contrast rule, name, token picture, and Save/Cancel/Edit. Pass that system's preset list (keep it in `{system}/colorPresets.ts`, not a shared rainbow), a `gradient` or `vintage` variant, Tailwind token size classes, and an unconstrained `meta` slot for system fields. Flexible stays off this primitive. Colour changes belong in the editor; views paint the stored colour only. Vintage (CoC) presets use fixed white name text, not parchment. Gradient presets pick white or stone-900 by luminance in both the editor and the view.
 
 The `…CharacterSheet.tsx` mode-switcher looks like this (copied from D&D 5e):
 

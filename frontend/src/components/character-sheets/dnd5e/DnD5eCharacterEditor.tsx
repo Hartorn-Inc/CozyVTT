@@ -6,7 +6,7 @@ import { hitDieExpression, hitDiceMaximum } from '@/utils/hitDice';
  * color customization, and token upload functionality.
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useId } from 'react';
 import {
   Swords,
   Package,
@@ -235,6 +235,9 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   // Set when the last change to the cantrips box was turned away for adding one entry too many.
   const [cantripsTurnedAway, setCantripsTurnedAway] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const levelFieldId = useId();
+  const levelErrorId = useId();
+  const xpFieldId = useId();
   const { data: serverConfig } = useServerConfigQuery();
 
   // Type assertion for D&D 5e character data
@@ -795,10 +798,16 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
     const colourError = customHeaderColourError(isCustomColor, customColorHex);
     if (colourError) {
       newErrors.themeColor = colourError;
-      setColorPickerFocusKey((n) => n + 1);
     }
 
     setErrors(newErrors);
+    // Reading order: name, then level, then colour. Only open the picker
+    // when colour is the first invalid field.
+    if (!newErrors.characterName && newErrors.level && !colourError) {
+      document.getElementById(levelFieldId)?.focus();
+    } else if (!newErrors.characterName && !newErrors.level && colourError) {
+      setColorPickerFocusKey((n) => n + 1);
+    }
     return Object.keys(newErrors).length === 0;
   };
 
@@ -1023,6 +1032,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
         onChange: (value) => updateField('characterName', value),
         placeholder: 'Character Name',
         invalid: Boolean(errors.characterName),
+        error: errors.characterName,
       }}
       extraNameColumnClassName="space-y-2"
       onSave={handleSubmit}
@@ -1037,30 +1047,41 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
           {/* Player name is who owns this character, not free text — it is
               filled from their display name when the character is created
               and is shown rather than edited. */}
-          <div className={`flex items-center space-x-3 ${isCustomColor ? '' : 'opacity-80'}`}>
-            <span className={`text-sm ${paint.text}`}>
+          <div className={`flex items-center space-x-3 ${paint.text}`}>
+            <span className="text-sm">
               {formData.playerName || '—'}
             </span>
           </div>
-          <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-80'}`}>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs">Level</span>
-              <NumberField
-                min={1}
-                max={20}
-                value={formData.level}
-                onChange={(v: number) => updateField('level', v)}
-                className={`w-16 ${paint.fieldBg} border ${
-                  errors.level ? 'border-red-300' : paint.fieldBorder
-                } rounded px-2 py-0.5 text-sm ${paint.text} focus:outline-none ${paint.fieldFocus}`}
-                fallback={1}
-              />
+          <div className={`flex items-center flex-wrap gap-2 ${paint.text}`}>
+            <div>
+              <div className="flex items-center space-x-2">
+                <label htmlFor={levelFieldId} className="text-xs">Level</label>
+                <NumberField
+                  id={levelFieldId}
+                  min={1}
+                  max={20}
+                  value={formData.level}
+                  onChange={(v: number) => updateField('level', v)}
+                  className={`w-16 ${paint.fieldBg} border ${
+                    errors.level ? 'border-red-300' : paint.fieldBorder
+                  } rounded px-2 py-0.5 text-sm ${paint.text} focus:outline-none ${paint.fieldFocus}`}
+                  fallback={1}
+                  aria-invalid={Boolean(errors.level)}
+                  aria-describedby={errors.level ? levelErrorId : undefined}
+                />
+              </div>
+              {errors.level && (
+                <p id={levelErrorId} role="alert" className={`text-xs ${paint.text}`}>
+                  {errors.level}
+                </p>
+              )}
             </div>
             <input
               type="text"
               value={formData.race || ''}
               onChange={(e) => updateField('race', e.target.value)}
               placeholder="Race"
+              aria-label="Race"
               className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
             <input
@@ -1068,15 +1089,17 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
               value={formData.class || ''}
               onChange={(e) => updateField('class', e.target.value)}
               placeholder="Class"
+              aria-label="Class"
               className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
           </div>
         </>
       )}
       trailing={(paint) => (
-        <div className="text-right space-y-1">
-          <div className={`text-xs ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
+        <div className={`text-right space-y-1 ${paint.text}`}>
+          <label htmlFor={xpFieldId} className="block text-xs">Experience Points</label>
           <NumberField
+            id={xpFieldId}
             min={0}
             value={formData.experiencePoints}
             onChange={(v: number) => updateField('experiencePoints', v)}

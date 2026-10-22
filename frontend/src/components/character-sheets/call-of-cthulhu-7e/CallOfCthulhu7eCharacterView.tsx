@@ -114,33 +114,29 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
       }}
       onEdit={onEdit}
       editTitle="Edit investigator"
-      meta={(paint) => {
-        const muted = isCustomColor ? paint.text : 'text-parchment-light';
-        return (
-          <div className={`space-y-1 ${muted}`}>
-            <div className="flex items-center space-x-4">
-              <span className="font-medium">{data.occupation || 'No Occupation'}</span>
-              {data.era && <span>• {data.era}</span>}
-            </div>
-            {data.residence && (
-              <div className="text-sm">
-                <span className={muted}>Residence:</span> {data.residence}
-              </div>
-            )}
-            <div className="flex items-center space-x-4 text-sm">
-              {data.age && <span>Age {data.age}</span>}
-              {data.sex && <span>• {data.sex}</span>}
-              {data.birthplace && <span>• Born in {data.birthplace}</span>}
-            </div>
+      meta={(paint) => (
+        <div className={`space-y-1 ${paint.text}`}>
+          <div className="flex items-center space-x-4">
+            <span className="font-medium">{data.occupation || 'No Occupation'}</span>
+            {data.era && <span>• {data.era}</span>}
           </div>
-        );
-      }}
+          {data.residence && (
+            <div className="text-sm">
+              <span className={paint.text}>Residence:</span> {data.residence}
+            </div>
+          )}
+          <div className="flex items-center space-x-4 text-sm">
+            {data.age && <span>Age {data.age}</span>}
+            {data.sex && <span>• {data.sex}</span>}
+            {data.birthplace && <span>• Born in {data.birthplace}</span>}
+          </div>
+        </div>
+      )}
       trailing={(paint) => {
         if (!data.playerName) return null;
-        const muted = isCustomColor ? paint.text : 'text-parchment-light';
         return (
           <div className="text-right">
-            <div className={`text-xs uppercase tracking-wide ${muted}`}>Player</div>
+            <div className={`text-xs uppercase tracking-wide ${paint.text}`}>Player</div>
             <div className={`text-lg font-semibold ${paint.text}`}>{data.playerName}</div>
           </div>
         );

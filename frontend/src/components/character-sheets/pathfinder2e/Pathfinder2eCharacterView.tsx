@@ -157,9 +157,9 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
           emptyDisplay: 'Unnamed Character',
         }}
         onEdit={onEdit}
-        meta={
+        meta={(paint) => (
           <>
-            <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
+            <div className={`flex items-center flex-wrap gap-2 ${paint.text}`}>
               <span className={chipStrongClass}>
                 Level {data.level} {data.class}
               </span>
@@ -183,26 +183,26 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
               )}
             </div>
             {data.playerName && (
-              <div className={`mt-2 text-sm ${isCustomColor ? '' : 'opacity-80'}`}>
+              <div className={`mt-2 text-sm ${paint.text}`}>
                 Player: {data.playerName}
               </div>
             )}
           </>
-        }
-        trailing={
-          <div className="text-right">
-            <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
+        )}
+        trailing={(paint) => (
+          <div className={`text-right ${paint.text}`}>
+            <div className="text-xs mb-1">Experience Points</div>
             <div className="text-2xl font-bold">{data.experiencePoints || 0}</div>
             {data.heroPoints !== undefined && (
               <div className="mt-2">
-                <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
+                <div className="text-xs mb-1">Hero Points</div>
                 <div className="text-xl font-bold">
                   {data.heroPoints} / 3
                 </div>
               </div>
             )}
           </div>
-        }
+        )}
       />
     );
   };

@@ -10,7 +10,8 @@
 
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DnD5eCharacterEditor } from '../dnd5e/DnD5eCharacterEditor';
 import { DnD5eCharacterView } from '../dnd5e/DnD5eCharacterView';
 import { Pathfinder2eCharacterEditor } from '../pathfinder2e/Pathfinder2eCharacterEditor';
@@ -279,5 +280,174 @@ describe('view Edit control', () => {
     );
     expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
     expect(screen.queryByTitle('Change theme color')).toBeNull();
+  });
+});
+
+const NAME_EDITORS = [
+  { system: 'D&D 5e', Editor: DnD5eCharacterEditor, character: dndCharacter },
+  { system: 'Pathfinder 2e', Editor: Pathfinder2eCharacterEditor, character: pf2eCharacter },
+] as const;
+
+function headerRoot(from: HTMLElement): HTMLElement | null {
+  return from.closest('.rounded-t-lg');
+}
+
+function injectParchmentProbe(): HTMLStyleElement {
+  const style = document.createElement('style');
+  style.textContent = `
+    :root { --color-bg-surface: 32 32 38; }
+    .text-parchment { color: rgb(var(--color-bg-surface)); }
+    .text-white { color: rgb(255, 255, 255); }
+  `;
+  document.head.appendChild(style);
+  return style;
+}
+
+describe('sheet header contrast and labels', () => {
+  it('paints CoC Dark Forest editor name white, not parchment', () => {
+    const style = injectParchmentProbe();
+    render(
+      <CallOfCthulhu7eCharacterEditor
+        character={cocCharacter()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const name = nameBox();
+    expect(name.className).toContain('text-white');
+    expect(name.className).not.toMatch(/parchment/);
+    const header = headerRoot(name);
+    expect(header?.className).toContain('text-white');
+    expect(header?.className).not.toMatch(/parchment/);
+    expect(getComputedStyle(name).color).not.toBe('rgb(32, 32, 38)');
+    style.remove();
+  });
+
+  it('paints CoC Dark Forest view name white, not parchment', () => {
+    const style = injectParchmentProbe();
+    render(<CallOfCthulhu7eCharacterView character={cocCharacter()} />);
+    const heading = screen.getByRole('heading', { name: 'Blank Investigator' });
+    expect(heading.className).toContain('text-white');
+    expect(heading.className).not.toMatch(/parchment/);
+    const header = headerRoot(heading);
+    expect(header?.className).toContain('text-white');
+    expect(header?.className).not.toMatch(/parchment/);
+    expect(getComputedStyle(heading).color).not.toBe('rgb(32, 32, 38)');
+    style.remove();
+  });
+
+  it('paints D&D Amber Gold view name stone-900, not white, without pale-red meta', () => {
+    render(<DnD5eCharacterView character={dndCharacter({ themeColor: 'Amber Gold' })} />);
+    const heading = screen.getByRole('heading', { name: 'Aldra' });
+    expect(heading.className).toContain('text-stone-900');
+    expect(heading.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+    const header = headerRoot(heading);
+    expect(header?.className).toContain('text-stone-900');
+    expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+    expect(header?.innerHTML).not.toMatch(/text-red-100|text-red-200/);
+  });
+
+  it('paints Pathfinder Golden view name stone-900, not white', () => {
+    render(<Pathfinder2eCharacterView character={pf2eCharacter({ themeColor: 'Golden' })} />);
+    const heading = screen.getByRole('heading', { name: 'New Character' });
+    expect(heading.className).toContain('text-stone-900');
+    expect(heading.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+    const header = headerRoot(heading);
+    expect(header?.className).toContain('text-stone-900');
+    expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+  });
+
+  it.each(NAME_EDITORS)(
+    '$system required-name alert is associated with the name input and focused',
+    async ({ Editor, character }) => {
+      const user = userEvent.setup();
+      render(<Editor character={character()} onSave={vi.fn()} onCancel={vi.fn()} />);
+      await user.clear(nameBox());
+      expect(nameBox()).toHaveValue('');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      const alert = await screen.findByText('Character name is required');
+      expect(alert).toHaveAttribute('role', 'alert');
+      expect(nameBox()).toHaveAccessibleDescription('Character name is required');
+      expect(nameBox().getAttribute('aria-describedby')).toBe(alert.id);
+      await waitFor(() => expect(nameBox()).toHaveFocus());
+      expect(screen.queryByLabelText('Custom colour hex code')).toBeNull();
+    },
+  );
+
+  it('keeps the token file input in the tab order and shows error plus hint in normal flow', async () => {
+    render(
+      <DnD5eCharacterEditor character={dndCharacter()} onSave={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const input = screen.getByLabelText('Upload token image') as HTMLInputElement;
+    expect(input.className).toContain('sr-only');
+    expect(input.className).not.toMatch(/(?:^|\s)hidden(?:\s|$)/);
+
+    const file = new File(['not an image'], 'notes.txt', { type: 'text/plain' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    const alert = await screen.findByText('Please select an image file');
+    expect(alert).toHaveAttribute('role', 'alert');
+    const hint = screen.getByText('Saves as personal token');
+    expect(input).toHaveAccessibleDescription('Please select an image file');
+    expect(alert.className).not.toMatch(/absolute|text-red-200|whitespace-nowrap/);
+    expect(hint.className).not.toMatch(/absolute|text-amber-200|whitespace-nowrap/);
+    expect(alert.className).toMatch(/text-white|text-stone-900|text-black/);
+    expect(hint.className).toMatch(/text-white|text-stone-900|text-black/);
+  });
+
+  it('paints Save on dark green with a current-color border', () => {
+    render(
+      <DnD5eCharacterEditor character={dndCharacter()} onSave={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const save = screen.getByRole('button', { name: 'Save' });
+    expect(save.className).toContain('bg-green-900');
+    expect(save.className).toMatch(/border-current|\bborder\b/);
+  });
+
+  it('paints vintage CoC view Edit on dark amber with a current-color border', () => {
+    render(<CallOfCthulhu7eCharacterView character={cocCharacter()} onEdit={vi.fn()} />);
+    const edit = screen.getByRole('button', { name: 'Edit' });
+    expect(edit.className).toContain('bg-amber-900');
+    expect(edit.className).toMatch(/border-current|\bborder\b/);
+  });
+
+  it('names D&D header fields Race, Class, Level, and Experience Points', () => {
+    render(
+      <DnD5eCharacterEditor character={dndCharacter()} onSave={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const header = headerRoot(nameBox())!;
+    expect(within(header).getByLabelText('Race')).toBeTruthy();
+    expect(within(header).getByLabelText('Class')).toBeTruthy();
+    expect(within(header).getByLabelText('Level')).toBeTruthy();
+    expect(within(header).getByLabelText('Experience Points')).toBeTruthy();
+  });
+
+  it('names Pathfinder header fields Level, Experience Points, Hero Points, Class, Ancestry, Deity, Alignment', () => {
+    render(
+      <Pathfinder2eCharacterEditor character={pf2eCharacter()} onSave={vi.fn()} onCancel={vi.fn()} />,
+    );
+    const header = headerRoot(nameBox())!;
+    expect(within(header).getByLabelText('Level')).toBeTruthy();
+    expect(within(header).getByLabelText('Experience Points')).toBeTruthy();
+    expect(within(header).getByLabelText('Hero Points')).toBeTruthy();
+    expect(within(header).getByLabelText('Class')).toBeTruthy();
+    expect(within(header).getByLabelText('Ancestry')).toBeTruthy();
+    expect(within(header).getByLabelText('Deity')).toBeTruthy();
+    expect(within(header).getByLabelText('Alignment')).toBeTruthy();
+  });
+
+  it('names CoC header fields Occupation, Era, and Age', () => {
+    render(
+      <CallOfCthulhu7eCharacterEditor
+        character={cocCharacter()}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const header = headerRoot(nameBox())!;
+    expect(within(header).getByLabelText('Occupation')).toBeTruthy();
+    expect(within(header).getByLabelText('Era')).toBeTruthy();
+    expect(within(header).getByLabelText('Age')).toBeTruthy();
   });
 });

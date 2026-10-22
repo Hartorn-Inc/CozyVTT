@@ -166,19 +166,19 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
         emptyDisplay: 'Unnamed Character',
       }}
       onEdit={onEdit}
-      meta={
-        <div className={`flex items-center space-x-4 ${isCustomColor ? '' : 'text-red-100'}`}>
+      meta={(paint) => (
+        <div className={`flex items-center space-x-4 ${paint.text}`}>
           <span>
             Level {data.level} {data.race} {data.class}
           </span>
           {data.alignment && <span>• {data.alignment}</span>}
           {data.background && <span>• {data.background}</span>}
         </div>
-      }
-      trailing={
+      )}
+      trailing={(paint) =>
         data.experiencePoints !== undefined ? (
-          <div className="text-right">
-            <div className={`text-xs ${isCustomColor ? '' : 'text-red-200'}`}>Experience</div>
+          <div className={`text-right ${paint.text}`}>
+            <div className="text-xs">Experience</div>
             <div className="text-xl font-bold">{data.experiencePoints.toLocaleString()}</div>
           </div>
         ) : null

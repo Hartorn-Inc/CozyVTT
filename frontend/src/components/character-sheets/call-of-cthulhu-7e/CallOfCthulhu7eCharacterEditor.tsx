@@ -563,6 +563,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.occupation || ''}
               onChange={(e) => setFormData({ ...formData, occupation: e.target.value })}
               placeholder="Occupation"
+              aria-label="Occupation"
               className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
             <input
@@ -570,6 +571,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.era || ''}
               onChange={(e) => setFormData({ ...formData, era: e.target.value })}
               placeholder="Era (e.g., 1920s)"
+              aria-label="Era"
               className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
           </div>
@@ -579,6 +581,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.age ?? 0}
               onChange={(v: number) => setFormData({ ...formData, age: v })}
               placeholder="Age"
+              aria-label="Age"
               className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
               fallback={0}
             />
@@ -587,6 +590,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.sex || ''}
               onChange={(e) => setFormData({ ...formData, sex: e.target.value })}
               placeholder="Sex"
+              aria-label="Sex"
               className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
             <input
@@ -594,6 +598,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.residence || ''}
               onChange={(e) => setFormData({ ...formData, residence: e.target.value })}
               placeholder="Residence"
+              aria-label="Residence"
               className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 col-span-2 ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
             />
           </div>
@@ -603,6 +608,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
             value={formData.birthplace || ''}
             onChange={(e) => setFormData({ ...formData, birthplace: e.target.value })}
             placeholder="Birthplace"
+            aria-label="Birthplace"
             className={`text-sm ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 w-full ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`}
           />
         </>

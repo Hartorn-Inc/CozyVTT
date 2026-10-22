@@ -5,7 +5,7 @@
  * auto-calculation, validation, color customization, and token upload.
  */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useId } from 'react';
 import {
   Target,
   Swords,
@@ -159,6 +159,10 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
   const [isSaving, setIsSaving] = useState(false);
   const [colorPickerFocusKey, setColorPickerFocusKey] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const levelFieldId = useId();
+  const levelErrorId = useId();
+  const xpFieldId = useId();
+  const heroPointsFieldId = useId();
   const { data: serverConfig } = useServerConfigQuery();
 
   const data = character.data as PF2eFormData;
@@ -694,9 +698,15 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     const colourError = customHeaderColourError(isCustomColor, customColorHex);
     if (colourError) {
       newErrors.themeColor = colourError;
-      setColorPickerFocusKey((n) => n + 1);
     }
     setErrors(newErrors);
+    // Reading order: name, then level, then colour. Only open the picker
+    // when colour is the first invalid field.
+    if (!newErrors.characterName && newErrors.level && !colourError) {
+      document.getElementById(levelFieldId)?.focus();
+    } else if (!newErrors.characterName && !newErrors.level && colourError) {
+      setColorPickerFocusKey((n) => n + 1);
+    }
     return Object.keys(newErrors).length === 0;
   };
 
@@ -845,6 +855,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
         onChange: (value) => updateField('characterName', value),
         placeholder: 'Character Name',
         invalid: Boolean(errors.characterName),
+        error: errors.characterName,
       }}
       extraNameColumnClassName="space-y-2"
       onSave={handleSubmit}
@@ -856,47 +867,59 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
       colorPickerFocusKey={colorPickerFocusKey}
       meta={(paint) => (
         <>
-          <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
+          <div className={`flex items-center flex-wrap gap-2 ${paint.text}`}>
             {/* Read-only: the player name is whoever owns the character,
                 filled from their display name at creation. */}
-            <span className={`text-sm ${paint.text}`}>{formData.playerName || '—'}</span>
+            <span className="text-sm">{formData.playerName || '—'}</span>
           </div>
-          <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
-            <div className="flex items-center space-x-2">
-              <span className="text-xs">Level</span>
-              <NumberField
-                min={1}
-                max={20}
-                value={formData.level}
-                onChange={(v: number) => updateField('level', v)}
-                className={`w-16 ${paint.fieldBg} border ${errors.level ? 'border-red-300' : paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} focus:outline-none ${paint.fieldFocus}`}
-                fallback={1}
-              />
+          <div className={`flex items-center flex-wrap gap-2 ${paint.text}`}>
+            <div>
+              <div className="flex items-center space-x-2">
+                <label htmlFor={levelFieldId} className="text-xs">Level</label>
+                <NumberField
+                  id={levelFieldId}
+                  min={1}
+                  max={20}
+                  value={formData.level}
+                  onChange={(v: number) => updateField('level', v)}
+                  className={`w-16 ${paint.fieldBg} border ${errors.level ? 'border-red-300' : paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} focus:outline-none ${paint.fieldFocus}`}
+                  fallback={1}
+                  aria-invalid={Boolean(errors.level)}
+                  aria-describedby={errors.level ? levelErrorId : undefined}
+                />
+              </div>
+              {errors.level && (
+                <p id={levelErrorId} role="alert" className={`text-xs ${paint.text}`}>
+                  {errors.level}
+                </p>
+              )}
             </div>
-            <input type="text" value={formData.class || ''} onChange={(e) => updateField('class', e.target.value)} placeholder="Class" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
-            <input type="text" value={formData.ancestry || ''} onChange={(e) => updateField('ancestry', e.target.value)} placeholder="Ancestry" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
-            <input type="text" value={formData.heritage || ''} onChange={(e) => updateField('heritage', e.target.value)} placeholder="Heritage" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
-            <input type="text" value={formData.background || ''} onChange={(e) => updateField('background', e.target.value)} placeholder="Background" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.class || ''} onChange={(e) => updateField('class', e.target.value)} placeholder="Class" aria-label="Class" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.ancestry || ''} onChange={(e) => updateField('ancestry', e.target.value)} placeholder="Ancestry" aria-label="Ancestry" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.heritage || ''} onChange={(e) => updateField('heritage', e.target.value)} placeholder="Heritage" aria-label="Heritage" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.background || ''} onChange={(e) => updateField('background', e.target.value)} placeholder="Background" aria-label="Background" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
             {/* Deity and alignment are part of the sheet the schema
                 describes, and matter for a cleric, champion or oracle, but
                 had no field anywhere in the app until now. */}
-            <input type="text" value={formData.deity || ''} onChange={(e) => updateField('deity', e.target.value)} placeholder="Deity" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
-            <input type="text" value={formData.alignment || ''} onChange={(e) => updateField('alignment', e.target.value)} placeholder="Alignment" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.deity || ''} onChange={(e) => updateField('deity', e.target.value)} placeholder="Deity" aria-label="Deity" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
+            <input type="text" value={formData.alignment || ''} onChange={(e) => updateField('alignment', e.target.value)} placeholder="Alignment" aria-label="Alignment" className={`${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-0.5 text-sm ${paint.text} ${paint.placeholder} focus:outline-none ${paint.fieldFocus}`} />
           </div>
         </>
       )}
       trailing={(paint) => (
-        <div className="text-right space-y-2">
-          <div className={`text-xs ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
+        <div className={`text-right space-y-2 ${paint.text}`}>
+          <label htmlFor={xpFieldId} className="block text-xs">Experience Points</label>
           <NumberField
+            id={xpFieldId}
             min={0}
             value={formData.experiencePoints}
             onChange={(v: number) => updateField('experiencePoints', v)}
             className={`w-24 text-xl font-bold ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} text-right focus:outline-none ${paint.fieldFocus}`}
             fallback={0}
           />
-          <div className={`text-xs mt-2 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
+          <label htmlFor={heroPointsFieldId} className="block text-xs mt-2">Hero Points</label>
           <NumberField
+            id={heroPointsFieldId}
             min={0}
             max={3}
             value={formData.heroPoints}
