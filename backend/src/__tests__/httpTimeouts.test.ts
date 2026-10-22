@@ -32,5 +32,8 @@ describe('the request timeout', () => {
     const applied = source.indexOf('applyRequestTimeouts(httpServer);');
     expect(applied).toBeGreaterThan(-1);
     expect(applied).toBeLessThan(source.indexOf('httpServer.listen('));
+    const guard = source.indexOf('loginSessionRevocationGuard.then(');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(source.indexOf('httpServer.listen('));
   });
 });

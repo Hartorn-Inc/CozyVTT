@@ -164,12 +164,14 @@ info:
     import.
 
     ## Responses every route can give
-    These are not repeated on each operation:
+    These are not repeated on each operation, except that a revoked login
+    session (401) and an unconfirmable login-session store (503) are also
+    listed on the operations that end login sessions:
     - **401** `{ error: 'Unauthorized', message }` from any route that needs a
-      session, when there is none or when the MFA step of a sign-in is still
-      pending. A sign-in made more than `REMEMBER_ME_MAX_AGE` ago (30 days by
-      default) is ended by the first such route it reaches, and that answer
-      adds `code: SIGN_IN_EXPIRED`.
+      session, when there is none, when the login session has been revoked, or
+      when the MFA step of a sign-in is still pending. A sign-in made more than
+      `REMEMBER_ME_MAX_AGE` ago (30 days by default) is ended by the first such
+      route it reaches, and that answer adds `code: SIGN_IN_EXPIRED`.
     - **403** `{ error: 'Forbidden', message: 'You are not a member of this campaign' }`
       from any `/api/campaigns/{campaignId}/...` route that needs membership,
       including for a campaign id that does not exist. Such routes never answer
@@ -185,7 +187,10 @@ info:
     - **503** `{ error: 'Service Unavailable', message }` with `Retry-After: 60`
       from every `/api` route while a backup restore replaces the database,
       checked before the session is read (see `POST /api/admin/backups/restore`).
-      `/health` is not refused.
+      `/health` is not refused. Mutations that end login sessions also answer
+      503 without `Retry-After` when the login-session store cannot be
+      confirmed; the credential change is not kept. Those operations list that
+      503 themselves.
 
     ## Forced password changes
     Accounts an admin created, or whose password an admin reset, are flagged
@@ -942,7 +947,8 @@ paths:
         `mustChangePassword`, forgets the wrong passwords counted against the
         account by the per-account sign-in limit, and ends every login session
         and live WebSocket connection of the account; the request itself does
-        not sign anyone in. Rate limited: 5 wrong answers per 15 minutes per address, shared
+        not sign anyone in. If the login-session store cannot be confirmed the
+        change is not kept and the answer is 503. Rate limited: 5 wrong answers per 15 minutes per address, shared
         with the other credential endpoints, where a link that does not exist,
         has been used or has expired is a wrong answer and a password too weak
         to take is not.
@@ -994,6 +1000,8 @@ paths:
                 message: This password reset link is invalid or has expired
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
         '500':
           description: Unexpected server error.
           content:
@@ -1009,7 +1017,7 @@ paths:
       tags:
         - Authentication
       summary: Change own password
-      description: 'Change password for the authenticated user. Requires current password verification. Sets mustChangePassword to false, for this session too, so the forced-change gate lifts at once. Ends the user''s other login sessions and their live WebSocket connections; the session making the request stays signed in. Voids the user''s unused password-reset and invitation links, and forgets the wrong passwords counted against the account by the per-account sign-in limit. Rate limited: 10 wrong current passwords per 15 minutes for the account, from every address, shared with `DELETE /api/auth/account` and an email change through `PUT /api/users/{id}`; then 429 `Too many wrong passwords, please try again later`. A correct password never counts.'
+      description: 'Change password for the authenticated user. Requires current password verification. Sets mustChangePassword to false, for this session too, so the forced-change gate lifts at once. Ends the user''s other login sessions and their live WebSocket connections; this login session stays signed in. If the login-session store cannot be confirmed the change is not kept and the answer is 503. Voids the user''s unused password-reset and invitation links, and forgets the wrong passwords counted against the account by the per-account sign-in limit. Rate limited: 10 wrong current passwords per 15 minutes for the account, from every address, shared with `DELETE /api/auth/account` and an email change through `PUT /api/users/{id}`; then 429 `Too many wrong passwords, please try again later`. A correct password never counts.'
       operationId: changePassword
       security:
         - cookieAuth: []
@@ -1088,6 +1096,8 @@ paths:
               example:
                 error: Rate Limited
                 message: Too many wrong passwords, please try again later
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   # ============================================
   # MFA
@@ -1169,7 +1179,7 @@ paths:
       tags:
         - MFA
       summary: Complete MFA setup
-      description: Verify TOTP code to complete MFA setup, which needs a pending secret from `/api/auth/mfa/setup`. Generates 10 backup codes (shown only once). Ends the user's other login sessions and their live WebSocket connections; the session making the request stays signed in. The code counts as used, so it cannot then sign in. Rate limited (5 failures/15min, on its own allowance).
+      description: Verify TOTP code to complete MFA setup, which needs a pending secret from `/api/auth/mfa/setup`. Generates 10 backup codes (shown only once). Ends the user's other login sessions and their live WebSocket connections; this login session stays signed in. If the login-session store cannot be confirmed MFA is not left on and the answer is 503. The code counts as used, so it cannot then sign in. Rate limited (5 failures/15min, on its own allowance).
       operationId: mfaVerifySetup
       security:
         - cookieAuth: []
@@ -1235,6 +1245,8 @@ paths:
                 message: User not found
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/auth/mfa/verify-login:
     post:
@@ -1322,7 +1334,7 @@ paths:
       tags:
         - MFA
       summary: Disable MFA
-      description: Disable MFA for the authenticated user. Requires current password and a valid TOTP code not already used; a backup code is not accepted here. Admin accounts cannot disable MFA, and are refused once the body has been checked, before the account's MFA state, the password or the code. Clears the secret and the backup codes. Ends the user's other login sessions and their live WebSocket connections; the session making the request stays signed in. Rate limited (5 wrong answers/15min per address, shared with the other credential endpoints; only an incorrect password or code counts).
+      description: Disable MFA for the authenticated user. Requires current password and a valid TOTP code not already used; a backup code is not accepted here. Admin accounts cannot disable MFA, and are refused once the body has been checked, before the account's MFA state, the password or the code. Clears the secret and the backup codes. Ends the user's other login sessions and their live WebSocket connections; this login session stays signed in. If the login-session store cannot be confirmed MFA is not left off and the answer is 503. Rate limited (5 wrong answers/15min per address, shared with the other credential endpoints; only an incorrect password or code counts).
       operationId: mfaDisable
       security:
         - cookieAuth: []
@@ -1397,6 +1409,8 @@ paths:
                 message: User not found
         '429':
           $ref: '#/components/responses/RateLimited'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/auth/mfa/backup-codes:
     post:
@@ -1595,6 +1609,8 @@ paths:
                 message: Too many wrong passwords, please try again later
         '500':
           $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/auth/registration-status:
     get:
@@ -1758,7 +1774,7 @@ paths:
         - Users
       summary: Update user
       description: |
-        Update user profile (own profile or admin). Every field is optional; only those sent are changed, and every check runs before anything is written. Admin can change platformRole, which ends every login session and live WebSocket connection the target has, because the role is carried in the session; an admin changing their own role is signed out too. Setting the role it already has signs no one out. An admin's change to another account is written to the admins' activity log with each changed field in the line's `changes`: `{ from, to }` for the email address, display name, avatar address and the two permission flags, and `{ changed: true }` for the bio, whose text is not stored (lines from earlier versions kept it). A role change is written to the admins' activity log as a WARNING, and a promotion to `ADMIN` gives the account 7 days to set up MFA (see the administrator two-factor policy in the introduction). The globalAssetManager and templateEditor flags are read from the database at the point of use, so changing those takes effect on the next request and does not sign anyone out.
+        Update user profile (own profile or admin). Every field is optional; only those sent are changed, and every check runs before anything is written. Admin can change platformRole, which ends every login session and live WebSocket connection the target has, because the role is carried in the session; an admin changing their own role is signed out too. Setting the role it already has signs no one out. If the login-session store cannot be confirmed a role change is not kept and the answer is 503. An admin's change to another account is written to the admins' activity log with each changed field in the line's `changes`: `{ from, to }` for the email address, display name, avatar address and the two permission flags, and `{ changed: true }` for the bio, whose text is not stored (lines from earlier versions kept it). A role change is written to the admins' activity log as a WARNING, and a promotion to `ADMIN` gives the account 7 days to set up MFA (see the administrator two-factor policy in the introduction). The globalAssetManager and templateEditor flags are read from the database at the point of use, so changing those takes effect on the next request and does not sign anyone out.
 
         Changing your own email needs `currentPassword` (400 without it, 401 when wrong), checked before the new address is looked up; an admin changing someone else's does not. A wrong password counts against the shared allowance of 10 wrong passwords per 15 minutes for the account (see `POST /api/auth/change-password`); past it a request carrying `currentPassword` answers 429, while one without a password is not held to it. When the email changes, the user's unused password-reset and invitation links are voided, and the old address is emailed a notice if SMTP is configured (a failed send does not fail the change).
       operationId: updateUser
@@ -1919,6 +1935,8 @@ paths:
               example:
                 error: Internal Server Error
                 message: Failed to update user
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
     delete:
       tags:
@@ -2010,13 +2028,17 @@ paths:
                               userId: { type: string, format: uuid }
                               displayName: { type: string }
                               role: { type: string, enum: [PLAYER, SPECTATOR] }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/users/{id}/reset-password:
     post:
       tags:
         - Users
       summary: Admin reset user password
-      description: Generate temporary password for user (Admin only). Sets mustChangePassword flag so user is forced to change on next login. Voids the user's unused password-reset and invitation links, forgets the wrong passwords counted against the account by the per-account sign-in limit, and ends every login session and live connection the user already has open. Refused with 400 for the caller's own id, since changing one's own password asks for the current one; a session alone must not get a new password for its own account here. Written to the admins' activity log as a WARNING. MFA on the account is left as it is.
+      description: Generate temporary password for user (Admin only). Sets mustChangePassword flag so user is forced to change on next login. Voids the user's unused password-reset and invitation links, forgets the wrong passwords counted against the account by the per-account sign-in limit, and ends every login session and live connection the user already has open. If the login-session store cannot be confirmed the temporary password is not kept and the answer is 503. Refused with 400 for the caller's own id, since changing one's own password asks for the current one; a session alone must not get a new password for its own account here. Written to the admins' activity log as a WARNING. MFA on the account is left as it is.
       operationId: adminResetUserPassword
       security:
         - cookieAuth: []
@@ -2057,10 +2079,14 @@ paths:
               example:
                 error: Bad Request
                 message: You cannot reset your own password from here. Use Change password on your profile, which asks for your current password.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/users/{id}/preferences:
     get:
@@ -9924,7 +9950,9 @@ paths:
       summary: Reset MFA for a locked-out user
       description: >-
         Disables TOTP and clears backup codes for a user who is locked out, turning MFA
-        off for the account. The user signs in with their password alone next time,
+        off for the account, and ends every login session and live connection the user
+        already has open. If the login-session store cannot be confirmed MFA is not
+        left off and the answer is 503. The user signs in with their password alone next time,
         and MFA stays off until they set it up again themselves. An administrator is
         held to the administrator two-factor policy (see the introduction): the reset
         gives them 7 days, then every endpoint but enrolment answers 403
@@ -9958,6 +9986,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/LoginSessionStoreUnavailable'
 
   /api/admin/smtp/test:
     post:
@@ -10022,6 +10052,14 @@ paths:
                   createdAt:
                     type: string
                     format: date-time
+        '400':
+          description: >-
+            `Bad Request` when DATABASE_URL `?schema=` is not a simple identifier
+            (letters, digits, underscore). Nothing was changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -11256,11 +11294,14 @@ paths:
         trust. A refused archive answers 400 with the reason and changes
         nothing. A database-only backup of the current
         database is then written to the backup list, named in the response as
-        safetyBackup, so the restore can be undone. The public schema is
-        dropped and recreated from the archive in a single transaction that
+        safetyBackup, so the restore can be undone. The instance schema from
+        DATABASE_URL (`public`, or a simple-identifier `?schema=`) is dropped
+        and the archive recreates it, in a single transaction that
         stops at the first failed statement, in psql's restricted mode, so an
         archive that cannot be applied in full leaves the existing database
-        unchanged and answers 500. The transaction_timeout setting a newer
+        unchanged and answers 500. A `?schema=` that is not a simple identifier
+        (letters, digits, underscore) answers 400 `Bad Request` and changes
+        nothing. The transaction_timeout setting a newer
         pg_dump writes is skipped, as are the archive's ownership and privilege
         statements, so it restores under this instance's database user whatever
         user the archive came from. The login sessions are not restored: new
@@ -11305,7 +11346,9 @@ paths:
         '400':
           description: >-
             `Bad Request` `No backup file provided` when the request holds no
-            file. Every other refusal is `Invalid Backup`: a filename not
+            file. `Bad Request` when DATABASE_URL `?schema=` is not a simple
+            identifier (letters, digits, underscore); nothing was changed.
+            Other refusals are `Invalid Backup`: a filename not
             ending in `.zip`; a multipart body over the field limits every
             upload route shares (more than 100 text fields, a field name over
             100 bytes, a field value over 16 KB, 16,384 bytes), a file sent
@@ -12987,11 +13030,11 @@ components:
 
     Unauthorized:
       description: >-
-        Unauthorized - Not authenticated or MFA pending. A sign-in made more
-        than `REMEMBER_ME_MAX_AGE` ago (30 days by default) is ended here, and
-        the answer carries `code: SIGN_IN_EXPIRED` with the message 'Your
-        sign-in has reached its 30-day limit. Sign in again.' (the day count
-        follows the setting).
+        Unauthorized - Not authenticated, the login session has been revoked,
+        or MFA pending. A sign-in made more than `REMEMBER_ME_MAX_AGE` ago
+        (30 days by default) is ended here, and the answer carries
+        `code: SIGN_IN_EXPIRED` with the message 'Your sign-in has reached its
+        30-day limit. Sign in again.' (the day count follows the setting).
       content:
         application/json:
           schema:
@@ -13084,6 +13127,19 @@ components:
           example:
             error: Too Many Requests
             message: Upload rate limit reached. Please slow down and try again in a minute.
+
+    LoginSessionStoreUnavailable:
+      description: >-
+        Service Unavailable - The login-session store could not be confirmed,
+        so a mutation that would end login sessions did not take. Try again in
+        a moment. No `Retry-After`. The credential or role change is not kept.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error: Service Unavailable
+            message: The login session could not be confirmed. Try again in a moment.
 
     ServerError:
       description: Internal Server Error - Something went wrong on the server.

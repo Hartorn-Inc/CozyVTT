@@ -15,6 +15,48 @@
 import { createReadStream, createWriteStream } from 'fs';
 import { randomBytes } from 'crypto';
 import { once } from 'events';
+import { PRISMA_ONLY_PARAMETERS } from '../config/prismaClient';
+
+/**
+ * Schema names dump excludes, the trailer, and the preamble will interpolate.
+ * Anything else (pg_dump wildcards, hyphens, quotes) is refused — never treated
+ * as public, never interpolated into --exclude-table-data or SQL identifiers,
+ * and never looked up in pg_namespace.
+ */
+const APP_SCHEMA = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * `DATABASE_URL ?schema=` is not a simple identifier, so dump and restore
+ * must not pretend the instance is on public.
+ */
+export class UnsupportedBackupRestoreSchema extends Error {
+  constructor() {
+    super(
+      'DATABASE_URL ?schema= for backup and restore must be a simple identifier (letters, digits, underscore), not treated as public.',
+    );
+    this.name = 'UnsupportedBackupRestoreSchema';
+  }
+}
+
+/** Throws UnsupportedBackupRestoreSchema when `schema` is not a simple identifier. */
+export function assertSimpleAppSchema(schema: string): void {
+  if (!APP_SCHEMA.test(schema)) throw new UnsupportedBackupRestoreSchema();
+}
+
+/**
+ * Schema Prisma (and the session pool) use, from `?schema=` on DATABASE_URL.
+ * Parse failure, a missing parameter, and an empty value are `public`. A name
+ * that is not a simple identifier is returned as it is; dump and restore
+ * callers assert before interpolating. Kept here so restore code does not call
+ * createPrismaClient (and a database pool) to dump or restore.
+ */
+export function schemaFromDatabaseUrl(dbUrl: string): string {
+  try {
+    return new URL(dbUrl).searchParams.get('schema') || 'public';
+  } catch {
+    return 'public';
+  }
+}
 
 /**
  * Statements run before the dump itself.
@@ -28,24 +70,56 @@ import { once } from 'events';
  * statements sit at the top of the file psql loads with --single-transaction,
  * so a dump that fails to apply rolls the schema back too. Migrations then run
  * to bring an older backup up to the running version.
+ *
+ * `public` keeps the two statements restore.sh's public path prints. Any other
+ * simple identifier is one DO block that drops that schema via format('%I') —
+ * never concatenated as a raw identifier, and never also dropping public
+ * (leftover public.session is emptied by the trailer). The dump then creates
+ * the schema: `backup.sh` dumps emit `CREATE SCHEMA` for a non-public schema
+ * and would fail if the preamble had already created it.
  */
-export const RESTORE_PREAMBLE = ['DROP SCHEMA public CASCADE;', 'CREATE SCHEMA public;'];
+export function restorePreamble(schema: string): string[] {
+  assertSimpleAppSchema(schema);
+  if (schema === 'public') {
+    return ['DROP SCHEMA public CASCADE;', 'CREATE SCHEMA public;'];
+  }
+  const literal = "'" + schema.replace(/'/g, "''") + "'";
+  return [
+    `DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', ${literal}); END $$;`,
+  ];
+}
+
+/** The public-schema replacement; restore.sh's public awk path matches this. */
+export const RESTORE_PREAMBLE = restorePreamble('public');
+
+const PUBLIC_LOGIN_SESSION_TRAILER =
+  "DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; IF to_regclass('public.revoked_login_session') IS NOT NULL THEN DELETE FROM public.revoked_login_session; END IF; END $$;";
 
 /**
- * Statements run after the dump, in the same transaction.
+ * SQL that empties login-session tables after a dump, in the same transaction.
  *
- * Login sessions live in `public.session`, beside the app's tables. New
- * backups leave its rows out (see buildDumpArgs), but every backup made
- * before that carries them, and a restore would bring back each sign-in
- * that had not yet expired, ones ended since by a password change or an
- * account removal included. So a restore ends by emptying the table, which
- * a very old backup may not have at all, hence the check. The restore
- * script (backend/scripts/restore.sh) appends the same statement, and
- * keepInStep.test.ts fails if the two differ.
+ * Login sessions live in the configured app schema (with Prisma), plus leftover
+ * `public.session` on instances that used to write there. Restore empties those
+ * two places only — never a catalog scan of other schemas. The schema name is
+ * interpolated as a SQL string literal into `format('%I', …)`, never as a raw
+ * identifier. keepInStep.test.ts holds restore.sh to the public default.
  */
-export const RESTORE_TRAILER = [
-  "DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; END $$;",
-];
+export function loginSessionRestoreTrailer(schema: string): string[] {
+  assertSimpleAppSchema(schema);
+  if (schema === 'public') return [PUBLIC_LOGIN_SESSION_TRAILER];
+  const literal = "'" + schema.replace(/'/g, "''") + "'";
+  return [
+    PUBLIC_LOGIN_SESSION_TRAILER,
+    `DO $$ BEGIN IF to_regclass(format('%I.session', ${literal})) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.session', ${literal}); END IF; IF to_regclass(format('%I.revoked_login_session', ${literal})) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.revoked_login_session', ${literal}); END IF; END $$;`,
+  ];
+}
+
+/**
+ * Default trailer when DATABASE_URL has no `?schema=`. restore.sh's heredoc
+ * matches this so a command-line restore empties the same public tables as
+ * the dashboard when the instance is on public.
+ */
+export const RESTORE_TRAILER = loginSessionRestoreTrailer('public');
 
 /**
  * Settings a newer pg_dump writes that an older server rejects.
@@ -110,7 +184,8 @@ const COPY_END = '\\.';
  * replacement above commits, and the instance is left empty while the restore
  * reports success. So a file is refused unless, outside its table data, it
  * ends with the trailer pg_dump writes last and creates the tables every
- * CozyVTT database has.
+ * CozyVTT database has in the instance schema (the one the preamble drops), so
+ * a dump of a different schema cannot empty this instance.
  *
  * psql also runs whatever the file says, as the database owner. A backslash
  * command such as `\!` runs a shell command in the backend container, `COPY
@@ -135,11 +210,11 @@ const COPY_END = '\\.';
  */
 const DUMP_COMPLETE = '-- PostgreSQL database dump complete';
 const RESTRICTED_MODE_LINE = /^\\(?:un)?restrict /;
-const CREATE_TABLE = /^CREATE TABLE public\.(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*)) \($/;
+const CREATE_TABLE = /^CREATE TABLE (?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\.(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*)) \($/;
 const TRANSACTION_CONTROL =
   /^(?:BEGIN|START TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE TRANSACTION)\b/i;
 
-/** Tables every CozyVTT database has; a dump that does not create them is not a backup of one. */
+/** Tables every CozyVTT database has in the instance schema; a dump that does not create them there is not a backup of one. */
 export const REQUIRED_TABLES = ['User', '_prisma_migrations'];
 
 /** What prepareDumpForRestore left out, for the log. */
@@ -204,6 +279,9 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
   let refused: string | null = null;
   let complete = false;
   const tables = new Set<string>();
+  const schema = schemaFromDatabaseUrl(process.env.DATABASE_URL ?? '');
+  const preamble = restorePreamble(schema);
+  const trailer = loginSessionRestoreTrailer(schema);
 
   // The whole database: readable by the backend's user alone.
   const out = createWriteStream(outPath, { encoding: 'latin1', mode: 0o600 });
@@ -220,7 +298,7 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
   let endedWithNewline = true;
   try {
     await write(`\\restrict ${randomBytes(32).toString('hex')}\n`);
-    for (const line of RESTORE_PREAMBLE) await write(line + '\n');
+    for (const line of preamble) await write(line + '\n');
 
     for await (const { raw, statement, newline } of linesOf(sqlPath)) {
       let keep = true;
@@ -249,7 +327,13 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
         keep = false;
       } else {
         const table = CREATE_TABLE.exec(statement);
-        if (table) tables.add(table[1] ?? table[2]);
+        if (table) {
+          // Groups 1/2 are the schema qualifier (quoted or unquoted); count a
+          // required table only when that identifier equals the instance schema.
+          const dumpSchema = table[1] ?? table[2];
+          const name = table[3] ?? table[4];
+          if (name && dumpSchema === schema) tables.add(name);
+        }
       }
       if (keep) {
         await write(newline ? raw + '\n' : raw);
@@ -257,7 +341,11 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
       }
     }
     if (!endedWithNewline) await write('\n');
-    for (const line of RESTORE_TRAILER) await write(line + '\n');
+    // Dashboard restore uses the instance DATABASE_URL, so a custom ?schema=
+    // is emptied as well as leftover public.session.
+    for (const line of trailer) {
+      await write(line + '\n');
+    }
     if (failure.error) throw failure.error;
     out.end();
     // Until the file is closed, not only written: some filesystems (NFS over
@@ -299,16 +387,14 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
  * which only the same user or root can read. The environment handed over is
  * the path and the password alone; the tools need nothing else of the app's.
  *
- * An address that does not parse, or carries no password, is passed on as it
- * is, so an unusual one (a Unix socket, a passwordless local server) still
- * connects the way it did.
+ * An address that does not parse is passed on as it is, so an unusual one
+ * (a Unix socket) still connects the way it did. A parsed address always
+ * has Prisma-only query parameters removed, password or not: libpq rejects
+ * `?schema=` and `?connection_limit=` as invalid URI query parameters, while
+ * the app's pool accepts them. `sslmode=require` and other libpq settings
+ * stay on the address. The schema is read separately by
+ * schemaFromDatabaseUrl for dump excludes, not passed as a libpq parameter.
  */
-// TODO(backups): the address goes to pg_dump and psql with its query string,
-// and libpq refuses what it does not know: `?schema=` and `?connection_limit=`
-// ("invalid URI query parameter") and `sslmode=no-verify` ("invalid sslmode
-// value"), all of which the app's pg pool accepts, so every backup and restore
-// fails there. Drop the parameters prismaClient.ts handles itself, and pass the
-// schema with --schema, so the tools get only what libpq reads.
 export function pgConnection(dbUrl: string): { dbname: string; env: Record<string, string> } {
   const env: Record<string, string> = { PATH: process.env.PATH ?? '' };
   let parsed: URL;
@@ -317,14 +403,20 @@ export function pgConnection(dbUrl: string): { dbname: string; env: Record<strin
   } catch {
     return { dbname: dbUrl, env };
   }
-  if (!parsed.password) return { dbname: dbUrl, env };
+  for (const name of PRISMA_ONLY_PARAMETERS) parsed.searchParams.delete(name);
+  if (!parsed.password) return { dbname: parsed.toString(), env };
+  // Node's URL.password getter still returns the percent-encoded form
+  // (`p%40ss%25w0rd`). One decodeURIComponent is the password as typed
+  // (`p@ss%w0rd`); a second decode would throw on a literal `%`.
   env.PGPASSWORD = decodeURIComponent(parsed.password);
   parsed.password = '';
   return { dbname: parsed.toString(), env };
 }
 
 export function buildDumpArgs(dbUrl: string, sqlPath: string): string[] {
-  return [
+  const schema = schemaFromDatabaseUrl(dbUrl);
+  assertSimpleAppSchema(schema);
+  const args = [
     '--dbname',
     pgConnection(dbUrl).dbname,
     '--file',
@@ -336,7 +428,16 @@ export function buildDumpArgs(dbUrl: string, sqlPath: string): string[] {
     // The login sessions: a backup that carried them would sign every
     // sign-in of the day back in when restored (see RESTORE_TRAILER).
     '--exclude-table-data=public.session',
+    '--exclude-table-data=public.revoked_login_session',
   ];
+  // Configured-schema tables as well, when the instance is not on public.
+  // Schema names in tests and production are ^[A-Za-z_][A-Za-z0-9_]*$; this
+  // does not look up pg_namespace.
+  if (schema !== 'public') {
+    args.push(`--exclude-table-data=${schema}.session`);
+    args.push(`--exclude-table-data=${schema}.revoked_login_session`);
+  }
+  return args;
 }
 
 /** Arguments for restoring `sqlPath` into the database at `dbUrl`. */

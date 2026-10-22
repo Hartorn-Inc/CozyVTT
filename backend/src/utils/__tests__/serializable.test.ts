@@ -6,8 +6,10 @@
  * Requires PostgreSQL at DATABASE_URL.
  */
 
+import { Prisma } from '@prisma/client';
 import { prisma as appPrisma } from '../../config/database';
 import { prisma, createTestUser, cleanupUsers } from '../../__tests__/helpers/db';
+import { LoginSessionStoreUnavailable } from '../../services/sessionStore';
 import { inSerializableTransaction, isSerializationFailure } from '../serializable';
 
 const created: string[] = [];
@@ -118,4 +120,18 @@ it('reads a refusal from the driver adapter\'s error, and nothing else it report
   expect(isSerializationFailure(driverError({ kind: 'UniqueConstraintViolation', originalCode: '23505' }))).toBe(false);
   expect(isSerializationFailure(driverError({ kind: 'DatabaseNotReachable' }))).toBe(false);
   expect(isSerializationFailure({ name: 'DriverAdapterError' })).toBe(false);
+});
+
+it('treats a LoginSessionStoreUnavailable wrapping a refusal as retryable, and a bare one as not', () => {
+  const driverError = (cause: Record<string, unknown>) => Object.assign(new Error('driver'), { name: 'DriverAdapterError', cause });
+  const conflict = driverError({ kind: 'TransactionWriteConflict', originalCode: '40001' });
+  const p2010 = new Prisma.PrismaClientKnownRequestError('Raw query failed', {
+    code: 'P2010',
+    clientVersion: Prisma.prismaVersion.client,
+    meta: { driverAdapterError: conflict },
+  });
+  expect(isSerializationFailure(new LoginSessionStoreUnavailable())).toBe(false);
+  expect(isSerializationFailure(new LoginSessionStoreUnavailable(conflict))).toBe(true);
+  expect(isSerializationFailure(new LoginSessionStoreUnavailable(p2010))).toBe(true);
+  expect(isSerializationFailure(new Error('could not serialize access'))).toBe(false);
 });

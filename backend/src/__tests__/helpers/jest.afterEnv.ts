@@ -23,4 +23,19 @@ afterAll(async () => {
   // client has no connections and disconnecting it costs nothing.
   const helpers = require('./db') as typeof import('./db');
   await helpers.prisma.$disconnect();
+  // sessionStore.ts imports sessionPool; a file that loaded that module
+  // opened a pg pool of its own, which must close with the Prisma clients.
+  // A file that mocked config/session has no real pool or guard.
+  let sessionPath: string;
+  try {
+    sessionPath = require.resolve('../../config/session');
+  } catch {
+    return;
+  }
+  if (!require.cache[sessionPath]) return;
+  const session = require('../../config/session') as Partial<typeof import('../../config/session')>;
+  const guard = session.loginSessionRevocationGuard;
+  if (guard && typeof guard.then === 'function') await guard.catch(() => undefined);
+  const pool = session.sessionPool;
+  if (pool && typeof pool.end === 'function' && !pool.ending) await pool.end();
 });

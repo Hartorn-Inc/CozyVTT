@@ -5,7 +5,7 @@ import { registerUser, authenticateUser, sanitizeUser, hashPassword, verifyPassw
 import { rememberMeMaxAge } from '../config/sessionDurations';
 import { validatePasswordStrength } from '../utils/validation';
 import { isSmtpConfigured, sendPasswordResetEmail } from '../services/email';
-import { destroyUserLoginSessions, capLoginSessions } from '../services/sessionStore';
+import { destroyUserLoginSessions, capLoginSessions, rethrowIfLoginSessionStoreUnavailable } from '../services/sessionStore';
 import { voidOutstandingResetLinks, issueResetToken, findResetTokenRow, RESET_LINK_TTL_MS } from '../services/passwordResetTokens';
 import { endLiveSockets, announceRosterChange } from '../websocket/utils';
 import { generateBackupCodes, hashBackupCodes, verifyBackupCode } from '../utils/backupCodes';
@@ -74,6 +74,13 @@ export async function clientUser(user: Parameters<typeof sanitizeUser>[0]) {
  * person starts again with their password.
  */
 export const MFA_PENDING_MAX_AGE_MS = 5 * 60 * 1000;
+
+/**
+ * Tests pause MFA verify-login after the pending session is in memory and
+ * before the User re-read, so a concurrent destroy can increment epoch
+ * first. Production never sets this.
+ */
+export const mfaVerifyLoginBarrier: { wait?: Promise<void>; reached?: () => void } = {};
 
 /**
  * How long after issuing a reset link forgot-password issues no other for the
@@ -239,6 +246,7 @@ router.post('/register', accountCreationLimiter, async (req: Request, res: Respo
       await regenerateSession(req);
       req.session.userId = user.id;
       req.session.platformRole = user.platformRole;
+      req.session.loginSessionEpoch = user.loginSessionEpoch;
       recordSignIn(req, user.id);
 
       return res.status(201).json({
@@ -253,6 +261,7 @@ router.post('/register', accountCreationLimiter, async (req: Request, res: Respo
     await regenerateSession(req);
     req.session.userId = user.id;
     req.session.platformRole = user.platformRole;
+    req.session.loginSessionEpoch = user.loginSessionEpoch;
     recordSignIn(req, user.id);
 
     return res.status(201).json({
@@ -318,6 +327,7 @@ router.post('/login', credentialLimiter, accountLoginLimiter, async (req: Reques
       // Set pending MFA state — do NOT fully authenticate yet
       req.session.mfaPending = true;
       req.session.mfaPendingUserId = user.id;
+      req.session.loginSessionEpoch = user.loginSessionEpoch;
       req.session.mfaRememberMe = !!rememberMe;
       req.session.mfaPendingAt = Date.now();
 
@@ -333,6 +343,7 @@ router.post('/login', credentialLimiter, accountLoginLimiter, async (req: Reques
     req.session.platformRole = user.platformRole;
     // Gates every other API call until the password is replaced
     req.session.mustChangePassword = user.mustChangePassword;
+    req.session.loginSessionEpoch = user.loginSessionEpoch;
     recordSignIn(req, user.id);
 
     // Extend session if "Remember Me" is checked
@@ -556,6 +567,7 @@ router.post('/reset-password', credentialLimiter, async (req: Request, res: Resp
         select: { email: true },
       });
       await voidOutstandingResetLinks(resetToken.userId, tx);
+      await destroyUserLoginSessions(resetToken.userId, undefined, tx);
       return email;
     });
 
@@ -572,14 +584,16 @@ router.post('/reset-password', credentialLimiter, async (req: Request, res: Resp
 
     // A reset by link is how someone recovers an account they cannot or will
     // not sign in to, so every sign-in opened with the old password ends,
-    // live connections included. Nobody is signed in here to keep.
-    await destroyUserLoginSessions(resetToken.userId);
+    // live connections included. Nobody is signed in here to keep. The
+    // DELETE ran in the claim transaction above, so a store failure rolls
+    // the new password back.
     await endLiveSockets(resetToken.userId, 'Your password was reset. Sign in again.');
 
     return res.status(200).json({
       message: 'Password has been reset successfully',
     });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     logger.error('Error in reset-password', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',
@@ -631,14 +645,22 @@ router.post('/change-password', requireAuth, passwordCheckLimiter, async (req: R
       });
     }
 
-    // Hash and update
+    // Hash and update. The other devices' sessions end in the same
+    // transaction: if the store cannot be confirmed, the new password is not
+    // kept. This login session stays, so the person doing it is not signed
+    // out of the device they are holding.
     const passwordHash = await hashPassword(newPassword);
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash,
-        mustChangePassword: false,
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          mustChangePassword: false,
+        },
+      });
+      // A reset link issued before the change would undo it.
+      await voidOutstandingResetLinks(user.id, tx);
+      await destroyUserLoginSessions(user.id, req.sessionID, tx);
     });
 
     // Lift the gate for this session immediately (see middleware/passwordChange.ts)
@@ -648,20 +670,13 @@ router.post('/change-password', requireAuth, passwordCheckLimiter, async (req: R
     // old one; a locked account opens with its new password.
     accountLoginLimiter.forget(accountLoginKey(user.email));
 
-    // A reset link issued before the change would undo it.
-    await voidOutstandingResetLinks(user.id);
-
-    // Changing a password is how someone recovers an account they think is
-    // compromised, so the sessions opened with the old one have to end. This
-    // one is kept, so the person doing it is not signed out of the device they
-    // are holding.
-    await destroyUserLoginSessions(user.id, req.sessionID);
     await endLiveSockets(user.id, 'Your password was changed on another device. Sign in again.', { exceptSessionId: req.sessionID });
 
     return res.status(200).json({
       message: 'Password changed successfully',
     });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     logger.error('Error in change-password', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',
@@ -723,6 +738,7 @@ router.delete('/account', requireAuth, passwordCheckLimiter, async (req: Request
 
     return res.status(200).json({ message: 'Account deleted successfully' });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     logger.error('Error deleting account', { err: error });
     return res.status(500).json({ error: 'Internal Server Error', message: 'Failed to delete account' });
   }
@@ -833,19 +849,20 @@ router.post('/mfa/verify', requireAuth, mfaSetupLimiter, async (req: Request, re
     const plainCodes = generateBackupCodes();
     const hashedCodes = await hashBackupCodes(plainCodes);
 
-    // Enable MFA and save hashed backup codes
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        mfaEnabled: true,
-        mfaBackupCodes: hashedCodes,
-      },
+    // Enable MFA and save hashed backup codes. The other devices' sessions
+    // end in the same transaction: if the store cannot be confirmed, MFA is
+    // not left on. This login session stays, as when MFA is turned off.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          mfaEnabled: true,
+          mfaBackupCodes: hashedCodes,
+        },
+      });
+      await destroyUserLoginSessions(userId, req.sessionID, tx);
     });
 
-    // Turning the second factor on is a change to how the account is
-    // protected, often made because something looked wrong, so the sessions
-    // opened without it end. This one is kept, as when MFA is turned off.
-    await destroyUserLoginSessions(userId, req.sessionID);
     await endLiveSockets(userId, 'Two-factor authentication was turned on from another device. Sign in again.', { exceptSessionId: req.sessionID });
 
     return res.status(200).json({
@@ -853,6 +870,7 @@ router.post('/mfa/verify', requireAuth, mfaSetupLimiter, async (req: Request, re
       backupCodes: plainCodes,
     });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     logger.error('Error in MFA verify', { err: error });
     return res.status(500).json({ error: 'Internal Server Error', message: 'Failed to verify MFA token' });
   }
@@ -891,12 +909,30 @@ router.post('/mfa/verify-login', mfaLoginLimiter, mfaAccountLimiter, async (req:
     if (!body.ok) return invalid(res, body.message);
     const { token, backupCode } = body.data;
 
+    // Stamp from the password-proof pending session, not a later User read:
+    // destroy increments epoch and deletes this sid, and a re-read would let
+    // this hop mint a new authenticated cookie.
+    const mintedEpoch = req.session.loginSessionEpoch;
+    mfaVerifyLoginBarrier.reached?.();
+    if (mfaVerifyLoginBarrier.wait) await mfaVerifyLoginBarrier.wait;
+
     const user = await prisma.user.findUnique({
       where: { id: req.session.mfaPendingUserId },
     });
 
     if (!user || !user.mfaEnabled || !user.mfaSecret) {
       return res.status(401).json({ error: 'Unauthorized', message: 'Invalid MFA state' });
+    }
+
+    if (typeof mintedEpoch !== 'number' || mintedEpoch !== user.loginSessionEpoch) {
+      req.session.mfaPending = undefined;
+      req.session.mfaPendingUserId = undefined;
+      req.session.mfaRememberMe = undefined;
+      req.session.mfaPendingAt = undefined;
+      return res.status(401).json({
+        error: 'Sign-In Expired',
+        message: 'Your sign-in timed out at the code step. Sign in again with your password.',
+      });
     }
 
     let backupCodeUsed = false;
@@ -959,6 +995,7 @@ router.post('/mfa/verify-login', mfaLoginLimiter, mfaAccountLimiter, async (req:
     await regenerateSession(req);
     req.session.userId = user.id;
     req.session.platformRole = user.platformRole;
+    req.session.loginSessionEpoch = mintedEpoch;
     recordSignIn(req, user.id);
     req.session.mfaPending = undefined;
     req.session.mfaPendingUserId = undefined;
@@ -1052,25 +1089,27 @@ router.post('/mfa/disable', requireAuth, credentialLimiter, async (req: Request,
       return res.status(401).json({ error: 'Invalid Code', message: 'Invalid authentication code' });
     }
 
-    // Disable MFA
-    await prisma.user.update({
-      where: { id: userId },
-      data: {
-        mfaEnabled: false,
-        mfaSecret: null,
-        mfaBackupCodes: [],
-      },
+    // Disable MFA. The other devices' sessions end in the same transaction:
+    // if the store cannot be confirmed, MFA is not left off. This login
+    // session stays, as with a password change.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          mfaEnabled: false,
+          mfaSecret: null,
+          mfaBackupCodes: [],
+        },
+      });
+      await destroyUserLoginSessions(user.id, req.sessionID, tx);
     });
     forgetTotpSteps(userId);
 
-    // Turning the second factor off is a change to how the account is
-    // protected, so the sessions opened while it was on end with it. This one
-    // is kept, as with a password change.
-    await destroyUserLoginSessions(user.id, req.sessionID);
     await endLiveSockets(user.id, 'Two-factor authentication was turned off on another device. Sign in again.', { exceptSessionId: req.sessionID });
 
     return res.status(200).json({ message: 'MFA disabled successfully' });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     logger.error('Error disabling MFA', { err: error });
     return res.status(500).json({ error: 'Internal Server Error', message: 'Failed to disable MFA' });
   }

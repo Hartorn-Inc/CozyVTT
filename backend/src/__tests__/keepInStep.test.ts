@@ -108,7 +108,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { RESTORE_TRAILER } from '../utils/pgRestore';
+import { RESTORE_PREAMBLE, RESTORE_TRAILER, loginSessionRestoreTrailer, restorePreamble } from '../utils/pgRestore';
 import { sessionSecretProblem } from '../config/sessionSecret';
 import { SOCKET_CEILINGS, type CeilingWindow } from '../websocket/shared';
 import { THEME_IDS, FONT_IDS } from '../validators/appearance';
@@ -235,16 +235,66 @@ describe('the PostgreSQL client the backend image installs', () => {
 describe('backend/scripts/restore.sh', () => {
   const script = read('backend/scripts/restore.sh').replace(/\r\n/g, '\n');
 
+  it('replaces the public schema with the same statements the dashboard restore uses', () => {
+    // Public two-line DROP/CREATE stay in awk BEGIN (custom schema prints
+    // CUSTOM_PREAMBLE instead). Pin those prints to restorePreamble('public').
+    const printed = [...script.matchAll(/print "(DROP SCHEMA public CASCADE;|CREATE SCHEMA public;)"/g)].map(
+      (m) => m[1],
+    );
+    expect(printed).toEqual(restorePreamble('public'));
+    expect(RESTORE_PREAMBLE).toEqual(restorePreamble('public'));
+  });
+
   it('ends the load with the statements the dashboard restore ends it with, emptying the login sessions', () => {
-    // The statements, as the script holds them.
+    // The public statements, as the script holds them. The script may then
+    // append a second line for DATABASE_URL ?schema=; with no custom schema
+    // the trailer it sends must equal loginSessionRestoreTrailer('public').
     const held = /^RESTORE_TRAILER=\$\(cat <<'SQL'\n([\s\S]*?)\nSQL\n\)$/m.exec(script);
     if (!held) throw new Error('restore.sh no longer holds RESTORE_TRAILER in a heredoc; update this test with the script');
-    expect(held[1].split('\n')).toEqual(RESTORE_TRAILER);
+    expect(held[1].split('\n')).toEqual(loginSessionRestoreTrailer('public'));
+    expect(loginSessionRestoreTrailer('public')).toEqual(RESTORE_TRAILER);
+
+    // The script then appends the same second statement loginSessionRestoreTrailer
+    // adds for a simple ?schema= name. Substitute app_data for ${_SCHEMA_SQL}.
+    const extra = /RESTORE_TRAILER="\$\{RESTORE_TRAILER\}\n(DO \\\$\\\$ BEGIN[\s\S]*?END \\\$\\\$;)"/.exec(script);
+    if (!extra) throw new Error('restore.sh no longer appends a custom-schema trailer; update this test with the script');
+    const scriptCustom = extra[1].replace(/\\\$/g, '$').replace(/\$\{_SCHEMA_SQL\}/g, 'app_data');
+    expect(loginSessionRestoreTrailer('app_data')).toEqual([
+      loginSessionRestoreTrailer('public')[0],
+      scriptCustom,
+    ]);
+
+    // Custom-schema restore preamble: one format('%I') line, never DROP SCHEMA public.
+    const preamble = /CUSTOM_PREAMBLE="(DO \\\$\\\$ BEGIN[\s\S]*?END \\\$\\\$;)"/.exec(script);
+    if (!preamble) throw new Error('restore.sh no longer holds a custom-schema preamble; update this test with the script');
+    const scriptCustomPreamble = preamble[1].replace(/\\\$/g, '$').replace(/\$\{_SCHEMA_SQL\}/g, 'app_data');
+    expect(scriptCustomPreamble).toBe(
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;"
+    );
+    expect(scriptCustomPreamble).not.toContain('\n');
+    expect(restorePreamble('app_data')).toEqual([scriptCustomPreamble]);
 
     // Handed to the awk step that writes the file psql loads.
-    const awk = /awk -v key="\$RESTRICT_KEY" -v trailer="\$RESTORE_TRAILER" '\n([\s\S]*?)\n' > "\$PREPARED"/.exec(script);
+    const awk = /awk -v key="\$RESTRICT_KEY" -v custom_preamble="\$CUSTOM_PREAMBLE" -v trailer="\$RESTORE_TRAILER" -v app_schema="\$APP_SCHEMA" '\n([\s\S]*?)\n' > "\$PREPARED"/.exec(script);
     if (!awk) throw new Error('restore.sh no longer hands RESTORE_TRAILER to its awk step; update this test with the script');
     const program = awk[1];
+
+    // CREATE TABLE User / _prisma_migrations count only in APP_SCHEMA
+    // (quoted or unquoted), not any schema qualifier.
+    const createTableChecks = [...program.matchAll(/if \(line ~ \("\^CREATE TABLE[\s\S]*?has_(?:user|migrations) = 1/g)];
+    expect(createTableChecks).toHaveLength(2);
+    for (const [check] of createTableChecks) {
+      expect(check).toContain('app_schema');
+      expect(check).not.toContain('[A-Za-z_][A-Za-z0-9_]*');
+      expect(check).not.toContain('("[^"]+"');
+    }
+
+    // Public two-line DROP/CREATE stay in awk BEGIN. backupRestore.e2e matches
+    // that text on a public restore; a custom schema prints CUSTOM_PREAMBLE only.
+    expect(program).toContain(`print "${RESTORE_PREAMBLE[0]}"`);
+    expect(program).toContain(`print "${RESTORE_PREAMBLE[1]}"`);
+    expect(program).toMatch(/if \(custom_preamble == ""\)/);
+    expect(program).toContain('print custom_preamble');
 
     // Printed once, as the last thing the END block does: END runs after
     // every line of the dump has gone through, and only once it has passed

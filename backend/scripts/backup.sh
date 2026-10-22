@@ -61,9 +61,12 @@ if [[ -z "${DATABASE_URL:-}" ]] && command -v docker >/dev/null 2>&1; then
     echo "  Output: $BACKUP_FILE"
     echo ""
 
+    # Docker Compose has no DATABASE_URL ?schema=; login-session rows live in
+    # public.session and public.revoked_login_session only.
     if docker compose exec -T "$DB_SERVICE" \
         pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges \
           --exclude-table-data=public.session \
+          --exclude-table-data=public.revoked_login_session \
         | gzip > "$BACKUP_FILE"; then
       SIZE=$(du -sh "$BACKUP_FILE" | cut -f1)
       echo "✅ Backup complete: $BACKUP_FILE ($SIZE)"
@@ -115,6 +118,68 @@ else
   DB_NAME="${DB_NAME:-cozyvtt}"
 fi
 
+# Login-session tables follow DATABASE_URL's ?schema=, with public as the
+# default and as the legacy location. Missing or empty is public. A
+# percent-encoded value is decoded first, like the dashboard. Only a simple
+# identifier is used as a dump exclude. A ?schema= that is present and not a
+# simple identifier after decode (a wildcard, hyphen, quote, leading digit)
+# is refused, so a tenant or extension table named session is never touched
+# and pg_dump is not run. Never FROM pg_namespace, never every schema.
+APP_SCHEMA=public
+if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
+  _QS="${DATABASE_URL#*\?}"
+  _QS="${_QS%%#*}"
+  while [[ -n "$_QS" ]]; do
+    _PAIR="${_QS%%&*}"
+    if [[ "$_QS" == *"&"* ]]; then
+      _QS="${_QS#*&}"
+    else
+      _QS=""
+    fi
+    if [[ "${_PAIR%%=*}" == "schema" ]]; then
+      _VAL=""
+      [[ "$_PAIR" == *=* ]] && _VAL="${_PAIR#*=}"
+      if [[ -n "$_VAL" ]]; then
+        # Percent-decode like URLSearchParams: + is space, %HH is that octet.
+        # Invalid % is left so the identifier check refuses it, not public.
+        # printf -v keeps a trailing %0A; command substitution would strip it.
+        _DEC=""
+        _I=0
+        _LEN=${#_VAL}
+        while ((_I < _LEN)); do
+          _C="${_VAL:_I:1}"
+          if [[ "$_C" == "+" ]]; then
+            _DEC+=" "
+            _I=$((_I + 1))
+          elif [[ "$_C" == "%" ]]; then
+            _HEX="${_VAL:_I+1:2}"
+            if [[ "$_HEX" =~ ^[0-9A-Fa-f]{2}$ ]]; then
+              printf -v _OCT '%b' "\\x${_HEX}"
+              _DEC+="$_OCT"
+              _I=$((_I + 3))
+            else
+              _DEC+="%"
+              _I=$((_I + 1))
+            fi
+          else
+            _DEC+="$_C"
+            _I=$((_I + 1))
+          fi
+        done
+        _VAL="$_DEC"
+        if [[ "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          APP_SCHEMA="$_VAL"
+        else
+          echo "❌ DATABASE_URL ?schema='${_VAL}' is not a simple identifier (use letters, digits and underscore). Dump and restore refuse it instead of treating it as public."
+          exit 1
+        fi
+      fi
+      break
+    fi
+  done
+  unset _QS _PAIR _VAL _DEC _I _LEN _C _HEX _OCT
+fi
+
 echo "================================================"
 echo "CozyVTT Database Backup"
 echo "================================================"
@@ -127,11 +192,24 @@ echo ""
 # Run pg_dump
 # --no-owner --no-privileges: the dump then restores under whatever database
 # user the instance it lands on has, instead of insisting on the name used here.
-# --exclude-table-data=public.session: login sessions stay out, so a restore
-# cannot sign back in a device that was signed out since the backup was made.
+# --exclude-table-data for public.session and public.revoked_login_session
+# (and the same tables in DATABASE_URL's ?schema= when that is not public):
+# login-session rows stay out, so a restore cannot sign back in a device that
+# was signed out since the backup was made. Only those schemas; never every
+# schema. Same contract as buildDumpArgs in backend/src/utils/pgRestore.ts.
+EXCLUDE_SESSION_DATA=(
+  --exclude-table-data=public.session
+  --exclude-table-data=public.revoked_login_session
+)
+if [[ "$APP_SCHEMA" != "public" ]]; then
+  EXCLUDE_SESSION_DATA+=(
+    --exclude-table-data="${APP_SCHEMA}.session"
+    --exclude-table-data="${APP_SCHEMA}.revoked_login_session"
+  )
+fi
 if PGPASSWORD="$DB_PASS" pg_dump \
     --no-owner --no-privileges \
-    --exclude-table-data=public.session \
+    "${EXCLUDE_SESSION_DATA[@]}" \
     -h "$DB_HOST" \
     -p "$DB_PORT" \
     -U "$DB_USER" \

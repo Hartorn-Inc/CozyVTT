@@ -18,20 +18,36 @@ const SCRIPT = path.resolve(__dirname, '../../scripts/restore.sh');
 
 const describeOnPosix = process.platform === 'win32' ? describe.skip : describe;
 
-/** The shortest dump the script accepts as a CozyVTT backup. */
-const DUMP = [
-  '-- PostgreSQL database dump',
-  'CREATE TABLE public."User" (',
-  '    id text NOT NULL',
-  ');',
-  'CREATE TABLE public._prisma_migrations (',
-  '    id character varying(36) NOT NULL',
-  ');',
-  'COPY public."User" (id) FROM stdin;',
-  'u1',
-  '\\.',
-  '-- PostgreSQL database dump complete',
-].join('\n') + '\n';
+/** The shortest dump the script accepts as a CozyVTT backup of `schema`. */
+const dumpFor = (schema: string) =>
+  [
+    '-- PostgreSQL database dump',
+    `CREATE TABLE ${schema}."User" (`,
+    '    id text NOT NULL',
+    ');',
+    `CREATE TABLE ${schema}._prisma_migrations (`,
+    '    id character varying(36) NOT NULL',
+    ');',
+    `COPY ${schema}."User" (id) FROM stdin;`,
+    'u1',
+    '\\.',
+    '-- PostgreSQL database dump complete',
+  ].join('\n') + '\n';
+
+const DUMP = dumpFor('public');
+const APP_DATA_DUMP = dumpFor('app_data');
+
+const tablesDump = (user: string, migrations: string) =>
+  [
+    '-- PostgreSQL database dump',
+    `CREATE TABLE ${user} (`,
+    '    id text NOT NULL',
+    ');',
+    `CREATE TABLE ${migrations} (`,
+    '    id character varying(36) NOT NULL',
+    ');',
+    '-- PostgreSQL database dump complete',
+  ].join('\n') + '\n';
 
 describeOnPosix('restore.sh', () => {
   let root: string;
@@ -54,13 +70,13 @@ describeOnPosix('restore.sh', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  const run = () =>
+  const run = (databaseUrl = 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt') =>
     spawnSync('bash', [SCRIPT, backup], {
       cwd: root,
       encoding: 'utf8',
       env: {
         PATH: `${bin}:${process.env.PATH ?? ''}`,
-        DATABASE_URL: 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt',
+        DATABASE_URL: databaseUrl,
         RESTORE_ASSUME_YES: 'yes',
         TMPDIR: root,
       },
@@ -72,7 +88,63 @@ describeOnPosix('restore.sh', () => {
     expect(result.status).toBe(0);
     const text = await fs.readFile(loaded, 'utf8');
     expect(text).toMatch(/^u1$/m);
-    expect(text.trimEnd().split('\n').pop()).toMatch(/DELETE FROM public\.session/);
+    expect(text).toContain('DROP SCHEMA public CASCADE;');
+    expect(text).toContain('CREATE SCHEMA public;');
+    expect(text.trimEnd().split('\n').pop()).toMatch(
+      /to_regclass\('public\.session'\)/
+    );
+  });
+
+  it('treats an empty ?schema= as public', async () => {
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=');
+
+    expect(result.status).toBe(0);
+    const text = await fs.readFile(loaded, 'utf8');
+    expect(text).toContain('DROP SCHEMA public CASCADE;');
+    expect(text).toContain('CREATE SCHEMA public;');
+    expect(text).not.toContain("format('DROP SCHEMA IF EXISTS %I CASCADE'");
+  });
+
+  it('refuses a non-simple ?schema= without invoking psql', async () => {
+    const sentinel = '-- not loaded --\n';
+    await fs.writeFile(loaded, sentinel);
+    for (const schema of ['*', 'foo-bar', '1nope', "foo'bar", '%2A', 'foo%2Dbar']) {
+      await fs.writeFile(loaded, sentinel);
+      const result = run(`postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=${schema}`);
+      expect([schema, result.status]).not.toEqual([schema, 0]);
+      expect(result.stdout + result.stderr).toMatch(/simple identifier/);
+      expect(await fs.readFile(loaded, 'utf8')).toBe(sentinel);
+    }
+  });
+
+  it('replaces a custom ?schema= with format(%I), not public, and still empties login sessions', async () => {
+    await fs.writeFile(backup, gzipSync(APP_DATA_DUMP));
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data');
+
+    expect(result.status).toBe(0);
+    const text = await fs.readFile(loaded, 'utf8');
+    expect(text).toContain(
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;"
+    );
+    expect(text).not.toContain("format('CREATE SCHEMA %I'");
+    expect(text).not.toContain('DROP SCHEMA public CASCADE;');
+    expect(text).toMatch(/to_regclass\('public\.session'\)/);
+    expect(text).toContain("to_regclass(format('%I.session', 'app_data'))");
+  });
+
+  it('percent-decodes ?schema= before the identifier check, so app%5Fdata uses the app_data preamble', async () => {
+    await fs.writeFile(backup, gzipSync(APP_DATA_DUMP));
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app%5Fdata');
+
+    expect(result.status).toBe(0);
+    const text = await fs.readFile(loaded, 'utf8');
+    expect(text).toContain(
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;"
+    );
+    expect(text).toContain("to_regclass(format('%I.session', 'app_data'))");
+    expect(text).not.toContain("format('CREATE SCHEMA %I'");
+    expect(text).not.toContain('DROP SCHEMA public CASCADE;');
+    expect(text).not.toMatch(/app%5Fdata/);
   });
 
   it('loads nothing when the working file comes out cut short, even if awk says it succeeded', async () => {
@@ -143,6 +215,62 @@ describeOnPosix('restore.sh', () => {
     for (const line of lines) {
       expect([line, kept.includes(line)]).toEqual([line, !isOwnershipStatement(line)]);
     }
+  });
+
+  it('accepts CREATE TABLE in a non-public schema, the dump DATABASE_URL?schema= writes', async () => {
+    const dump = tablesDump('app_data."User"', 'app_data._prisma_migrations');
+    await fs.writeFile(backup, gzipSync(dump));
+
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data');
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toMatch(/does not create the User and _prisma_migrations tables/);
+    const text = await fs.readFile(loaded, 'utf8');
+    expect(text).toContain('CREATE TABLE app_data."User" (');
+    expect(text).toContain('CREATE TABLE app_data._prisma_migrations (');
+  });
+
+  it('accepts quoted and unquoted CREATE TABLE forms in the configured schema', async () => {
+    const forms: Array<[string, string, string]> = [
+      ['public."User"', 'public._prisma_migrations', 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt'],
+      ['public.User', 'public._prisma_migrations', 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt'],
+      ['"public"."User"', '"public"."_prisma_migrations"', 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt'],
+      ['app_data."User"', 'app_data._prisma_migrations', 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data'],
+      ['app_data.User', 'app_data._prisma_migrations', 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data'],
+      ['"app_data"."User"', '"app_data"."_prisma_migrations"', 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data'],
+      ['"app_data".User', '"app_data"._prisma_migrations', 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data'],
+    ];
+    for (const [user, migrations, url] of forms) {
+      await fs.writeFile(backup, gzipSync(tablesDump(user, migrations)));
+      const result = run(url);
+      expect([user, result.status]).toEqual([user, 0]);
+      expect(result.stderr).not.toMatch(/does not create the User and _prisma_migrations tables/);
+    }
+  });
+
+  it('refuses a public dump when DATABASE_URL ?schema= is a custom schema, without invoking psql', async () => {
+    const sentinel = '-- not loaded --\n';
+    await fs.writeFile(loaded, sentinel);
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data');
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      'it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup'
+    );
+    expect(await fs.readFile(loaded, 'utf8')).toBe(sentinel);
+  });
+
+  it('refuses a custom-schema dump when DATABASE_URL uses public, without invoking psql', async () => {
+    const sentinel = '-- not loaded --\n';
+    await fs.writeFile(loaded, sentinel);
+    await fs.writeFile(backup, gzipSync(APP_DATA_DUMP));
+    const result = run();
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(
+      'it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup'
+    );
+    expect(await fs.readFile(loaded, 'utf8')).toBe(sentinel);
   });
 
   // On a Docker install the last thing the script prints is how to check the

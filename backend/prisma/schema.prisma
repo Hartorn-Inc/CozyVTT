@@ -119,6 +119,9 @@ model User {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
   lastLoginAt DateTime?
+  // Incremented when login sessions are revoked so a concurrent new sid
+  // minted with the previous value cannot be inserted.
+  loginSessionEpoch Int @default(0)
 
   // Relations
   ownedCampaigns      Campaign[]             @relation("CampaignOwner")
@@ -158,6 +161,18 @@ model LoginSession {
 
   @@index([expire], map: "IDX_session_expire")
   @@map("session")
+  @@ignore
+}
+
+// Rows named by destroyUserLoginSessions in the same transaction as DELETE
+// FROM session so a later store UPSERT cannot recreate that sid until
+// expires_at.
+model RevokedLoginSession {
+  sid       String   @id @db.VarChar
+  expiresAt DateTime @map("expires_at") @db.Timestamp(6)
+
+  @@index([expiresAt], map: "IDX_revoked_login_session_expires")
+  @@map("revoked_login_session")
   @@ignore
 }
 

@@ -7,12 +7,13 @@ through the `pg` driver (`src/config/prismaClient.ts`).
 
 ## Models
 
-The schema is in [`schema.prisma`](./schema.prisma) — 22 models grouped by domain:
+The schema is in [`schema.prisma`](./schema.prisma) — 23 models grouped by domain:
 
 **User & auth**
 - `User` — accounts with optional MFA, which an administrator must turn on within 7 days
 - `PasswordResetToken` — password reset links (1 hour) and admin invitation links (7 days), stored as the SHA-256 of the token (`services/passwordResetTokens.ts`)
-- `LoginSession` — the `session` table where `connect-pg-simple` keeps sign-ins. `@@ignore` leaves it out of the Prisma client; the session store and `services/sessionStore.ts` read and write it with SQL of their own. Its migration, `20261015032229_add_login_session_table`, uses `IF NOT EXISTS`, so on an instance whose backend already made the table it changes nothing
+- `LoginSession` — the `session` table where `connect-pg-simple` keeps sign-ins. `@@ignore` leaves it out of the Prisma client; the session store and `services/sessionStore.ts` read and write it with SQL of their own, in the schema `DATABASE_URL`'s `?schema=` names (public if unset). Its migration, `20261015032229_add_login_session_table`, uses `IF NOT EXISTS`, so on an instance whose backend already made the table it changes nothing
+- `RevokedLoginSession` — login-session ids whose cookies must not come back until they expire. `@@ignore`; ending a person's sign-ins names those ids in the same step as deleting the `session` row, and increments `User.loginSessionEpoch` under a user-scoped advisory lock so a later store write cannot recreate that cookie. Deleting an account, or taking the administrator role away, takes that lock first (those writes are SERIALIZABLE), then deletes `session` rows from a read-committed view on the session-store pool while the lock is held, because the SERIALIZABLE snapshot cannot see a login committed after its first statement and a second Prisma checkout would stall at `connection_limit=1`. A production store write takes the user lock then the per-sid lock and skips a new row when the stamped epoch no longer matches or the id is still revoked; extending expiry stays per-sid; a trigger on `session` is a second skip
 
 **Campaigns & membership**
 - `Campaign` — game-system, vibe settings, spirit-layer config, status

@@ -10,6 +10,17 @@
 import type express from 'express';
 import logger from '../utils/logger';
 
+/** Same name as LoginSessionStoreUnavailable in services/sessionStore.ts. */
+function isLoginSessionStoreUnavailable(err: unknown, depth = 0): boolean {
+  if (typeof err === 'object' && err !== null && 'name' in err && err.name === 'LoginSessionStoreUnavailable') {
+    return true;
+  }
+  if (depth < 5 && typeof err === 'object' && err !== null && 'cause' in err) {
+    return isLoginSessionStoreUnavailable(err.cause, depth + 1);
+  }
+  return false;
+}
+
 /**
  * Anything a route throws or rejects with reaches this, an Error or not:
  * Express 5 passes a rejected promise on too, and code may throw a string.
@@ -38,6 +49,7 @@ export function errorHandler(
   const stack = 'stack' in fields && typeof fields.stack === 'string' ? fields.stack : undefined;
   const tooLarge = rawStatus === 413 || parserType === 'entity.too.large';
   const notJson = parserType === 'entity.parse.failed';
+  const loginSessionStoreUnavailable = isLoginSessionStoreUnavailable(err);
   // TODO(accounts): body-parser's own 415s (`charset.unsupported`,
   // `encoding.unsupported`) fall through to the 500 below. Answer them 415 as
   // the caller's mistake, like the two cases above.
@@ -52,7 +64,7 @@ export function errorHandler(
       method: req.method,
       path: req.path,
     });
-  } else {
+  } else if (!loginSessionStoreUnavailable) {
     logger.error('Unhandled error', { message, stack });
   }
 
@@ -75,6 +87,14 @@ export function errorHandler(
     res.status(400).json({
       error: 'Bad Request',
       message: 'The request body was not valid JSON.',
+    });
+    return;
+  }
+
+  if (loginSessionStoreUnavailable) {
+    res.status(503).json({
+      error: 'Service Unavailable',
+      message: 'The login session could not be confirmed. Try again in a moment.',
     });
     return;
   }

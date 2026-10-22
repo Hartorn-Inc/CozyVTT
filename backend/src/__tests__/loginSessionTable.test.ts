@@ -22,11 +22,13 @@ const BACKEND = path.resolve(__dirname, '../..');
 const PRISMA = path.join(BACKEND, 'node_modules', '.bin', process.platform === 'win32' ? 'prisma.cmd' : 'prisma');
 const MIGRATIONS = path.join(BACKEND, 'prisma', 'migrations');
 const MIGRATION = fs.readdirSync(MIGRATIONS).find((name) => name.endsWith('_add_login_session_table'));
+const REVOKED_MIGRATION = fs.readdirSync(MIGRATIONS).find((name) => name.endsWith('_add_revoked_login_session'));
 const TABLE_SQL = path.join(path.dirname(require.resolve('connect-pg-simple/package.json')), 'table.sql');
 
 const PUSHED = 'login_session_pushed_test';
 const STORE = 'login_session_store_test';
 const MIGRATED = 'login_session_migrated_test';
+const REVOKED = 'login_session_revoked_migration_test';
 
 const base = process.env.DATABASE_URL;
 let pushed: IsolatedSchema;
@@ -65,9 +67,10 @@ const sids = async (schema: string) =>
 beforeAll(async () => {
   if (!base) throw new Error('This test needs DATABASE_URL');
   if (!MIGRATION) throw new Error('No migration makes the sign-in table');
+  if (!REVOKED_MIGRATION) throw new Error('No migration makes the revoked-login-session table');
   client = new Client({ connectionString: base });
   await client.connect();
-  for (const schema of [STORE, MIGRATED]) {
+  for (const schema of [STORE, MIGRATED, REVOKED]) {
     await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
     await client.query(`CREATE SCHEMA "${schema}"`);
   }
@@ -77,7 +80,7 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  for (const schema of [STORE, MIGRATED]) await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+  for (const schema of [STORE, MIGRATED, REVOKED]) await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
   await client.end();
   pushed.drop();
 });
@@ -112,4 +115,42 @@ it('is left alone by its migration where the server already made it, sign-ins in
   await inSchema(STORE, sql);
   expect(await layout(STORE)).toEqual(before);
   expect(await sids(STORE)).toEqual(['signed-in']);
+});
+
+it('applies the revoked-login-session migration on a schema that has no session table, and creates the trigger', async () => {
+  const existing = await client.query(
+    `SELECT 1 FROM information_schema.tables WHERE table_schema = $1 AND table_name = 'session'`,
+    [REVOKED],
+  );
+  expect(existing.rows).toHaveLength(0);
+
+  const sql = fs.readFileSync(path.join(MIGRATIONS, REVOKED_MIGRATION ?? '', 'migration.sql'), 'utf8');
+  await inSchema(REVOKED, sql);
+
+  const trigger = await client.query<{ tgname: string }>(
+    `SELECT t.tgname
+       FROM pg_trigger t
+       JOIN pg_class c ON c.oid = t.tgrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = $1 AND c.relname = 'session' AND NOT t.tgisinternal
+      ORDER BY t.tgname`,
+    [REVOKED],
+  );
+  expect(trigger.rows.map((row) => row.tgname)).toContain('session_reject_revoked');
+
+  const revoked = await client.query(
+    `SELECT column_name FROM information_schema.columns
+      WHERE table_schema = $1 AND table_name = 'revoked_login_session'
+      ORDER BY column_name`,
+    [REVOKED],
+  );
+  expect(revoked.rows.map((row) => row.column_name)).toEqual(['expires_at', 'sid']);
+  const revokedIndexes = await client.query<{ indexname: string }>(
+    "SELECT indexname FROM pg_indexes WHERE schemaname = $1 AND tablename = 'revoked_login_session' ORDER BY indexname",
+    [REVOKED],
+  );
+  expect(revokedIndexes.rows.map((row) => row.indexname)).toEqual([
+    'IDX_revoked_login_session_expires',
+    'revoked_login_session_pkey',
+  ]);
 });

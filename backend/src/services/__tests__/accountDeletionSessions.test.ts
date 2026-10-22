@@ -4,8 +4,12 @@
  * The sessions were removed after the deletion had committed, by a helper
  * that swallowed errors. A failure there left the deleted account's other
  * sign-ins alive, carrying their copy of the role, until they expired. The
- * removal is now part of the deletion's own transaction: either both happen
- * or neither does.
+ * removal is now part of the deletion's own transaction: the user row and
+ * epoch increment share that SERIALIZABLE transaction, while session-row
+ * DELETE uses a read-committed view on another connection while the user
+ * lock is held. If the serializable transaction later rolls back, those
+ * session rows are already gone (fail-closed). A store failure still fails
+ * the deletion so the uncommitted user delete does not land.
  *
  * Runs against the `session` table connect-pg-simple owns in the real app,
  * which the test run's global setup makes; only this file's rows are

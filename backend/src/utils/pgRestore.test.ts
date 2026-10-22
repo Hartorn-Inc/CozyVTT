@@ -31,7 +31,15 @@ import {
   prepareDumpForRestore,
   RESTORE_PREAMBLE,
   RESTORE_TRAILER,
+  loginSessionRestoreTrailer,
+  restorePreamble,
+  schemaFromDatabaseUrl,
+  UnsupportedBackupRestoreSchema,
 } from './pgRestore';
+
+/** Trailer prepareDumpForRestore appends for this process's DATABASE_URL. */
+const preparedTrailer = () =>
+  loginSessionRestoreTrailer(schemaFromDatabaseUrl(process.env.DATABASE_URL ?? ''));
 
 describe('buildRestoreArgs', () => {
   const args = buildRestoreArgs('postgresql://u:p@h:5432/db', '/tmp/backup/database.sql');
@@ -77,9 +85,33 @@ describe('pgConnection', () => {
     expect(dbname).not.toContain('p%40ss');
   });
 
+  it('gives libpq a password whose encoded form includes a percent sign', () => {
+    const { env } = pgConnection(
+      'postgresql://cozy%2Badmin:p%40ss%25w0rd@db.internal/cozyvtt?schema=public',
+    );
+    expect(env.PGPASSWORD).toBe('p@ss%w0rd');
+  });
+
   it('keeps the query string, which may carry connection options', () => {
     const { dbname } = pgConnection('postgresql://u:p@h:5432/db?sslmode=require');
     expect(dbname).toBe('postgresql://u@h:5432/db?sslmode=require');
+  });
+
+  it('drops Prisma-only query parameters that libpq rejects, and keeps sslmode', () => {
+    const { dbname, env } = pgConnection(
+      'postgresql://u:p@h:5432/db?schema=tenant&connection_limit=5&sslmode=require',
+    );
+    expect(dbname).toBe('postgresql://u@h:5432/db?sslmode=require');
+    expect(dbname).not.toMatch(/schema=/);
+    expect(dbname).not.toMatch(/connection_limit=/);
+    expect(env.PGPASSWORD).toBe('p');
+  });
+
+  it('strips Prisma-only query parameters from a passwordless address too', () => {
+    const { dbname, env } = pgConnection('postgresql://u@h:5432/db?schema=tenant');
+    expect(dbname).toBe('postgresql://u@h:5432/db');
+    expect(dbname).not.toMatch(/schema=/);
+    expect(env).not.toHaveProperty('PGPASSWORD');
   });
 
   it('leaves an address without a password alone, and sets no password', () => {
@@ -109,6 +141,20 @@ describe('buildDumpArgs and buildRestoreArgs', () => {
     expect(args.join(' ')).not.toContain('s3cret');
     expect(args).toContain('postgresql://cozyvtt@database:5432/cozyvtt');
   });
+
+  it.each([
+    ['buildDumpArgs', buildDumpArgs],
+    ['buildRestoreArgs', buildRestoreArgs],
+  ])('%s drops schema= and connection_limit= from the address and puts no password on argv', (_name, build) => {
+    const args = build(
+      'postgresql://cozyvtt:s3cret@database:5432/cozyvtt?schema=tenant&connection_limit=5',
+      '/tmp/db.sql',
+    );
+    expect(args.join(' ')).not.toContain('s3cret');
+    expect(args.join(' ')).not.toMatch(/schema=/);
+    expect(args.join(' ')).not.toMatch(/connection_limit=/);
+    expect(args).toContain('postgresql://cozyvtt@database:5432/cozyvtt');
+  });
 });
 
 describe('buildDumpArgs', () => {
@@ -119,7 +165,151 @@ describe('buildDumpArgs', () => {
   });
 
   it('leaves the login sessions out, so a restore cannot bring back a sign-in that was ended since', () => {
-    expect(buildDumpArgs('postgresql://x', '/tmp/db.sql')).toContain('--exclude-table-data=public.session');
+    const args = buildDumpArgs('postgresql://x', '/tmp/db.sql');
+    expect(args).toContain('--exclude-table-data=public.session');
+    expect(args).toContain('--exclude-table-data=public.revoked_login_session');
+  });
+
+  it('excludes only the public login-session tables when ?schema= is empty', () => {
+    const args = buildDumpArgs('postgresql://u:p@h:5432/db?schema=', '/tmp/db.sql');
+    expect(args.filter((arg) => arg.startsWith('--exclude-table-data='))).toEqual([
+      '--exclude-table-data=public.session',
+      '--exclude-table-data=public.revoked_login_session',
+    ]);
+  });
+
+  it('excludes public and tenant login-session tables when DATABASE_URL names a schema, without scanning pg_namespace', () => {
+    const args = buildDumpArgs('postgresql://u:p@h:5432/db?schema=tenant', '/tmp/db.sql');
+    expect(args).toEqual(expect.arrayContaining([
+      '--exclude-table-data=public.session',
+      '--exclude-table-data=public.revoked_login_session',
+      '--exclude-table-data=tenant.session',
+      '--exclude-table-data=tenant.revoked_login_session',
+    ]));
+    expect(args.join(' ')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it('percent-decodes ?schema= before the identifier check, so app%5Fdata excludes app_data rather than refusing', () => {
+    const args = buildDumpArgs('postgresql://u:p@h:5432/db?schema=app%5Fdata', '/tmp/db.sql');
+    expect(args).toEqual(expect.arrayContaining([
+      '--exclude-table-data=public.session',
+      '--exclude-table-data=public.revoked_login_session',
+      '--exclude-table-data=app_data.session',
+      '--exclude-table-data=app_data.revoked_login_session',
+    ]));
+    expect(args.join(' ')).not.toMatch(/app%5Fdata/);
+  });
+
+  it.each(['*', 'foo-bar', '%2A'])(
+    'refuses ?schema=%s instead of treating it as public or interpolating a wildcard exclude',
+    (schema) => {
+      expect(() => buildDumpArgs(`postgresql://u:p@h:5432/db?schema=${schema}`, '/tmp/db.sql')).toThrow(
+        UnsupportedBackupRestoreSchema,
+      );
+      try {
+        buildDumpArgs(`postgresql://u:p@h:5432/db?schema=${schema}`, '/tmp/db.sql');
+      } catch (err) {
+        expect(String(err)).not.toMatch(/--exclude-table-data=\*\.session|pg_namespace|nspname/);
+      }
+    },
+  );
+});
+
+describe('schemaFromDatabaseUrl', () => {
+  it('reads ?schema= and treats a missing parameter, an empty value, or an unreadable address as public', () => {
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=tenant')).toBe('tenant');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db')).toBe('public');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=')).toBe('public');
+    expect(schemaFromDatabaseUrl('not a url')).toBe('public');
+  });
+
+  it('returns a wildcard or hyphenated ?schema= as it is, so dump and restore can refuse it rather than pretend public', () => {
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=*')).toBe('*');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=foo-bar')).toBe('foo-bar');
+  });
+
+  it('percent-decodes ?schema= the way URLSearchParams does, before dump and restore assert a simple identifier', () => {
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=app%5Fdata')).toBe('app_data');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=%2A')).toBe('*');
+  });
+});
+
+describe('loginSessionRestoreTrailer', () => {
+  it('empties only the public login-session tables when the schema is public', () => {
+    expect(loginSessionRestoreTrailer('public')).toEqual(RESTORE_TRAILER);
+    expect(loginSessionRestoreTrailer('public')).toHaveLength(1);
+    expect(loginSessionRestoreTrailer('public')[0]).toMatch(/to_regclass\('public\.session'\)/);
+    expect(loginSessionRestoreTrailer('public')[0]).toMatch(/to_regclass\('public\.revoked_login_session'\)/);
+    expect(loginSessionRestoreTrailer('public').join('\n')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it('adds a format(%I) statement for a non-public schema, naming it as a string literal', () => {
+    const lines = loginSessionRestoreTrailer('tenant');
+    expect(lines[0]).toBe(RESTORE_TRAILER[0]);
+    expect(lines[1]).toContain("format('%I.session'");
+    expect(lines[1]).toContain("format('%I.revoked_login_session'");
+    expect(lines[1]).toContain("'tenant'");
+    expect(lines.join('\n')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it('accepts a schema percent-decoded from DATABASE_URL, naming app_data not app%5Fdata', () => {
+    const schema = schemaFromDatabaseUrl('postgresql://u@h/db?schema=app%5Fdata');
+    const lines = loginSessionRestoreTrailer(schema);
+    expect(lines[1]).toContain("'app_data'");
+    expect(lines[1]).toContain("format('%I.session'");
+    expect(lines.join('\n')).not.toMatch(/app%5Fdata/);
+  });
+
+  it('refuses a schema percent-decoded from ?schema=%2A instead of using the public-only trailer', () => {
+    const schema = schemaFromDatabaseUrl('postgresql://u@h/db?schema=%2A');
+    expect(() => loginSessionRestoreTrailer(schema)).toThrow(UnsupportedBackupRestoreSchema);
+  });
+
+  it.each(['*', 'foo-bar'])('refuses schema name %s instead of using the public-only trailer', (schema) => {
+    expect(() => loginSessionRestoreTrailer(schema)).toThrow(UnsupportedBackupRestoreSchema);
+    expect(() => loginSessionRestoreTrailer(schema)).toThrow(/simple identifier/);
+    try {
+      loginSessionRestoreTrailer(schema);
+    } catch (err) {
+      expect(String(err)).not.toMatch(/pg_namespace|nspname/);
+    }
+  });
+});
+
+describe('restorePreamble', () => {
+  it('keeps the public DROP/CREATE statements for public', () => {
+    expect(restorePreamble('public')).toEqual(['DROP SCHEMA public CASCADE;', 'CREATE SCHEMA public;']);
+    expect(RESTORE_PREAMBLE).toEqual(restorePreamble('public'));
+  });
+
+  it('drops only the named schema via format(%I), not public, and leaves CREATE to the dump', () => {
+    const lines = restorePreamble('app_data');
+    expect(lines).toEqual([
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;",
+    ]);
+    expect(lines.join('\n')).toContain("format('DROP SCHEMA IF EXISTS %I CASCADE'");
+    expect(lines.join('\n')).not.toContain("format('CREATE SCHEMA %I'");
+    expect(lines.join('\n')).not.toContain('DROP SCHEMA public');
+    expect(lines.join('\n')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it('accepts a schema percent-decoded from DATABASE_URL and drops app_data via format(%I), not public', () => {
+    const schema = schemaFromDatabaseUrl('postgresql://u@h/db?schema=app%5Fdata');
+    const lines = restorePreamble(schema);
+    expect(lines).toEqual([
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;",
+    ]);
+    expect(lines.join('\n')).not.toContain('DROP SCHEMA public');
+    expect(lines.join('\n')).not.toMatch(/app%5Fdata/);
+  });
+
+  it('refuses a schema percent-decoded from ?schema=%2A instead of falling back to the public preamble', () => {
+    const schema = schemaFromDatabaseUrl('postgresql://u@h/db?schema=%2A');
+    expect(() => restorePreamble(schema)).toThrow(UnsupportedBackupRestoreSchema);
+  });
+
+  it.each(['*', 'foo-bar'])('refuses schema name %s instead of falling back to the public preamble', (schema) => {
+    expect(() => restorePreamble(schema)).toThrow(UnsupportedBackupRestoreSchema);
   });
 });
 
@@ -264,6 +454,37 @@ describe('prepareDumpForRestore', () => {
     '\\unrestrict k3y',
   ];
 
+  /** Same dump with User and _prisma_migrations created in `schema` instead of public. */
+  const dumpWithRequiredTablesIn = (schema: string): string[] =>
+    NEWER_CLIENT_DUMP.map((line) => {
+      if (line === 'CREATE TABLE public."User" (') return `CREATE TABLE ${schema}."User" (`;
+      if (line === 'CREATE TABLE public._prisma_migrations (') {
+        return `CREATE TABLE ${schema}._prisma_migrations (`;
+      }
+      return line;
+    });
+
+  const withDatabaseUrl = async (url: string, run: () => Promise<void>) => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = url;
+    try {
+      await run();
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  };
+
+  const requiredTablesDump = (userCreate: string, migrationsCreate: string) => [
+    userCreate,
+    '    id text NOT NULL',
+    ');',
+    migrationsCreate,
+    '    id character varying(36) NOT NULL',
+    ');',
+    '-- PostgreSQL database dump complete',
+  ];
+
   const isSkipped = (l: string) =>
     l === 'SET transaction_timeout = 0;' ||
     (l.startsWith('ALTER ') && l.includes(' OWNER TO ')) ||
@@ -290,9 +511,71 @@ describe('prepareDumpForRestore', () => {
 
     const [restrict, ...rest] = (await fs.readFile(dest, 'utf8')).split('\n');
     expect(restrict).toMatch(RESTRICT_LINE);
-    expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...expectedBody(NEWER_CLIENT_DUMP), ...RESTORE_TRAILER].join('\n') + '\n');
+    expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...expectedBody(NEWER_CLIENT_DUMP), ...preparedTrailer()].join('\n') + '\n');
+    expect(rest.join('\n')).toContain("to_regclass('public.session')");
     expect(result.skipped).toEqual({ settings: ['SET transaction_timeout = 0;'], ownership: 3, privileges: 1 });
     expect(result.refused).toBeNull();
+  });
+
+  it('writes a custom-schema preamble when DATABASE_URL names a schema other than public', async () => {
+    await withDatabaseUrl('postgresql://u:p@h:5432/db?schema=app_data', async () => {
+      const src = await write('database.sql', dumpWithRequiredTablesIn('app_data'));
+      const dest = path.join(dir, 'restore.sql');
+
+      const result = await prepareDumpForRestore(src, dest);
+
+      const [restrict, ...rest] = (await fs.readFile(dest, 'utf8')).split('\n');
+      expect(restrict).toMatch(RESTRICT_LINE);
+      const preamble = restorePreamble('app_data');
+      expect(rest.slice(0, preamble.length).join('\n')).toBe(preamble.join('\n'));
+      expect(rest.join('\n')).not.toContain('DROP SCHEMA public');
+      expect(rest.join('\n')).not.toMatch(/pg_namespace|nspname/);
+      expect(result.refused).toBeNull();
+    });
+  });
+
+  it('writes a custom-schema preamble when DATABASE_URL percent-encodes a simple schema as app%5Fdata', async () => {
+    await withDatabaseUrl('postgresql://u:p@h:5432/db?schema=app%5Fdata', async () => {
+      const src = await write('database.sql', dumpWithRequiredTablesIn('app_data'));
+      const dest = path.join(dir, 'restore.sql');
+
+      const result = await prepareDumpForRestore(src, dest);
+
+      const out = await fs.readFile(dest, 'utf8');
+      expect(out).toContain("format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data')");
+      expect(out).toContain("to_regclass(format('%I.session', 'app_data'))");
+      expect(out).not.toContain('DROP SCHEMA public');
+      expect(out).not.toMatch(/app%5Fdata/);
+      expect(result.refused).toBeNull();
+    });
+  });
+
+  it('refuses a DATABASE_URL whose ?schema= is not a simple identifier', async () => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=*';
+    try {
+      const src = await write('database.sql', NEWER_CLIENT_DUMP);
+      await expect(prepareDumpForRestore(src, path.join(dir, 'restore.sql'))).rejects.toThrow(
+        UnsupportedBackupRestoreSchema,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  });
+
+  it('refuses a DATABASE_URL whose percent-encoded ?schema=%2A is not a simple identifier', async () => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=%2A';
+    try {
+      const src = await write('database.sql', NEWER_CLIENT_DUMP);
+      await expect(prepareDumpForRestore(src, path.join(dir, 'restore.sql'))).rejects.toThrow(
+        UnsupportedBackupRestoreSchema,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
   });
 
   it('drops every owner and privilege statement, so the backup restores under whatever database user the instance has', async () => {
@@ -331,7 +614,8 @@ describe('prepareDumpForRestore', () => {
 
     const [restrict, ...rest] = (await fs.readFile(dest, 'utf8')).split('\n');
     expect(restrict).toMatch(RESTRICT_LINE);
-    expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...clean, ...RESTORE_TRAILER].join('\n') + '\n');
+    expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...clean, ...preparedTrailer()].join('\n') + '\n');
+    expect(rest.join('\n')).toContain("to_regclass('public.session')");
     expect(result.skipped).toEqual({ settings: [], ownership: 0, privileges: 0 });
     expect(result.refused).toBeNull();
   });
@@ -473,6 +757,59 @@ describe('prepareDumpForRestore', () => {
       expect(refused).toContain('User');
     });
 
+    it('refuses a dump that creates User and _prisma_migrations in a non-public schema when the instance is on public', async () => {
+      const src = await write(
+        'database.sql',
+        requiredTablesDump('CREATE TABLE app_data."User" (', 'CREATE TABLE app_data._prisma_migrations ('),
+      );
+
+      const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+
+      expect(refused).toBe(
+        'it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup',
+      );
+    });
+
+    it('accepts a dump that creates User and _prisma_migrations in app_data when DATABASE_URL names that schema', async () => {
+      await withDatabaseUrl('postgresql://u:p@h:5432/db?schema=app_data', async () => {
+        const src = await write(
+          'database.sql',
+          requiredTablesDump('CREATE TABLE app_data."User" (', 'CREATE TABLE app_data._prisma_migrations ('),
+        );
+
+        const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+
+        expect(refused).toBeNull();
+      });
+    });
+
+    it('refuses a public dump when DATABASE_URL names a schema other than public', async () => {
+      await withDatabaseUrl('postgresql://u:p@h:5432/db?schema=app_data', async () => {
+        const src = await write('database.sql', NEWER_CLIENT_DUMP);
+
+        const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+
+        expect(refused).toBe(
+          'it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup',
+        );
+      });
+    });
+
+    it.each([
+      ['unquoted public schema and User', 'CREATE TABLE public.User (', 'CREATE TABLE public._prisma_migrations (', undefined],
+      ['quoted public schema', 'CREATE TABLE "public"."User" (', 'CREATE TABLE "public"._prisma_migrations (', undefined],
+      ['unquoted app_data schema and User', 'CREATE TABLE app_data.User (', 'CREATE TABLE app_data._prisma_migrations (', 'app_data'],
+      ['quoted app_data schema', 'CREATE TABLE "app_data"."User" (', 'CREATE TABLE "app_data"._prisma_migrations (', 'app_data'],
+    ])('accepts %s CREATE TABLE forms in the instance schema', async (_label, userCreate, migrationsCreate, schema) => {
+      const run = async () => {
+        const src = await write('database.sql', requiredTablesDump(userCreate, migrationsCreate));
+        const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+        expect(refused).toBeNull();
+      };
+      if (schema === undefined) await run();
+      else await withDatabaseUrl(`postgresql://u:p@h:5432/db?schema=${schema}`, run);
+    });
+
     it('accepts a real dump taken on Windows line endings', async () => {
       const src = path.join(dir, 'database.sql');
       await fs.writeFile(src, NEWER_CLIENT_DUMP.join('\r\n') + '\r\n');
@@ -506,7 +843,7 @@ describe('prepareDumpForRestore', () => {
 
     expect(refused).toBeNull();
     const out = await fs.readFile(dest);
-    const trailer = Buffer.from(RESTORE_TRAILER.join('\n') + '\n');
+    const trailer = Buffer.from(preparedTrailer().join('\n') + '\n');
     const afterPreamble = out.subarray(out.indexOf(RESTORE_PREAMBLE[1]) + RESTORE_PREAMBLE[1].length + 1, out.length - trailer.length);
     expect(afterPreamble.equals(body)).toBe(true);
     expect(out.subarray(out.length - trailer.length).equals(trailer)).toBe(true);
@@ -559,6 +896,10 @@ describe('prepareDumpForRestore', () => {
     // a very old backup, so the purge checks for it first.
     expect(RESTORE_TRAILER.join('\n')).toMatch(/to_regclass\('public\.session'\)/);
     expect(RESTORE_TRAILER.join('\n')).toMatch(/DELETE FROM public\.session/);
+    expect(preparedTrailer()[0]).toBe(RESTORE_TRAILER[0]);
+    if (!process.env.DATABASE_URL?.includes('schema=')) {
+      expect(preparedTrailer()).toEqual(RESTORE_TRAILER);
+    }
   });
 
   it('runs the schema replacement inside the same transaction as the dump', () => {

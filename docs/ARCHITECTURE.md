@@ -181,9 +181,10 @@ src/
 │   ├── proxyLimits.ts    Proxy body-cap parsing and startup warnings
 │   ├── byteRange.ts      HTTP Range header reading for audio streaming
 │   ├── shutdown.ts       SIGTERM/SIGINT: stop taking requests, let a dashboard backup finish
-│   │                     (up to 10 minutes, services/backupsInProgress.ts) and a deleted
-│   │                     account's file removal (up to 4 seconds), close sockets,
-│   │                     database and session store, then exit; an error nothing caught is
+│   │                     (up to 10 minutes, services/backupsInProgress.ts), a deleted
+│   │                     account's file removal (up to 4 seconds), and listen-callback
+│   │                     startup work that still talks to the database, then close sockets,
+│   │                     database and session store and exit; an error nothing caught is
 │   │                     logged before the process exits 1
 │   └── logger.ts         Winston logger configuration
 └── types/             Shared TypeScript interfaces
@@ -206,7 +207,7 @@ Real-time gameplay logic lives in the per-domain `websocket/handlers/*` modules;
 9. On `/api`, the general rate limiter (`RATE_LIMIT_MAX_REQUESTS` a minute per address, 300 by default; express-rate-limit counts an IPv6 address by its /56 network)
 10. On `/api`, the password-change gate, then the administrator MFA gate
 11. The routers: setup, config, auth, users, admin, campaigns (with macros and documents), characters, character templates, invitations, assets, and the maps, creatures and token templates nested under `/api/campaigns/:campaignId`
-12. A JSON 404 for anything no router answered, then `errorHandler`: 413 for a body over the limit and 400 for one that is not valid JSON, and a JSON 500 for anything else a route throws or a promise it returns rejects with, Error or not; when the answer has already started, it logs the error and leaves Express to end the connection
+12. A JSON 404 for anything no router answered, then `errorHandler`: 413 for a body over the limit and 400 for one that is not valid JSON, a JSON 503 when the login-session store cannot be confirmed, and a JSON 500 for anything else a route throws or a promise it returns rejects with, Error or not; when the answer has already started, it logs the error and leaves Express to end the connection
 
 Inside a router, each route names its own guards (`middleware/compose.ts`; the admin router mounts its two for every route) and any limiter of its own, then checks its body with Zod.
 
@@ -366,7 +367,7 @@ graph LR
 
 ## Database Schema
 
-The full Prisma schema is at `backend/prisma/schema.prisma`, and the Prisma command-line tools (`generate`, `migrate deploy`, `db push`) take their settings from `backend/prisma.config.ts`. `prisma generate` writes the client (the `prisma-client-js` generator) into `node_modules/.prisma`: `npm run build` runs it before compiling, and the production image copies what it wrote. Since Prisma 7 the client has no connection engine of its own: it runs its queries through the `pg` driver, the one the session store uses through a pool of its own, by way of `@prisma/adapter-pg`. `backend/src/config/prismaClient.ts` makes every client the backend, its scripts and its tests use, and reads a `DATABASE_URL` written for Prisma into pg's terms: `?schema=` names the schema queries are qualified with and becomes the connection's `search_path` (raw queries name their tables unqualified), `?connection_limit=` becomes the pool size (pg's default otherwise, ten), and a new connection may take five seconds. Below is an entity relationship diagram of every model, with the fields that matter here. A test checks it against the schema, so a model, field or relation that does not exist cannot stay in it. The login sessions are `LoginSession`, the `session` table that `connect-pg-simple`, and `services/sessionStore.ts` with raw queries, read and write themselves (see Authentication below). It is in the schema so the migrations make it and `prisma db push` keeps it, and `@@ignore` leaves it out of the Prisma client. The `Session` below is a game session.
+The full Prisma schema is at `backend/prisma/schema.prisma`, and the Prisma command-line tools (`generate`, `migrate deploy`, `db push`) take their settings from `backend/prisma.config.ts`. `prisma generate` writes the client (the `prisma-client-js` generator) into `node_modules/.prisma`: `npm run build` runs it before compiling, and the production image copies what it wrote. Since Prisma 7 the client has no connection engine of its own: it runs its queries through the `pg` driver, the one the session store uses through a pool of its own, by way of `@prisma/adapter-pg`. `backend/src/config/prismaClient.ts` makes every client the backend, its scripts and its tests use, and reads a `DATABASE_URL` written for Prisma into pg's terms: `?schema=` names the schema queries are qualified with and becomes the connection's `search_path` (raw queries name their tables unqualified), `?connection_limit=` becomes the pool size (pg's default otherwise, ten), and a new connection may take five seconds. Below is an entity relationship diagram of every model, with the fields that matter here. A test checks it against the schema, so a model, field or relation that does not exist cannot stay in it. The login sessions are `LoginSession` and `RevokedLoginSession` (both `@@ignore`). `LoginSession` is the `session` table that `connect-pg-simple`, and `services/sessionStore.ts` with raw queries, read and write themselves (see Authentication below). It is in the schema so the migrations make it and `prisma db push` keeps it. Revoked rows are named in the same transaction as DELETE FROM session. Destroy takes a user-scoped advisory lock, increments `User.loginSessionEpoch`, then per-sid locks; production set takes those locks in the same order and skips a new INSERT when the stamped epoch no longer matches. Touch stays per-sid. A later store UPSERT cannot recreate a revoked sid. The `Session` below is a game session.
 
 ```mermaid
 erDiagram
@@ -591,6 +592,11 @@ erDiagram
         datetime expire
     }
 
+    RevokedLoginSession {
+        string sid PK
+        datetime expiresAt
+    }
+
     User ||--o{ Campaign : "owns"
     User ||--o{ CampaignMembership : "belongs to"
     Campaign ||--o{ CampaignMembership : "has"
@@ -646,7 +652,7 @@ erDiagram
 
 ### Session Authentication
 
-CozyVTT uses **express-session** with **connect-pg-simple** to store sessions in PostgreSQL, through a `pg` pool of its own (`sessionPool` in `config/session.ts`), apart from the Prisma client's. This means sessions survive server restarts and scale to multiple processes.
+CozyVTT uses **express-session** with **connect-pg-simple** to store sessions in PostgreSQL, through a `pg` pool of its own (`sessionPool` in `config/session.ts`), apart from the Prisma client's. The session pool is built from `databaseConnectionSettings` so login sessions live in the configured schema with Prisma's raw session SQL. This means sessions survive server restarts. The in-memory block of revoked sids is one backend process (ADR 0007). The durable path is cluster-wide: revocation takes a user-scoped advisory lock, increments `User.loginSessionEpoch`, writes `revoked_login_session` in the same transaction as DELETE, and production set takes the user then per-sid `pg_advisory_xact_lock` (touch stays per-sid), then skips a new INSERT when the stamped epoch no longer matches or the sid is revoked, so a concurrent UPSERT cannot recreate the row after DELETE commits and a concurrent first login after reset cannot land; a trigger on `session` is a second skip. Serializable account deletion and USER demotion take that user advisory lock as their first statement; session-row DELETE then uses a read-committed view on the session-store pool, not a second Prisma connection, because the SERIALIZABLE snapshot cannot see a sid committed after the first statement and the serializable transaction already holds the Prisma connection (`connection_limit=1` would otherwise wait out and 503). That Read Committed revoke is durable if the serializable transaction later rolls back, and it ends the user's live sockets even when the write later answers 409.
 
 ```mermaid
 sequenceDiagram
@@ -669,7 +675,7 @@ sequenceDiagram
     S-->>C: 200 response
 ```
 
-A session expires after an hour with no requests (`SESSION_MAX_AGE`; "Remember me" makes it 30 days), and each request starts the hour again. It also ends `REMEMBER_ME_MAX_AGE` (30 days) after it was made, however active: `signedInAt` is set at sign-in and checked by the guards, `GET /api/auth/me` (which shares the guards' check, `withinSignInLimitOr401`) and the socket handshake (`services/signedIn.ts`), and a session from before the field existed is stamped when next seen. Each sign-in removes the account's oldest sessions beyond 20 (`capLoginSessions`), and the session row holds the user id and role, `signedInAt`, `mustChangePassword` and the MFA pending fields. Two kinds of activity make no requests, so they ping `GET /api/auth/ping` every ten minutes through `services/sessionKeepAlive.ts`: the campaign page while its live connection is up, and a character sheet editor while it holds unsaved changes (at once when the changes appear too, since the hour may be nearly up). When a request answers 401 on a page that needs a session, the API client's interceptor normally sends the browser to the sign-in page, carrying the page as `?next=` so signing in returns to it (`utils/returnTo.ts` follows only a path on this origin that is not a public page). While a character sheet editor holds unsaved changes it does not: `services/unsavedWork.ts` keeps the page where it is and marks the browser signed out, and the editor says so, with a link to sign in in a new tab. The session cookie is shared between tabs, so the editor's Save works once that sign-in is done. A sign-in that reached its age limit answers with `code: 'SIGN_IN_EXPIRED'`, and its sentence is kept in `sessionStorage` (`services/signInNotice.ts`) for the sign-in page to show once. The calls that check the current password or a code while signed in (change password, delete account, MFA disable, backup codes, MFA setup, an email change) answer 401 for a wrong one; they pass `skipAuthRedirect`, and their forms show the message. The sign-in check at page load treats only a refusal (a 4xx other than 408 and 429) as signed out; no answer or a server error shows "Can't reach the server" on protected pages and retries. A sign-in that succeeds meanwhile cancels the retry and clears the notice, and the answer to a check still on its way is dropped (`authEpoch` in `contexts/AuthContext.tsx`).
+A session expires after an hour with no requests (`SESSION_MAX_AGE`; "Remember me" makes it 30 days), and each request starts the hour again. It also ends `REMEMBER_ME_MAX_AGE` (30 days) after it was made, however active: `signedInAt` is set at sign-in and checked by the guards, `GET /api/auth/me` (which shares the guards' check, `withinSignInLimitOr401`) and the socket handshake (`services/signedIn.ts`), and a session from before the field existed is stamped when next seen. Each sign-in removes the account's oldest sessions beyond 20 (`capLoginSessions`), and the session row holds the user id and role, `signedInAt`, `loginSessionEpoch`, `mustChangePassword` and the MFA pending fields. Two kinds of activity make no requests, so they ping `GET /api/auth/ping` every ten minutes through `services/sessionKeepAlive.ts`: the campaign page while its live connection is up, and a character sheet editor while it holds unsaved changes (at once when the changes appear too, since the hour may be nearly up). When a request answers 401 on a page that needs a session, the API client's interceptor normally sends the browser to the sign-in page, carrying the page as `?next=` so signing in returns to it (`utils/returnTo.ts` follows only a path on this origin that is not a public page). While a character sheet editor holds unsaved changes it does not: `services/unsavedWork.ts` keeps the page where it is and marks the browser signed out, and the editor says so, with a link to sign in in a new tab. The session cookie is shared between tabs, so the editor's Save works once that sign-in is done. A sign-in that reached its age limit answers with `code: 'SIGN_IN_EXPIRED'`, and its sentence is kept in `sessionStorage` (`services/signInNotice.ts`) for the sign-in page to show once. The calls that check the current password or a code while signed in (change password, delete account, MFA disable, backup codes, MFA setup, an email change) answer 401 for a wrong one; they pass `skipAuthRedirect`, and their forms show the message. The sign-in check at page load treats only a refusal (a 4xx other than 408 and 429) as signed out; no answer or a server error shows "Can't reach the server" on protected pages and retries. A sign-in that succeeds meanwhile cancels the retry and clears the notice, and the answer to a check still on its way is dropped (`authEpoch` in `contexts/AuthContext.tsx`).
 
 ### Role-Based Authorization
 
@@ -718,7 +724,10 @@ Taking access away works the same way. Removing a member and deleting a
 campaign make the affected sockets leave the room and forget the campaign
 (`clearCampaignFromLiveSockets`, `clearDeletedCampaignFromLiveSockets`), and
 ending a sign-in closes its sockets (`endLiveSockets`; a restore ends every
-socket with `endEveryLiveSocket`). Each socket is first sent
+socket with `endEveryLiveSocket`). Serializable account deletion and USER
+demotion end those sockets as soon as the Read Committed session revoke
+commits, including when the serializable transaction later answers 409.
+Each socket is first sent
 `campaign.access.revoked` with the reason (`removed`, `campaign-deleted`,
 `signed-out`). On the client, `socket.ts` stops reconnecting after it, the
 connection badge shows the reason, and `hooks/useAccessRevoked.ts` on the

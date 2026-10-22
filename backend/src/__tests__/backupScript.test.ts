@@ -33,13 +33,13 @@ describeOnPosix('backup.sh', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  const run = () =>
+  const run = (databaseUrl = 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt') =>
     spawnSync('bash', [SCRIPT], {
       cwd: root,
       encoding: 'utf8',
       env: {
         PATH: `${bin}:${process.env.PATH ?? ''}`,
-        DATABASE_URL: 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt',
+        DATABASE_URL: databaseUrl,
         BACKUP_DIR: backups,
       },
     });
@@ -96,6 +96,75 @@ describeOnPosix('backup.sh', () => {
     expect(result.status).toBe(0);
     const [password, ...args] = (await fs.readFile(seen, 'utf8')).trimEnd().split('\n');
     expect(password).toBe('p@ss%w0rd');
-    expect(args).toEqual(expect.arrayContaining(['-h', 'db.internal', '-p', '5432', '-U', 'cozy+admin', '-d', 'cozyvtt']));
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '-h',
+        'db.internal',
+        '-p',
+        '5432',
+        '-U',
+        'cozy+admin',
+        '-d',
+        'cozyvtt',
+        '--exclude-table-data=public.session',
+        '--exclude-table-data=public.revoked_login_session',
+      ])
+    );
+  });
+
+  it('treats an empty ?schema= as public excludes', async () => {
+    const seen = path.join(root, 'seen.txt');
+    await fs.writeFile(
+      path.join(bin, 'pg_dump'),
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\necho "-- PostgreSQL database dump complete"\n`,
+      { mode: 0o755 }
+    );
+
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=');
+
+    expect(result.status).toBe(0);
+    const args = (await fs.readFile(seen, 'utf8')).trimEnd().split('\n');
+    expect(args.filter((arg) => arg.startsWith('--exclude-table-data='))).toEqual([
+      '--exclude-table-data=public.session',
+      '--exclude-table-data=public.revoked_login_session',
+    ]);
+  });
+
+  it('percent-decodes ?schema= before the identifier check, so app%5Fdata excludes app_data', async () => {
+    const seen = path.join(root, 'seen.txt');
+    await fs.writeFile(
+      path.join(bin, 'pg_dump'),
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\necho "-- PostgreSQL database dump complete"\n`,
+      { mode: 0o755 }
+    );
+
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app%5Fdata');
+
+    expect(result.status).toBe(0);
+    const args = (await fs.readFile(seen, 'utf8')).trimEnd().split('\n');
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--exclude-table-data=app_data.session',
+        '--exclude-table-data=app_data.revoked_login_session',
+      ])
+    );
+    expect(args.join('\n')).not.toMatch(/app%5Fdata/);
+  });
+
+  it('refuses a non-simple ?schema= without invoking pg_dump', async () => {
+    const seen = path.join(root, 'seen.txt');
+    await fs.writeFile(
+      path.join(bin, 'pg_dump'),
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\necho "-- PostgreSQL database dump complete"\n`,
+      { mode: 0o755 }
+    );
+
+    for (const schema of ['*', 'foo-bar', '1nope', "foo'bar", '%2A', 'foo%2Dbar']) {
+      await fs.rm(seen, { force: true });
+      const result = run(`postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=${schema}`);
+      expect([schema, result.status]).not.toEqual([schema, 0]);
+      expect(result.stdout + result.stderr).toMatch(/simple identifier/);
+      await expect(fs.access(seen)).rejects.toThrow();
+    }
   });
 });

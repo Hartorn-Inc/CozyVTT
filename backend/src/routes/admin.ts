@@ -31,7 +31,8 @@ import { voidOutstandingResetLinks, issueResetToken } from '../services/password
 import { writeAdminLog } from '../services/systemLog';
 import { toJson } from '../utils/prisma-json';
 import { restartAdminMfaGrace } from '../services/adminMfaPolicy';
-import { buildDumpArgs, buildRestoreArgs, prepareDumpForRestore, pgConnection, type PreparedDump } from '../utils/pgRestore';
+import { destroyUserLoginSessions, rethrowIfLoginSessionStoreUnavailable } from '../services/sessionStore';
+import { buildDumpArgs, buildRestoreArgs, prepareDumpForRestore, pgConnection, UnsupportedBackupRestoreSchema, type PreparedDump } from '../utils/pgRestore';
 import { SERVER_BUILT_PATH, UPLOAD_LIMITS } from '../utils/fileUtils';
 import { sessionMaxAge, rememberMeMaxAge } from '../config/sessionDurations';
 import { extractArchiveSafely, openArchiveFile, ArchiveRefusedError, ArchiveLimitError } from '../utils/archive';
@@ -45,7 +46,7 @@ import {
 } from '../services/restoreState';
 import { resolveBackupDir, ensureBackupDir } from '../utils/backupDir';
 import { MULTIPART_FIELD_LIMITS } from '../utils/multipartLimits';
-import { endEveryLiveSocket, getSocketInstance } from '../websocket/utils';
+import { endEveryLiveSocket, endLiveSockets, getSocketInstance } from '../websocket/utils';
 import { clearAllState as clearAllCombatState } from '../websocket/initiativeState';
 import { forgetSetupComplete } from '../middleware/setup';
 import { backupsInProgress } from '../services/backupsInProgress';
@@ -662,14 +663,19 @@ router.post('/users/:id/reset-mfa', async (req, res) => {
       return res.status(400).json({ error: 'Bad Request', message: 'MFA is not enabled for this user' });
     }
 
-    await prisma.user.update({
-      where: { id },
-      data: {
-        mfaEnabled: false,
-        mfaSecret: null,
-        mfaBackupCodes: [],
-      },
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id },
+        data: {
+          mfaEnabled: false,
+          mfaSecret: null,
+          mfaBackupCodes: [],
+        },
+      });
+      await destroyUserLoginSessions(id, undefined, tx);
     });
+
+    await endLiveSockets(id, 'An administrator reset your two-factor authentication. Sign in again.');
 
     // The activity-log line for the reset; its time also starts the account's
     // 7 days to set MFA up again, should it be an administrator.
@@ -682,6 +688,7 @@ router.post('/users/:id/reset-mfa', async (req, res) => {
 
     return res.json({ message: 'MFA has been reset. The user signs in with their password alone until they turn it on again; an administrator is asked to set it up again within 7 days.' });
   } catch (error) {
+    rethrowIfLoginSessionStoreUnavailable(error);
     logger.error('Error resetting MFA', { err: error });
     return res.status(500).json({ error: 'Internal Server Error', message: 'Failed to reset MFA' });
   }
@@ -976,8 +983,9 @@ async function writeBackupZip(dbUrl: string, withUploads: boolean): Promise<{ fi
       throw new TempFolderUnusable(errorCode(mkdtempError));
     }
     const sqlPath = path.join(dumpDir, 'database.sql');
+    const dumpArgs = buildDumpArgs(dbUrl, sqlPath);
     try {
-      await execFileAsync('pg_dump', buildDumpArgs(dbUrl, sqlPath), { env: pgConnection(dbUrl).env });
+      await execFileAsync('pg_dump', dumpArgs, { env: pgConnection(dbUrl).env });
     } catch (execError: unknown) {
       if (errorCode(execError) === 'ENOENT') throw new ToolMissing('pg_dump');
       throw new DumpFailed(errorCode(execError), errorStderr(execError));
@@ -1062,6 +1070,9 @@ router.post('/backups', async (req, res) => {
     if (error instanceof BackupFolderUnusable) {
       logger.error('Backup could not be written to the backups folder', { code: error.code, dir: BACKUP_DIR });
       return res.status(500).json(backupFolderReply('The backup could not be written'));
+    }
+    if (error instanceof UnsupportedBackupRestoreSchema) {
+      return res.status(400).json({ error: 'Bad Request', message: `${error.message} Nothing was changed.` });
     }
     if (error instanceof DumpFailed) {
       logger.error('pg_dump error', { stderr: error.stderr, code: error.code });
@@ -1287,6 +1298,9 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
     try {
       prepared = await prepareDumpForRestore(sqlPath, restorePath);
     } catch (error) {
+      if (error instanceof UnsupportedBackupRestoreSchema) {
+        return res.status(400).json({ error: 'Bad Request', message: `${error.message} Nothing was changed.` });
+      }
       logger.error('Restore could not write the file psql loads', { code: errorCode(error), tmpdir: os.tmpdir() });
       return res.status(500).json({
         error: 'Restore Failed',
@@ -1321,6 +1335,9 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
         logger.error('Backup before restore could not be written to the backups folder', { code: error.code, dir: BACKUP_DIR });
         const reply = backupFolderReply('A backup of the current database could not be written');
         return res.status(500).json({ error: 'Restore Failed', message: `${reply.message} Nothing was restored.` });
+      }
+      if (error instanceof UnsupportedBackupRestoreSchema) {
+        return res.status(400).json({ error: 'Bad Request', message: `${error.message} Nothing was changed.` });
       }
       if (error instanceof DumpFailed) {
         logger.error('pg_dump error before restore', { stderr: error.stderr, code: error.code });

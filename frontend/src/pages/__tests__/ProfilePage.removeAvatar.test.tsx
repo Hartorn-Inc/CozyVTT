@@ -29,6 +29,10 @@ vi.mock('@/hooks/queries', () => ({
   useServerConfigQuery: () => ({ data: undefined }),
 }));
 vi.mock('@/components/profile/MFASection', () => ({ default: () => null }));
+vi.mock('@/services/api', () => {
+  const client = { getUserPreferences: vi.fn(async () => ({})), updateUserPreferences: vi.fn() };
+  return { api: client, default: client };
+});
 
 const removeAvatar = vi.fn();
 vi.mock('@/services/profile.service', () => ({

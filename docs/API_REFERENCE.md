@@ -238,11 +238,14 @@ and ended, as on every route that needs a sign-in.
 ### `POST /api/auth/change-password`
 
 Change the authenticated user's password. Every other sign-in of the account is
-signed out, open game connections included; the session making the change stays.
-A reset through the emailed link (`POST /api/auth/reset-password`) signs out
-every sign-in, since nobody is signed in to keep. Either way, the account's
-unused reset and invitation links stop working, and a link sets the password
-once even when two requests carry it at the same moment.
+signed out, open game connections included; this login session stays. The next
+discrete HTTP action with a revoked cookie is 401. If the login-session store
+cannot be confirmed the change is not kept and the answer is 503. A reset
+through the emailed link (`POST /api/auth/reset-password`) signs out every
+sign-in, since nobody is signed in to keep; that reset is also 503 if the store
+cannot be confirmed. Either way, the account's unused reset and invitation links
+stop working, and a link sets the password once even when two requests carry it
+at the same moment.
 
 **Request:**
 ```json
@@ -265,7 +268,8 @@ messages, dice rolls, campaign uploads, shared documents and personal uploads
 something still names stay, with no owner, as do the character templates they
 published and the token templates and creatures they made.
 Every sign-in of the account ends, on every device, and any open game connection
-of the account is dropped. The instance's only admin is
+of the account is dropped. If the login-session store cannot be confirmed the
+account is not deleted and the answer is 503, with no `Retry-After`. The instance's only admin is
 refused with `409` until another user has been promoted to admin, and so is
 anyone who sits as DM of a campaign, whether or not they own it, or owns one
 with nobody in the DM seat, until they hand the seat on or delete it.
@@ -1467,7 +1471,9 @@ and `bio`; an admin may change anyone's, and only an admin may set
 `platformRole`, `globalAssetManager` and `templateEditor` (403 otherwise).
 Changing `platformRole` signs the user out everywhere, because the role is
 carried in the session; it is written to the admins' activity log, and a user
-made an admin has 7 days to set up two-factor authentication. Setting it to `USER` for the instance's only admin is
+made an admin has 7 days to set up two-factor authentication. If the login-session
+store cannot be confirmed a role change is not kept and the answer is 503, with
+no `Retry-After`. Setting it to `USER` for the instance's only admin is
 refused with `409`. There is no approval field to set here.
 
 `displayName` is cleaned as registration cleans it (invisible characters, angle
@@ -1496,7 +1502,9 @@ has SMTP configured.
 
 Generate a temporary password for a user. The account is flagged `mustChangePassword`, and **any
 sessions the user currently has open are signed out** — otherwise they would keep browsing on the
-old session and the forced change would only apply at their next login. Any reset or invitation
+old session and the forced change would only apply at their next login. The next discrete HTTP
+action with a revoked cookie is 401. If the login-session store cannot be confirmed the temporary
+password is not kept and the answer is 503. Any reset or invitation
 link the user has not used stops working. An admin naming their own id is refused with `400`: they
 change their own password with `POST /api/auth/change-password`, which asks for the current one.
 
@@ -1514,7 +1522,7 @@ change their own password with `POST /api/auth/change-password`, which asks for 
 
 ### `DELETE /api/users/:id` *(Admin only)*
 
-Delete a user account. Their memberships, characters, notes and dice macros go with it, and so do their avatar and the personal uploads nothing names and no campaign shares (removed just after the answer is sent); their chat messages, dice rolls, other uploads, published character templates, token templates and creatures stay with no owner. A campaign they own passes to its sitting DM.
+Delete a user account. Their memberships, characters, notes and dice macros go with it, and so do their avatar and the personal uploads nothing names and no campaign shares (removed just after the answer is sent); their chat messages, dice rolls, other uploads, published character templates, token templates and creatures stay with no owner. A campaign they own passes to its sitting DM. Every sign-in of the account ends. If the login-session store cannot be confirmed the account is not deleted and the answer is 503, with no `Retry-After`.
 
 **409** while they sit in the DM seat of any campaign, whether or not they own it, or own a campaign whose DM seat is empty. The body lists each such campaign and its other members, so the admin can hand the DM seat over (`PUT /api/campaigns/:id/dm`, which an admin may call for any campaign) or delete the campaign, then try again. The instance's only admin is refused with `409` too, with no list:
 
@@ -1630,7 +1638,9 @@ List the instance backups in the backups folder, newest first.
 
 Create a new backup: a ZIP holding a `pg_dump` of the database and every uploaded file.
 Refused with `409` while a restore takes its upload or writes its safety backup, and with
-`503` while the restore replaces the database. Backups are never deleted automatically.
+`503` while the restore replaces the database. A `DATABASE_URL ?schema=` that is not a
+simple identifier (letters, digits, underscore) answers `400` `Bad Request` and changes
+nothing. Backups are never deleted automatically.
 
 ---
 
@@ -1642,14 +1652,18 @@ Delete a backup file.
 
 ### `POST /api/admin/backups/restore` *(Admin only)*
 
-Restore the instance from a backup archive. **Destructive: it replaces the whole database**
-and copies the archive's uploaded files over the existing ones. A backup of the database as
-it was is written to the backup list first, and the response names it as `safetyBackup`.
+Restore the instance from a backup archive. **Destructive: it drops the instance schema**
+(`public`, or a simple-identifier `DATABASE_URL ?schema=`) and loads the archive in its
+place, and copies the archive's uploaded files over the existing ones. A backup of the
+database as it was is written to the backup list first, and the response names it as
+`safetyBackup`.
 
 One restore runs at a time: a second sent while the first takes its upload or writes that
 backup answers `409`. A refused file answers `400` (not named `.zip`, not a ZIP archive,
 more than 100,000 entries, or not a complete CozyVTT backup) or `413` (over 4 GB, or
-unpacking to more than 10 GiB), with the reason. While the database is being replaced,
+unpacking to more than 10 GiB), with the reason. A `DATABASE_URL ?schema=` that is not a
+simple identifier (letters, digits, underscore) answers `400` `Bad Request` and changes
+nothing. While the database is being replaced,
 live connections are closed and every other API request, a second restore included,
 answers `503` with `Retry-After: 60` until the restore ends.
 
@@ -1739,7 +1753,7 @@ one, then `message`.
 | `429` | Rate limit exceeded |
 | `500` | Server error — check server logs |
 | `502` | Upstream failure — e.g., an invitation email could not be delivered |
-| `503` | Feature unavailable — e.g., an email-dependent endpoint with no SMTP configured. Every endpoint also answers `503` with `Retry-After: 60` while a backup restore replaces the database |
+| `503` | Feature unavailable — e.g., an email-dependent endpoint with no SMTP configured. Mutations that end login sessions answer `503` without `Retry-After` when the login-session store cannot be confirmed. Every endpoint also answers `503` with `Retry-After: 60` while a backup restore replaces the database |
 
 ### Password change required
 

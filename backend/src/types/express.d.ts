@@ -16,6 +16,9 @@ declare module 'express-session' {
     // REMEMBER_ME_MAX_AGE after it however active it has been; a session
     // from before this field existed is stamped when next seen.
     signedInAt?: number;
+    // The User.loginSessionEpoch at mint; destroy increments the User field
+    // so a later INSERT of a new sid with the old number is skipped.
+    loginSessionEpoch?: number;
     // MFA flow state — set during login when user has MFA enabled
     mfaPending?: boolean;
     mfaPendingUserId?: string;

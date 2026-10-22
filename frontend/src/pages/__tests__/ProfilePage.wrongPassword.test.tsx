@@ -37,6 +37,12 @@ vi.mock('@/hooks/queries', () => ({
   useServerConfigQuery: () => ({ data: undefined }),
 }));
 vi.mock('@/components/profile/MFASection', () => ({ default: () => null }));
+vi.mock('@/services/api', async (importOriginal) => {
+  const { api: client } = await importOriginal<typeof import('@/services/api')>();
+  client.getUserPreferences = vi.fn(async () => ({}));
+  client.updateUserPreferences = vi.fn();
+  return { api: client, default: client };
+});
 
 const client = (api as unknown as { client: AxiosInstance }).client;
 const originalAdapter = client.defaults.adapter;

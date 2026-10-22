@@ -235,6 +235,6 @@ export async function getUserById(id: string): Promise<User | null> {
  * Sanitize user object for client (remove sensitive fields)
  */
 export function sanitizeUser(user: User) {
-  const { passwordHash, mfaSecret, mfaBackupCodes, ...sanitized } = user;
+  const { passwordHash, mfaSecret, mfaBackupCodes, loginSessionEpoch, ...sanitized } = user;
   return sanitized;
 }

@@ -8,8 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Security
+
+- **Login-session revocation is fail-closed on HTTP.** After a password change, MFA change, administrator password reset, administrator MFA reset, or platform-role change, the next HTTP request with a revoked cookie is 401. Self-service password and MFA keep the initiating login session and revoke the others; an administrator reset kills every login session for that user. If the login-session store cannot be confirmed, the mutation answers 503 `{ error: 'Service Unavailable', message }` and does not persist. The backend starts listening only after the revocation guard is installed. A concurrent session-store write cannot recreate a revoked cookie. A login-session row committed after a SERIALIZABLE account-deletion or USER-demotion snapshot is still revoked; the next HTTP request with that cookie is 401. Expired `revoked_login_session` rows are purged when login sessions are revoked. Two administrators deleting their own accounts at once still leave one administrator (409), including when PostgreSQL refuses the overlapping revoke as 40001. Serializable account deletion and USER demotion revoke session rows on the session-store pool, so they succeed at Prisma `connection_limit=1`. A last-admin 409 after a fail-closed Read Committed revoke ends that user's live sockets.
+
 ### Fixed
 
+- **Stopping the backend right after it starts no longer fails.** A Docker SIGTERM that arrived while startup was still talking to the database could disconnect Prisma mid-query and exit 1; shutdown now waits for that work to finish first.
 - **Gradient view-meta chips and white-text field wash.** Preset view meta sits on opaque stone-900 with white text; white-text gradient editor fields drop the 10% white wash.
 - **Gradient dark-stop XP and Edit contrast.** Trailing XP and hero-point copy on D&D and Pathfinder gradient presets is white against the dark `to-*` stop, Edit sits on opaque stone-900, and name-field placeholders are solid white or stone-900 rather than current/50.
 - **Sheet-header name, token, and Save/Edit contrast.** Vintage presets use white name text; header labels and the token file control are keyboard-reachable; Save and vintage Edit sit on darker green/amber with a current-color border.
@@ -20,6 +25,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Changed
 
+- **Sign-in sessions use the PostgreSQL schema from `DATABASE_URL`.** The connect-pg-simple store previously ignored `?schema=` and used `public.session` while Prisma used the configured schema, so revocation could miss the table Express reads. Both now use the same `databaseConnectionSettings`. **On an instance that stored sign-ins in `public.session` while Prisma used another schema, everyone is signed out once** when this takes effect; they sign in again.
+- **Dashboard backups and restores strip Prisma-only `DATABASE_URL` query parameters** (`schema`, `connection_limit`, and the others only Prisma reads) before calling `pg_dump` and `psql`. A restore is refused unless the dump creates `User` and `_prisma_migrations` in the instance schema (the one the preamble drops), so a public dump cannot empty `?schema=app_data` and an `app_data` dump cannot empty `public`. Login-session cleanup after restore empties `public.session` / `public.revoked_login_session` and the same two tables in the instance `?schema=` only. Dump and restore refuse a `?schema=` that is not a simple identifier (letters, digits, underscore) instead of treating it as `public`. A percent-encoded value that decodes to a simple identifier is accepted, as the dashboard does. A restore whose `?schema=` is a simple identifier other than `public` drops that schema via `format('%I')` (the dump creates it again), not `public`.
 - **D&D 5e, Pathfinder 2e, and Call of Cthulhu sheets share one header** for the name, colour presets, custom hex, and Save, Cancel and Edit. Flexible sheets keep their simpler bar. Tests and New Character use the same named blank starter as the starter-template API; published templates stay a separate library.
 - **The stack runs PostgreSQL 18.** Compose, CI, the backend's `pg_dump`/`psql`, and the Ubuntu install steps use 18. The named volume is mounted at `/var/lib/postgresql` (18 stores the cluster under `18/docker`). The database container's filesystem is read-only, with `/tmp` and `/var/run/postgresql` in memory.
 - **The Docker development stack is isolated from production.** Fresh checkouts copy `.env.example` to `.env`, set `DEV_SESSION_SECRET`, make the file private with `chmod 600`, and run `make up`, which uses a project name and Postgres volume derived from that checkout, plus disposable `backend/uploads-dev` and `backend/backups-dev` directories. Production keeps its existing resources. If a checkout still has the pre-isolation fixed-name dev containers, `make up` refuses until they are stopped or isolated; stopping/removing those containers without `down -v` preserves their old data.
@@ -28,6 +35,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Upgrading
 
 A leftover PostgreSQL 15 `postgres_data` volume will not start. Remove it (`docker volume rm` the compose project volume) before `docker compose up`. That drops the old cluster; there is no in-container migrator.
+
+If this instance stored sign-ins in `public.session` while Prisma used another schema, everyone is signed out once after this takes effect; they sign in again.
 
 ---
 

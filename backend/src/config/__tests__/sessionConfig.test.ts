@@ -16,6 +16,7 @@ import express from 'express';
 import session from 'express-session';
 import request from 'supertest';
 import type loggerInstance from '../../utils/logger';
+import { databaseConnectionSettings } from '../prismaClient';
 
 type SessionModule = typeof import('../session');
 type Logger = typeof loggerInstance;
@@ -71,8 +72,12 @@ afterEach(() => {
 });
 
 afterAll(async () => {
-  // Each load made a pool; none of them connected, but each is closed.
-  await Promise.all(loaded.map((m) => m.sessionPool.end()));
+  // Each load started the revocation guard, which may still be connecting
+  // (or have failed against a fake host); wait it out so end() is idle.
+  await Promise.all(loaded.map(async (m) => {
+    await m.loginSessionRevocationGuard.catch(() => undefined);
+    await m.sessionPool.end();
+  }));
 });
 
 describe('the session secret', () => {
@@ -148,6 +153,24 @@ describe('the session settings', () => {
     const { sessionConfig } = loadWith({});
     expect(sessionConfig.saveUninitialized).toBe(false);
     expect(sessionConfig.resave).toBe(false);
+  });
+});
+
+describe('the login-session store', () => {
+  it('builds its pool from databaseConnectionSettings so sign-ins follow ?schema=', () => {
+    const url = 'postgresql://u:p@db.example:5432/cozy?schema=custom_sessions';
+    const { sessionPool } = loadWith({ DATABASE_URL: url });
+    const { pool, schema } = databaseConnectionSettings(url);
+    expect(schema).toBe('custom_sessions');
+    expect(sessionPool.options.connectionString).toBe(pool.connectionString);
+    expect(sessionPool.options.options).toBe(pool.options);
+    expect(sessionPool.options.connectionTimeoutMillis).toBe(pool.connectionTimeoutMillis);
+  });
+
+  it('keeps today\'s pool construction when DATABASE_URL is unset', () => {
+    const { sessionPool } = loadWith({ DATABASE_URL: undefined });
+    expect(sessionPool.options.connectionString).toBeUndefined();
+    expect(sessionPool.options.options).toBeUndefined();
   });
 });
 

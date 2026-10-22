@@ -51,18 +51,24 @@ fi
 #
 # The prepared file opens with psql's restricted mode under a key the backup
 # cannot know, so psql refuses every backslash command in it, then replaces
-# the public schema so a backup from an older CozyVTT applies cleanly. The
+# the app schema so a backup from an older CozyVTT applies cleanly. Public
+# is dropped and recreated when DATABASE_URL has no ?schema=, an empty one,
+# or ?schema=public. A simple non-public ?schema= is dropped and recreated
+# instead of public (format('%I'), never a concatenated identifier). The
 # dump follows, without the lines this server would reject or that name the
 # database user of the instance the backup came from (SET transaction_timeout,
 # ALTER ... OWNER TO, GRANT, REVOKE) and without the dump's own \restrict
 # lines. Table rows (COPY blocks) are copied through untouched. The file ends
-# by emptying the login sessions, in the same transaction as the load: every
-# backup made before sessions were left out of backups carries them, and
-# restoring one would sign back in whoever had not yet expired, including
-# sign-ins ended since by a password change or a removed account.
+# by emptying public.session and public.revoked_login_session (and the same
+# tables in DATABASE_URL's ?schema= when that is not public), in the same
+# transaction as the load: every backup made before those rows were left out
+# of backups carries them, and restoring one would sign back in whoever had
+# not yet expired, including sign-ins ended since by a password change or a
+# removed account. Only those schemas; never every schema.
 #
 # Outside its rows, the dump must end with pg_dump's closing line, create the
-# User and _prisma_migrations tables, and hold nothing but SQL: a psql
+# User and _prisma_migrations tables in the instance schema (the one the
+# preamble drops), and hold nothing but SQL: a psql
 # command, a COPY that is not table data, or a transaction statement means
 # it is not a backup pg_dump wrote, and it is refused before anything runs.
 # ------------------------------------------------------------------
@@ -77,21 +83,102 @@ if ! PREPARED=$(mktemp "$SCRATCH/cozyvtt-restore.XXXXXX"); then
 fi
 trap 'rm -f "$PREPARED"' EXIT
 RESTRICT_KEY=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
-# The same statement as RESTORE_TRAILER in backend/src/utils/pgRestore.ts;
-# keepInStep.test.ts fails if they differ. A very old backup has no session table.
+# Login-session tables follow DATABASE_URL's ?schema=, with public as the
+# default and as the legacy location. Missing or empty is public. A
+# percent-encoded value is decoded first, like the dashboard. Only a simple
+# identifier is used as a SQL literal. A ?schema= that is present and not a
+# simple identifier after decode (a wildcard, hyphen, quote, leading digit)
+# is refused, so a tenant or extension table named session is never touched
+# and psql is not run. Never FROM pg_namespace, never every schema.
+APP_SCHEMA=public
+if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
+  _QS="${DATABASE_URL#*\?}"
+  _QS="${_QS%%#*}"
+  while [[ -n "$_QS" ]]; do
+    _PAIR="${_QS%%&*}"
+    if [[ "$_QS" == *"&"* ]]; then
+      _QS="${_QS#*&}"
+    else
+      _QS=""
+    fi
+    if [[ "${_PAIR%%=*}" == "schema" ]]; then
+      _VAL=""
+      [[ "$_PAIR" == *=* ]] && _VAL="${_PAIR#*=}"
+      if [[ -n "$_VAL" ]]; then
+        # Percent-decode like URLSearchParams: + is space, %HH is that octet.
+        # Invalid % is left so the identifier check refuses it, not public.
+        # printf -v keeps a trailing %0A; command substitution would strip it.
+        _DEC=""
+        _I=0
+        _LEN=${#_VAL}
+        while ((_I < _LEN)); do
+          _C="${_VAL:_I:1}"
+          if [[ "$_C" == "+" ]]; then
+            _DEC+=" "
+            _I=$((_I + 1))
+          elif [[ "$_C" == "%" ]]; then
+            _HEX="${_VAL:_I+1:2}"
+            if [[ "$_HEX" =~ ^[0-9A-Fa-f]{2}$ ]]; then
+              printf -v _OCT '%b' "\\x${_HEX}"
+              _DEC+="$_OCT"
+              _I=$((_I + 3))
+            else
+              _DEC+="%"
+              _I=$((_I + 1))
+            fi
+          else
+            _DEC+="$_C"
+            _I=$((_I + 1))
+          fi
+        done
+        _VAL="$_DEC"
+        if [[ "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          APP_SCHEMA="$_VAL"
+        else
+          echo "❌ DATABASE_URL ?schema='${_VAL}' is not a simple identifier (use letters, digits and underscore). Dump and restore refuse it instead of treating it as public."
+          exit 1
+        fi
+      fi
+      break
+    fi
+  done
+  unset _QS _PAIR _VAL _DEC _I _LEN _C _HEX _OCT
+fi
+# The public-schema statement matches RESTORE_TRAILER in
+# backend/src/utils/pgRestore.ts (loginSessionRestoreTrailer('public'));
+# keepInStep.test.ts fails if the heredoc differs. A very old backup has no
+# session table. A DATABASE_URL ?schema= other than public adds a second
+# statement for that schema only, with the name as a SQL string literal
+# passed to format('%I') — never concatenated as a raw identifier.
 RESTORE_TRAILER=$(cat <<'SQL'
-DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; END $$;
+DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; IF to_regclass('public.revoked_login_session') IS NOT NULL THEN DELETE FROM public.revoked_login_session; END IF; END $$;
 SQL
 )
+# CUSTOM_PREAMBLE is empty on public so awk prints the two DROP/CREATE
+# public lines keepInStep and backupRestore.e2e match. A custom schema
+# gets one format('%I') DROP line instead; the dump creates the schema.
+# Never DROP SCHEMA public.
+CUSTOM_PREAMBLE=""
+if [[ "$APP_SCHEMA" != "public" ]]; then
+  _SCHEMA_SQL="${APP_SCHEMA//\'/\'\'}"
+  CUSTOM_PREAMBLE="DO \$\$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', '${_SCHEMA_SQL}'); END \$\$;"
+  RESTORE_TRAILER="${RESTORE_TRAILER}
+DO \$\$ BEGIN IF to_regclass(format('%I.session', '${_SCHEMA_SQL}')) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.session', '${_SCHEMA_SQL}'); END IF; IF to_regclass(format('%I.revoked_login_session', '${_SCHEMA_SQL}')) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.revoked_login_session', '${_SCHEMA_SQL}'); END IF; END \$\$;"
+  unset _SCHEMA_SQL
+fi
 
 echo "🔍 Checking $BACKUP_FILE..."
 set +e
-gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v trailer="$RESTORE_TRAILER" '
+gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preamble="$CUSTOM_PREAMBLE" -v trailer="$RESTORE_TRAILER" -v app_schema="$APP_SCHEMA" '
   BEGIN {
     print "\\restrict " key
     print "SET client_min_messages = warning;"
-    print "DROP SCHEMA public CASCADE;"
-    print "CREATE SCHEMA public;"
+    if (custom_preamble == "") {
+      print "DROP SCHEMA public CASCADE;"
+      print "CREATE SCHEMA public;"
+    } else {
+      print custom_preamble
+    }
     in_copy = 0; complete = 0; has_user = 0; has_migrations = 0; refused = ""
   }
   {
@@ -121,8 +208,11 @@ gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v trailer="$REST
       if (at > 0 && length(rest) - at - 10 >= 2) next
     }
     if (line ~ /^(GRANT|REVOKE) /) next
-    if (line == "CREATE TABLE public.\"User\" (") has_user = 1
-    if (line == "CREATE TABLE public._prisma_migrations (") has_migrations = 1
+    # A backup from DATABASE_URL?schema=app_data writes these in that schema,
+    # not public. Count them only when the qualifier is the instance schema
+    # (app_schema or "app_schema"). Quoted or unquoted table name.
+    if (line ~ ("^CREATE TABLE (\"" app_schema "\"|" app_schema ")\\.(\"User\"|User) \\($")) has_user = 1
+    if (line ~ ("^CREATE TABLE (\"" app_schema "\"|" app_schema ")\\.(\"_prisma_migrations\"|_prisma_migrations) \\($")) has_migrations = 1
     print
   }
   END {
