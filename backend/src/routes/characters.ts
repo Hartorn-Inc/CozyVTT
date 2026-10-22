@@ -90,7 +90,8 @@ const TYPED_GAME_SYSTEMS: string[] = [
 /**
  * Identity, migrate, validate, and strip Keeper notes for a create sheet.
  * Shared by the outer fast-fail and the in-transaction re-prep when omitted
- * or null inherit sees a different locked Campaign system.
+ * or null inherit sees a different locked Campaign system, or when the locked
+ * membership role is no longer DM.
  */
 function prepareCreateSheet(params: {
   gameSystem: GameSystem | null | undefined;
@@ -212,7 +213,8 @@ const CHARACTER_CAMPAIGN_INCLUDE = {
  * is membership then Character, and the reverse deadlocks. If the locked
  * Character.campaignId is not the hint used to choose those seats, the
  * attempt aborts and retries with a fresh hint rather than locking a newly
- * discovered previous seat after Character.
+ * discovered previous seat after Character. The locked target membership
+ * role is returned for the HTTP response; unassign has no target (null).
  */
 async function writeCharacterCampaignAssignment(params: {
   characterId: string;
@@ -223,6 +225,7 @@ async function writeCharacterCampaignAssignment(params: {
 }): Promise<{
   character: Prisma.CharacterGetPayload<{ include: typeof CHARACTER_CAMPAIGN_INCLUDE }>;
   previousCampaignId: string | null;
+  targetRole: CampaignRole | null;
 }> {
   const { characterId, userId, characterGameSystem, targetCampaignId } = params;
   let hintedPreviousCampaignId = params.hintedPreviousCampaignId;
@@ -289,7 +292,11 @@ async function writeCharacterCampaignAssignment(params: {
           data: { campaignId: targetCampaignId },
           include: CHARACTER_CAMPAIGN_INCLUDE,
         });
-        return { character, previousCampaignId: lockedCampaignId };
+        return {
+          character,
+          previousCampaignId: lockedCampaignId,
+          targetRole: memberships.target?.role ?? null,
+        };
       });
     } catch (error) {
       if (!(error instanceof StaleCampaignHintError) || attempt >= CHARACTER_CAMPAIGN_WRITE_ATTEMPTS) {
@@ -401,9 +408,14 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
     });
     const displayName = owner?.displayName ?? '';
     // Keeper's Notes are written only by the Keeper: the DM of the campaign
-    // the character is created in. Anyone else's are not stored. Computed
-    // once so the in-transaction re-prep can reuse it without re-querying.
+    // the character is created in. Anyone else's are not stored. The pre-tx
+    // read is the fast-fail; create-in re-reads the locked membership role
+    // before storing and returning the sheet, so a concurrent DM transfer
+    // cannot persist or return notes for a caller who is no longer DM.
     const keeper = await isKeeperOf(userId, campaignId || null);
+    // Hoisted so the 201 uses the locked seat. With no campaignId,
+    // isKeeperOf(..., null) is false and this stays false.
+    let lockedKeeper = keeper;
     let sheetData = prepareCreateSheet({
       gameSystem: finalGameSystem,
       data,
@@ -440,24 +452,32 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
           storedGameSystem = locked as GameSystem | null;
         }
         assertCompatible(storedGameSystem, locked);
-        if (!gameSystem && storedGameSystem !== sheetValidatedAs) {
-          sheetData = prepareCreateSheet({
-            gameSystem: storedGameSystem,
-            data,
-            name,
-            displayName,
-            keeper,
-          });
-        }
         // A concurrent kick can delete the seat without taking Campaign
         // FOR UPDATE, so it can finish while this join waits on (or holds)
         // the Campaign row. Lock and revalidate membership before writing
         // Character.campaignId: a gone seat is 403 and rolls back, instead
         // of leaving a leftover campaignId the remaining members could treat
         // as in-campaign.
-        membershipCharacterIds = (
-          await lockCampaignMembership(tx, userId, campaignId, CREATE_IN_NOT_A_MEMBER)
-        ).characterIds;
+        const membership = await lockCampaignMembership(
+          tx,
+          userId,
+          campaignId,
+          CREATE_IN_NOT_A_MEMBER,
+        );
+        membershipCharacterIds = membership.characterIds;
+        lockedKeeper = membership.role === 'DM';
+        // Re-prep when omitted/null inherit sees a different locked Campaign
+        // system, or when the locked seat is no longer DM. Always pass the
+        // locked role, never the pre-tx keeper.
+        if (lockedKeeper !== keeper || (!gameSystem && storedGameSystem !== sheetValidatedAs)) {
+          sheetData = prepareCreateSheet({
+            gameSystem: storedGameSystem,
+            data,
+            name,
+            displayName,
+            keeper: lockedKeeper,
+          });
+        }
       }
       await roomForCharacter(tx, userId);
       const created = await tx.character.create({
@@ -486,7 +506,7 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
 
     return res.status(201).json({
       message: 'Character created successfully',
-      character: characterForReader(character, keeper),
+      character: characterForReader(character, lockedKeeper),
     });
   } catch (error) {
     if (error instanceof CharacterLimitReached) {
@@ -1217,7 +1237,6 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
 
     // Handle unassignment (campaignId is null, empty string, or undefined)
     const targetCampaignId = campaignId && campaignId !== '' ? campaignId : null;
-    let targetMembershipRole: CampaignRole | undefined;
 
     if (targetCampaignId) {
       // Handle assignment - validate campaign exists and user is a member
@@ -1253,7 +1272,6 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
           message: ASSIGN_NOT_A_MEMBER,
         });
       }
-      targetMembershipRole = membership.role;
 
       // A Campaign with no game system accepts any Character. A typed Campaign
       // refuses a Flexible sheet and any other system. Re-assigning to a
@@ -1280,13 +1298,14 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
     // lock (kick is membership then Character; the reverse deadlocks). If
     // locked Character.campaignId is not the hint used to choose those seats,
     // the attempt retries with a fresh hint.
-    const { character: updatedCharacter, previousCampaignId } = await writeCharacterCampaignAssignment({
-      characterId: id,
-      userId,
-      characterGameSystem: character.gameSystem,
-      hintedPreviousCampaignId: character.campaignId,
-      targetCampaignId,
-    });
+    const { character: updatedCharacter, previousCampaignId, targetRole } =
+      await writeCharacterCampaignAssignment({
+        characterId: id,
+        userId,
+        characterGameSystem: character.gameSystem,
+        hintedPreviousCampaignId: character.campaignId,
+        targetCampaignId,
+      });
 
     if (!targetCampaignId) {
       // Broadcast roster.updated WebSocket event
@@ -1296,10 +1315,7 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
             action: 'character.unassigned',
             characterId: id,
             userId,
-            // TODO(play): no campaignId, unlike every other roster.updated, so
-            // the campaign page's member and character lists (CampaignContext)
-            // skip it and keep offering the character's sheet and rolls until
-            // a reload. Send campaignId: character.campaignId here.
+            campaignId: previousCampaignId,
           });
         } catch (error) {
           logger.error('Failed to broadcast roster update', { err: error });
@@ -1328,7 +1344,7 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
 
     return res.status(200).json({
       message: 'Character assigned to campaign successfully',
-      character: characterForReader(updatedCharacter, targetMembershipRole === 'DM'),
+      character: characterForReader(updatedCharacter, targetRole === 'DM'),
     });
   } catch (error) {
     if (error instanceof GameSystemMismatchError) {

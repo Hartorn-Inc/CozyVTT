@@ -19,7 +19,7 @@
  */
 
 import request from 'supertest';
-import type { Prisma } from '@prisma/client';
+import { GameSystem, type Prisma } from '@prisma/client';
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import {
   prisma,
@@ -29,6 +29,8 @@ import {
   cleanupCampaigns,
   TEST_PASSWORD,
 } from '../../__tests__/helpers/db';
+import { getBlankTemplate } from '../../utils/character-templates';
+import { toJson } from '../../utils/prisma-json';
 
 jest.setTimeout(30000);
 
@@ -84,6 +86,36 @@ const holdMembership = (userId: string, campaignId: string) =>
     await tx.$queryRaw`SELECT id FROM "CampaignMembership" WHERE "userId" = ${userId} AND "campaignId" = ${campaignId} FOR UPDATE`;
   });
 
+const SECRET = 'SECRET';
+
+const cocSheet = (extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+  ...(getBlankTemplate(GameSystem.CALL_OF_CTHULHU_7E).data as Record<string, unknown>),
+  ...extra,
+});
+
+/**
+ * Hold the outgoing DM's CampaignMembership FOR UPDATE, then in that same
+ * uncommitted transaction demote them to PLAYER and seat another member as
+ * DM. isKeeperOf / pre-tx findUnique still see the committed DM; the join
+ * waits on the membership lock; on release it sees PLAYER.
+ */
+const holdMembershipThenDemote = (
+  outgoingDmId: string,
+  incomingDmId: string,
+  ofCampaignId: string,
+) =>
+  holdUntilReleased(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "CampaignMembership" WHERE "userId" = ${outgoingDmId} AND "campaignId" = ${ofCampaignId} FOR UPDATE`;
+    await tx.campaignMembership.update({
+      where: { userId_campaignId: { userId: outgoingDmId, campaignId: ofCampaignId } },
+      data: { role: 'PLAYER' },
+    });
+    await tx.campaignMembership.update({
+      where: { userId_campaignId: { userId: incomingDmId, campaignId: ofCampaignId } },
+      data: { role: 'DM' },
+    });
+  });
+
 describe('creating a character with a campaign preselected', () => {
   let dmId: string;
   let playerId: string;
@@ -135,8 +167,8 @@ describe('creating a character with a campaign preselected', () => {
       where: { userId_campaignId: { userId, campaignId: ofCampaignId } },
     });
 
-  const campaignForRace = async (name: string) => {
-    const campaign = await createTestCampaign(dmId, { name, gameSystem: null });
+  const campaignForRace = async (name: string, gameSystem: GameSystem | null = null) => {
+    const campaign = await createTestCampaign(dmId, { name, gameSystem });
     extraCampaignIds.push(campaign.id);
     await prisma.campaignMembership.createMany({
       data: [
@@ -430,5 +462,60 @@ describe('creating a character with a campaign preselected', () => {
     } finally {
       if (timer) clearTimeout(timer);
     }
+  });
+
+  it('does not persist or return Keeper notes when create-in races a DM demotion', async () => {
+    const raceCampaignId = await campaignForRace(
+      `Demotion create-in ${Date.now()}`,
+      GameSystem.CALL_OF_CTHULHU_7E,
+    );
+
+    const holder = await holdMembershipThenDemote(dmId, playerId, raceCampaignId);
+    const join = dmAgent.post('/api/characters').send({
+      name: 'Demoted during create-in',
+      campaignId: raceCampaignId,
+      gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+      data: cocSheet({ notes: SECRET }),
+    });
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(201);
+    expect(res.body.character.data).not.toHaveProperty('notes');
+    const stored = await prisma.character.findUniqueOrThrow({ where: { id: res.body.character.id } });
+    expect(stored.data as Record<string, unknown>).not.toHaveProperty('notes');
+  });
+
+  it('does not return Keeper notes when re-assign races a DM demotion', async () => {
+    const raceCampaignId = await campaignForRace(
+      `Demotion assign ${Date.now()}`,
+      GameSystem.CALL_OF_CTHULHU_7E,
+    );
+    const character = await prisma.character.create({
+      data: {
+        userId: dmId,
+        campaignId: raceCampaignId,
+        name: 'Demoted during assign',
+        gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+        data: toJson(cocSheet({ notes: SECRET })),
+      },
+    });
+    await prisma.campaignMembership.update({
+      where: { userId_campaignId: { userId: dmId, campaignId: raceCampaignId } },
+      data: { characterIds: { push: character.id } },
+    });
+
+    const holder = await holdMembershipThenDemote(dmId, playerId, raceCampaignId);
+    const join = dmAgent.post(`/api/characters/${character.id}/assign`).send({
+      campaignId: raceCampaignId,
+    });
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(200);
+    expect(res.body.character.data).not.toHaveProperty('notes');
+    expect(res.body.character.data?.notes).not.toBe(SECRET);
   });
 });
