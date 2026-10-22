@@ -505,6 +505,13 @@ class AdvisoryPrReviewWorkflow(unittest.TestCase):
         self.assertIn('# renovate: datasource=', text)
         self.assertIn('CURSOR_CLI_VERSION', text)
         self.assertIn('CURSOR_CLI_INSTALL_SHA256', text)
+        self.assertIn('--sandbox disabled', text)
+        self.assertNotRegex(text, r'(?m)^\s+--sandbox enabled')
+        self.assertIn('env -i', text)
+        self.assertIn('XDG_CONFIG_HOME=/home/advisoryreview/.config', text)
+        self.assertIn('chmod -R a+rX review-tree assessment', text)
+        self.assertNotIn('chmod -R a+rX .trusted-automation', text)
+        self.assertIn('ref: ${{ needs.resolve.outputs.head_sha }}', text)
         self.assertNotIn('openai/codex-action', text)
         self.assertNotIn('OPENROUTER', text)
         self.assertNotIn('curl https://cursor.com/install -fsS | bash', text)
@@ -513,6 +520,20 @@ class AdvisoryPrReviewWorkflow(unittest.TestCase):
         self.assertNotRegex(text, r'(?m)^  pull_request:')
         self.assertNotRegex(text, r'(?m)^  pull_request_target:')
         self.assertIn('workflows: ["Advisory review request"]', text)
+
+    def test_helper_collects_github_pr_files_not_latest_dev_compare(self):
+        path = os.path.join(ROOT, 'scripts', 'ci', 'advisory_pr_review.py')
+        with open(path, encoding='utf-8') as handle:
+            text = handle.read()
+        self.assertIn("f'repos/{repo}/pulls/{pr_number}/files'", text)
+        self.assertNotIn('/compare/', text)
+        prompt = os.path.join(
+            ROOT, '.github', 'advisory-review', 'prompts', 'pr-reviewer.md'
+        )
+        with open(prompt, encoding='utf-8') as handle:
+            prompt_text = handle.read()
+        self.assertIn('recorded `base_sha`', prompt_text)
+        self.assertIn('origin/dev', prompt_text)
 
     def test_request_workflow_is_gated_on_advisory_review_label(self):
         text = self._request_workflow()
