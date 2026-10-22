@@ -153,6 +153,9 @@ src/
 │   ├── shared.ts      Rate limiters and the per-user socket ceilings, the
 │   │                  Token shape, fog helpers
 │   ├── auth.ts        Socket session + campaign-membership authentication
+│   ├── writeAuthz.ts  Commit-time session+membership confirm for socket writes
+│   │                  (0 s stale); token.move frames may reuse for 2 s, then a
+│   │                  monitor disconnects (ADR 0007)
 │   ├── utils.ts       System-message / broadcast helpers
 │   ├── initiativeState.ts  Each campaign's combat order and round, kept in memory
 │   ├── opId.ts        The id a page attaches to a wall or light edit, echoed back so it
@@ -712,27 +715,32 @@ than five.
 
 ### Roles are a snapshot on an open socket
 
-`socket.role` is read once, when the socket authenticates to a campaign, and
-trusted by every gated handler thereafter — the right place to read it from,
-since a handler must never take a role off the wire, but it means the value
-goes stale if the role changes underneath it. A DM transfer therefore updates
-connected sockets in place (`applyRoleToLiveSockets`) and broadcasts
-`campaign.dm.transferred`, rather than waiting for a reconnect. REST needs no
+`socket.role` is set when the socket authenticates to a campaign — the right
+place to read it from, since a handler must never take a role off the wire.
+Discrete socket writes re-read the login session and CampaignMembership at
+commit (0 s stale) and use that role for the permission decision. High-frequency
+`token.move` frames may reuse a confirm for at most 2 s; a monitor then
+disconnects if authorization is gone (ADR 0007). A role change drops that
+campaign's sockets (`applyRoleToLiveSockets`) without `campaign.access.revoked`
+so the client reconnects and authenticates with the new role; HTTP still
+broadcasts `campaign.dm.transferred` / `campaign.role.changed`. REST needs no
 equivalent: `loadCampaignMembership` reads the membership per request.
 
-Taking access away works the same way. Removing a member and deleting a
-campaign make the affected sockets leave the room and forget the campaign
-(`clearCampaignFromLiveSockets`, `clearDeletedCampaignFromLiveSockets`), and
-ending a sign-in closes its sockets (`endLiveSockets`; a restore ends every
-socket with `endEveryLiveSocket`). Serializable account deletion and USER
-demotion end those sockets as soon as the Read Committed session revoke
-commits, including when the serializable transaction later answers 409.
-Each socket is first sent
+Taking access away works the same way. Removing a member tells those sockets
+`campaign.access.revoked` `{ reason: 'removed' }` and disconnects them
+(`clearCampaignFromLiveSockets`); the login session remains. Deleting a
+campaign makes the affected sockets leave the room and forget the campaign
+(`clearDeletedCampaignFromLiveSockets`). Ending a sign-in closes its sockets
+(`endLiveSockets`; a restore ends every socket with `endEveryLiveSocket`).
+Serializable account deletion and USER demotion end those sockets as soon as
+the Read Committed session revoke commits, including when the serializable
+transaction later answers 409. Each socket is first sent
 `campaign.access.revoked` with the reason (`removed`, `campaign-deleted`,
 `signed-out`). On the client, `socket.ts` stops reconnecting after it, the
 connection badge shows the reason, and `hooks/useAccessRevoked.ts` on the
 campaign page goes to the dashboard with a notice, or to the sign-in page,
-unless an editor holds unsaved changes.
+unless an editor holds unsaved changes. A role-change disconnect does not send
+that event, so the client reconnects.
 
 ### MFA (TOTP)
 

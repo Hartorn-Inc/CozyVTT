@@ -9,6 +9,7 @@ import { broadcastMapData, withinCeiling } from '../shared';
 import logger from '../../utils/logger';
 import { getState as getCombatState } from '../initiativeState';
 import { resendInitiativeState } from './initiative';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerMapHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -45,6 +46,13 @@ export function registerMapHandlers(io: Server, socket: AuthenticatedSocket): vo
       const campaign = await prisma.campaign.findUnique({ where: { id: socket.campaignId }, select: { currentMapId: true } });
       if (campaign?.currentMapId !== mapId) {
         socket.emit('error', { message: 'Only the current map can be sent to the table; set it current first' });
+        return;
+      }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
+        socket.emit('error', { message: 'Only DMs can change the map' });
         return;
       }
 

@@ -13,6 +13,8 @@ import type { DnD5eHitDice } from '../../game-systems/dnd5e';
 import { GAME_SYSTEM_SHEET_FROZEN_MESSAGE, isGameSystemSheetFrozen } from '../../game-systems';
 import { withinCeiling } from '../shared';
 import { emitCharacterUpdated } from '../utils';
+import { applyWriteAuthzDrop, confirmWriteAuthorization } from '../writeAuthz';
+import { acceptLiveSheetPatch } from '../../utils/prepareSheet';
 
 /** The parts of a character blob this handler touches — see `charData` below. */
 interface HpBlock {
@@ -114,8 +116,8 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
 
       const { characterId, delta } = data;
 
-      if (!characterId || typeof delta !== 'number' || !Number.isFinite(delta)) {
-        socket.emit('error', { message: 'characterId (string) and delta (number) are required' });
+      if (!characterId || typeof delta !== 'number' || !Number.isInteger(delta) || !Number.isFinite(delta)) {
+        socket.emit('error', { message: 'characterId (string) and delta (integer) are required' });
         return;
       }
 
@@ -163,16 +165,42 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
 
       // Read and written under the row's lock, afresh. Reading before the
       // lock and writing the whole sheet back undid any save that landed in
-      // between; a save arriving now waits for this one instead.
+      // between; a save arriving now waits for this one instead. Session and
+      // MFA are confirmed before the lock; membership is re-read through the
+      // transaction so a kick or demotion cannot persist HP (ADR 0007).
+      const pre = await confirmWriteAuthorization(socket);
+      if (!pre.ok) return;
       const outcome = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Character" WHERE id = ${characterId} FOR UPDATE`;
-        const fresh = await tx.character.findUnique({ where: { id: characterId }, select: { data: true } });
+        const authz = await confirmWriteAuthorization(socket, { db: tx });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign } as const;
+        if (authz.role === 'SPECTATOR') return { error: 'Spectators cannot change a character' } as const;
+        const fresh = await tx.character.findUnique({
+          where: { id: characterId },
+          select: { data: true, userId: true, gameSystem: true },
+        });
         if (!fresh) return { error: 'Character not found' } as const;
-        const applied = applyHpDelta(character.gameSystem, fresh.data, delta);
+        if (fresh.userId !== socket.userId && authz.role !== 'DM') {
+          return { error: 'You do not have permission to update this character\'s HP' } as const;
+        }
+        if (isGameSystemSheetFrozen(fresh.gameSystem)) {
+          return { error: GAME_SYSTEM_SHEET_FROZEN_MESSAGE } as const;
+        }
+        const applied = applyHpDelta(fresh.gameSystem, fresh.data, delta);
         if ('error' in applied) return applied;
-        await tx.character.update({ where: { id: characterId }, data: { data: toJson(applied.data) } });
+        const accepted = acceptLiveSheetPatch({
+          gameSystem: fresh.gameSystem,
+          original: fresh.data,
+          patched: applied.data,
+        });
+        if (!accepted.ok) return { error: accepted.message };
+        await tx.character.update({ where: { id: characterId }, data: { data: toJson(accepted.data) } });
         return applied;
       });
+      if ('denied' in outcome) {
+        await applyWriteAuthzDrop(socket, outcome);
+        return;
+      }
       if ('error' in outcome) {
         socket.emit('error', { message: outcome.error });
         return;
@@ -252,15 +280,44 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       }
 
       // Under the row's lock and read afresh, for the reason given for hit
-      // points above.
+      // points above. Session and MFA are confirmed before the lock;
+      // membership is re-read through the transaction so a PLAYER demoted
+      // to SPECTATOR mid-write cannot land a hit die.
+      const pre = await confirmWriteAuthorization(socket);
+      if (!pre.ok) return;
       const outcome = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Character" WHERE id = ${characterId} FOR UPDATE`;
-        const fresh = await tx.character.findUnique({ where: { id: characterId }, select: { data: true } });
+        const authz = await confirmWriteAuthorization(socket, { db: tx });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign } as const;
+        if (authz.role === 'SPECTATOR') return { error: 'Spectators cannot change a character' } as const;
+        const fresh = await tx.character.findUnique({
+          where: { id: characterId },
+          select: { data: true, userId: true, gameSystem: true },
+        });
         if (!fresh) return { error: 'Character not found' } as const;
+        if (fresh.userId !== socket.userId && authz.role !== 'DM') {
+          return { error: 'You do not have permission to spend this character\'s hit dice' } as const;
+        }
+        if (isGameSystemSheetFrozen(fresh.gameSystem)) {
+          return { error: GAME_SYSTEM_SHEET_FROZEN_MESSAGE } as const;
+        }
+        if (fresh.gameSystem !== 'DND_5E') {
+          return { error: 'Hit dice are not tracked for this game system' } as const;
+        }
         const spent = spendHitDie(fresh.data, index);
         if ('error' in spent) return spent;
-        return { updated: await tx.character.update({ where: { id: characterId }, data: { data: toJson(spent.data) } }) };
+        const accepted = acceptLiveSheetPatch({
+          gameSystem: fresh.gameSystem,
+          original: fresh.data,
+          patched: spent.data,
+        });
+        if (!accepted.ok) return { error: accepted.message };
+        return { updated: await tx.character.update({ where: { id: characterId }, data: { data: toJson(accepted.data) } }) };
       });
+      if ('denied' in outcome) {
+        await applyWriteAuthzDrop(socket, outcome);
+        return;
+      }
       if ('error' in outcome) {
         socket.emit('error', { message: outcome.error });
         return;

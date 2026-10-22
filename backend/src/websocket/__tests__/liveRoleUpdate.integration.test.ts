@@ -1,19 +1,12 @@
 /**
- * A role change reaching a connection that is already open.
+ * A role change dropping that campaign's sockets (ADR 0007).
  *
- * `socket.role` is read once, when the socket authenticates to a campaign, and
- * every DM-gated handler trusts it from then on. That is the correct place to
- * read it — a handler must never take a role off the wire — but it makes the
- * value a snapshot, and a snapshot goes stale the moment the DM seat moves.
- *
- * Stale in the dangerous direction: without intervention the outgoing DM keeps
- * DM powers over their open connection until they happen to reload, and the
- * incoming DM cannot use theirs. REST has no such gap, because its middleware
- * reads the membership per request.
- *
- * These tests drive the real socket server and assert on the same connection
- * before and after — a reconnect would prove nothing, since a fresh socket picks
- * up the new role anyway.
+ * `socket.role` is set when the socket authenticates; handlers never take a
+ * role off the wire. Updating it in place left a demoted DM with DM powers
+ * until they reloaded. A role change now disconnects those campaign sockets
+ * without `campaign.access.revoked` (they are still a member), leaves the
+ * login session, and a reconnecting client authenticates with the new role.
+ * Another campaign's socket is left alone.
  *
  * Requires PostgreSQL at DATABASE_URL.
  */
@@ -25,6 +18,7 @@ import { applyRoleToLiveSockets, broadcastToCampaign } from '../utils';
 import {
   createWsTestServer,
   waitForEvent,
+  expectNoEvent,
   WsTestServer,
 } from '../../__tests__/helpers/websocket-test-server';
 
@@ -39,6 +33,16 @@ let playerId: string;
 let campaignId: string;
 let dmCookie: string;
 let playerCookie: string;
+
+function waitDisconnect(client: ClientSocket): Promise<string> {
+  return new Promise((resolve) => {
+    if (!client.connected) {
+      resolve('already');
+      return;
+    }
+    client.once('disconnect', (reason: string) => resolve(reason));
+  });
+}
 
 /** Ask a socket to clear roll history; resolve with what came back. */
 function attemptClear(client: ClientSocket): Promise<'allowed' | 'refused'> {
@@ -104,38 +108,58 @@ beforeEach(async () => {
     where: { id: campaignId },
     data: { rollHistoryClearedAt: null },
   });
+  await prisma.campaignMembership.update({
+    where: { userId_campaignId: { userId: dmId, campaignId } },
+    data: { role: 'DM' },
+  });
+  await prisma.campaignMembership.update({
+    where: { userId_campaignId: { userId: playerId, campaignId } },
+    data: { role: 'PLAYER' },
+  });
 });
 
 describe('applyRoleToLiveSockets', () => {
-  it('takes DM powers off an open connection without waiting for a reconnect', async () => {
+  it('drops a demoted DM\'s campaign socket without campaign.access.revoked; a reconnect authenticates as PLAYER', async () => {
     const dmClient = await server.connectAndAuth(dmCookie, campaignId);
-
-    // Baseline: this connection really does hold DM powers.
     expect(await attemptClear(dmClient)).toBe('allowed');
 
-    await applyRoleToLiveSockets(dmId, campaignId, 'PLAYER');
+    await prisma.campaignMembership.update({
+      where: { userId_campaignId: { userId: dmId, campaignId } },
+      data: { role: 'PLAYER' },
+    });
 
-    // Same socket, never reconnected. This is the privilege leak.
-    expect(await attemptClear(dmClient)).toBe('refused');
+    const notRevoked = expectNoEvent(dmClient, 'campaign.access.revoked', 500);
+    const dropped = waitDisconnect(dmClient);
+    expect(await applyRoleToLiveSockets(dmId, campaignId, 'PLAYER')).toBe(1);
+    await expect(dropped).resolves.toBe('io server disconnect');
+    await expect(notRevoked).resolves.toBeUndefined();
+
+    const again = await server.connectAndAuth(dmCookie, campaignId);
+    expect(await attemptClear(again)).toBe('refused');
+    again.disconnect();
   });
 
-  it('grants DM powers to an open connection that had none', async () => {
+  it('drops a promoted player\'s campaign socket; a reconnect authenticates as DM', async () => {
     const playerClient = await server.connectAndAuth(playerCookie, campaignId);
-
     expect(await attemptClear(playerClient)).toBe('refused');
 
-    await applyRoleToLiveSockets(playerId, campaignId, 'DM');
+    await prisma.campaignMembership.update({
+      where: { userId_campaignId: { userId: playerId, campaignId } },
+      data: { role: 'DM' },
+    });
 
-    expect(await attemptClear(playerClient)).toBe('allowed');
+    const notRevoked = expectNoEvent(playerClient, 'campaign.access.revoked', 500);
+    const dropped = waitDisconnect(playerClient);
+    expect(await applyRoleToLiveSockets(playerId, campaignId, 'DM')).toBe(1);
+    await expect(dropped).resolves.toBe('io server disconnect');
+    await expect(notRevoked).resolves.toBeUndefined();
 
-    playerClient.disconnect();
+    const again = await server.connectAndAuth(playerCookie, campaignId);
+    expect(await attemptClear(again)).toBe('allowed');
+    again.disconnect();
   });
 
   it('touches nothing when the user has no connection open', async () => {
-    // Somebody who has never connected, so the result cannot depend on whether
-    // an earlier test left a socket lying around. Offline is the ordinary case
-    // for a handover — most transfers happen between sessions — and it must be
-    // a quiet no-op rather than an error.
     const neverConnected = randomUUID();
     expect(await applyRoleToLiveSockets(neverConnected, campaignId, 'DM')).toBe(0);
   });
@@ -151,8 +175,12 @@ describe('applyRoleToLiveSockets', () => {
     const elsewhere = await server.connectAndAuth(dmCookie, otherCampaign.id);
     expect(await attemptClear(elsewhere)).toBe('allowed');
 
-    // A handover in the first campaign must not disturb a tab open on another.
+    await prisma.campaignMembership.update({
+      where: { userId_campaignId: { userId: dmId, campaignId } },
+      data: { role: 'PLAYER' },
+    });
     await applyRoleToLiveSockets(dmId, campaignId, 'PLAYER');
+    expect(elsewhere.connected).toBe(true);
     expect(await attemptClear(elsewhere)).toBe('allowed');
 
     elsewhere.disconnect();

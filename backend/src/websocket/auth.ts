@@ -27,6 +27,14 @@ export interface AuthenticatedSocket extends Socket {
    * member's memory it is sent as it grows.
    */
   previewingMemoryOf?: string;
+  /**
+   * When session+membership were last confirmed for a write or the 2 s
+   * monitor (`writeAuthz.ts`). `token.move` frames may reuse this for at
+   * most `DRAG_AUTH_STALE_MS`.
+   */
+  writeAuthzConfirmedAt?: number;
+  /** The 2 s authorization monitor while this socket is in a campaign. */
+  writeAuthzMonitor?: ReturnType<typeof setInterval>;
 }
 
 /**
@@ -61,7 +69,9 @@ async function mustSetUpMfaFirst(user: Parameters<typeof pastAdminMfaDeadline>[0
  * The two-factor deadline passes with time, so a socket opened within an
  * administrator's 7 days is stopped here once they are over. A database
  * error while the deadline is checked lets the socket through, as the REST
- * gate lets the request through.
+ * gate lets the request through. Discrete socket writes use writeAuthz.ts
+ * instead, which fails closed when the store or that policy cannot be
+ * confirmed (ADR 0007).
  */
 export async function socketSessionIsLive(socket: AuthenticatedSocket): Promise<boolean> {
   const { sessionStore } = socket.request as { sessionStore?: Store };

@@ -23,6 +23,7 @@ import { emitToMapReaders } from '../utils';
 import { explorationRevealLimiter, limiterKey, stateRequestAllowed, withinCeiling, loadFogState, applyWsFogOperation, revealedCellIndices, broadcastExplorationState, fogFits, FogTooLargeError } from '../shared';
 import { toJson } from '../../utils/prisma-json';
 import { canReadMap } from '../../services/permissions';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 const MAP_SELECT = {
   campaignId: true, explorationEnabled: true, width: true, height: true, gridSize: true,
@@ -95,6 +96,11 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
     // the lock is released when the transaction ends.
     const cellsNow = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${mapId}), hashtext(${userId}))`;
+      const member = await tx.campaignMembership.findUnique({
+        where: { userId_campaignId: { userId, campaignId } },
+        select: { userId: true },
+      });
+      if (!member) return null;
       const row = await tx.mapExploration.findUnique({
         where: { mapId_userId: { mapId, userId } },
         select: { explored: true },
@@ -176,10 +182,9 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
       // moves, so it is dropped without a word.
       if (!fogFits(map)) return;
 
-      const isDM = socket.role === 'DM';
       let userId = socket.userId;
       if (named !== undefined && named !== socket.userId) {
-        if (!isDM) {
+        if (socket.role !== 'DM') {
           socket.emit('error', { message: 'You can only record your own explored memory' });
           return;
         }
@@ -192,6 +197,14 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
           return;
         }
         userId = named;
+      }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (!canReadMap(authz.role, mapId, map.campaign.currentMapId)) return;
+      if (userId !== socket.userId && authz.role !== 'DM') {
+        socket.emit('error', { message: 'You can only record your own explored memory' });
+        return;
       }
       queueReveal(io, socket.campaignId, mapId, userId, cells);
     } catch (error) {
@@ -257,6 +270,12 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
       const map = await prisma.map.findUnique({ where: { id: mapId }, select: { campaignId: true } });
       if (!map || map.campaignId !== socket.campaignId) {
         socket.emit('error', { message: 'Map not found' });
+        return;
+      }
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
+        socket.emit('error', { message: 'Only DMs can reset explored areas' });
         return;
       }
       forgetQueuedReveals(mapId);

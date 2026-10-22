@@ -9,6 +9,7 @@ import logger from '../../utils/logger';
 import { readJsonObject, toJson } from '../../utils/prisma-json';
 import { setCampaignAmbientAudio } from '../../services/atmosphereAudio';
 import { withinCeiling } from '../shared';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -36,6 +37,13 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
         select: { vibeSettings: true },
       });
       const existing = readJsonObject(campaign?.vibeSettings) ?? {};
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
+        socket.emit('error', { message: 'Only the DM can set atmosphere effects' });
+        return;
+      }
 
       await prisma.campaign.update({
         where: { id: socket.campaignId },
@@ -72,6 +80,13 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
       if (!withinCeiling(socket, 'atmosphere.audio.set')) return;
 
       if (socket.role !== 'DM') {
+        socket.emit('error', { message: 'Only the DM can control ambient audio' });
+        return;
+      }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
         socket.emit('error', { message: 'Only the DM can control ambient audio' });
         return;
       }

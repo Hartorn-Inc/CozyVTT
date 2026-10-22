@@ -19,6 +19,7 @@ import { readTokens, toJson } from '../../utils/prisma-json';
 import { withMapsLocked, clampTokenPosition } from '../../utils/mapTokens';
 import { canControlToken, canMoveTokensNow, canReadMap, PAUSED_MOVE_REFUSAL } from '../../services/permissions';
 import { campaignSockets, stillInCampaign } from '../utils';
+import { applyWriteAuthzDrop, confirmDragFrameAuthorization, confirmWriteAuthorization } from '../writeAuthz';
 
 /** How one member is sent a dragged token. */
 interface FrameRecipient {
@@ -272,7 +273,17 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         include: { campaign: { select: { status: true, currentMapId: true } } },
       });
 
-      if (!map || map.campaignId !== socket.campaignId || !canReadMap(socket.role, mapId, map.campaign.currentMapId)) {
+      if (!map || map.campaignId !== socket.campaignId) {
+        socket.emit('error', { message: 'Map not found' });
+        return;
+      }
+
+      // Discrete: 0 s stale. Recheck after the map fetch so a kick or
+      // demotion that landed during it cannot start a drag.
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+
+      if (!canReadMap(authz.role, mapId, map.campaign.currentMapId)) {
         socket.emit('error', { message: 'Map not found' });
         return;
       }
@@ -288,19 +299,19 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
 
       // The same rule the REST update route applies, so the channels cannot
       // drift: the DM, or a player (never a spectator) who controls it.
-      if (!canControlToken(socket.role, token.controlledBy, socket.userId)) {
-        socket.emit('error', { message: moveRefusal(socket.role) });
+      if (!canControlToken(authz.role, token.controlledBy, socket.userId)) {
+        socket.emit('error', { message: moveRefusal(authz.role) });
         return;
       }
 
       // The same plane rule the REST update route applies.
-      if (!(await canActOnTokenPlane(socket.role, token, socket.campaignId, socket.userId!))) {
+      if (!(await canActOnTokenPlane(authz.role, token, socket.campaignId, socket.userId!))) {
         socket.emit('error', { message: 'You cannot interact with spirit layer tokens' });
         return;
       }
 
       // And the same session rule: a player's drag waits for the session.
-      if (!canMoveTokensNow(socket.role, map.campaign.status)) {
+      if (!canMoveTokensNow(authz.role, map.campaign.status)) {
         socket.emit('error', { message: PAUSED_MOVE_REFUSAL });
         return;
       }
@@ -336,6 +347,11 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       if (!tokenId || !mapId || typeof x !== 'number' || typeof y !== 'number') {
         return; // Silently ignore invalid data during rapid updates
       }
+
+      // Frames may reuse a confirm younger than DRAG_AUTH_STALE_MS; a stale
+      // cache reconfirms and disconnects on failure (ADR 0007). No extra map
+      // fetch when the cache hits.
+      if (!(await confirmDragFrameAuthorization(socket))) return;
 
       // Single fetch covers bounds validation AND the spirit-layer check below
       // (this handler fires up to ~60×/s during a drag, so one query per frame
@@ -454,14 +470,14 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       }
 
       const token = tokensArray[tokenIndex];
-      // The whole footprint on the map, the rule the client applies before
-      // it sends a drop; everyone, the mover included, is told where it went.
-      const { x, y } = clampTokenPosition({ x: dropX, y: dropY }, token.size ?? { width: 1, height: 1 }, map);
       // The drag is over; the next one is decided afresh. Who its frames
-      // went to is kept for a refused drop, below.
+      // went to is kept for a refused drop, below. The drop is clamped to
+      // the token's footprint under the map's lock, from the token as it is
+      // then.
       const sawTheDrag = drags.get(tokenId)?.deciding;
       drags.delete(tokenId);
       const campaignId = socket.campaignId;
+      if (!campaignId) return;
 
       /**
        * A drop refused after the token was picked up: the mover's screen has
@@ -499,41 +515,64 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         }
       };
 
-      // See token.move.start: one rule, shared with the REST update route.
-      // Control can be taken away mid-drag (a demotion, a new controller).
-      if (!canControlToken(socket.role, token.controlledBy, socket.userId)) {
-        socket.emit('error', { message: moveRefusal(socket.role) });
-        await putBack(false);
-        return;
-      }
-
-      // The same plane rule the REST update route applies.
-      if (!(await canActOnTokenPlane(socket.role, token, socket.campaignId, socket.userId!))) {
-        socket.emit('error', { message: 'You cannot interact with spirit layer tokens' });
-        await putBack(false);
-        return;
-      }
-
-      // And the same session rule: a player's move waits for the session.
-      // A pause can land after the token was picked up; the mover controls
-      // the token, so they are told where it is whenever they may see it.
-      if (!canMoveTokensNow(socket.role, map.campaign.status)) {
-        socket.emit('error', { message: PAUSED_MOVE_REFUSAL });
-        await putBack(true);
-        return;
-      }
-
       // Update token position, in the list as it is under the map's lock: a
       // DM's add or delete landing during the drag used to be written away.
-      token.position = { x, y };
-      const updatedTokens = await withMapsLocked([mapId], async (tx) => {
-        const fresh = await tx.map.findUniqueOrThrow({ where: { id: mapId }, select: { tokens: true } });
+      // Discrete: 0 s stale. Session and MFA are confirmed before the lock;
+      // membership, control, plane and pause are rechecked under it with the
+      // fresh role and a fresh token row.
+      type MoveEndOutcome =
+        | { denied: true; dropCampaign?: true }
+        | { refused: string; putBack: boolean }
+        | { tokens: Token[]; x: number; y: number };
+      const pre = await confirmWriteAuthorization(socket);
+      if (!pre.ok) return;
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<MoveEndOutcome> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign };
+        const fresh = await tx.map.findUnique({
+          where: { id: mapId },
+          select: {
+            tokens: true, width: true, height: true, campaignId: true,
+            campaign: { select: { status: true, currentMapId: true } },
+          },
+        });
+        if (!fresh || fresh.campaignId !== campaignId || !canReadMap(authz.role, mapId, fresh.campaign.currentMapId)) {
+          return { refused: 'Map not found', putBack: false } as const;
+        }
         const tokens = readTokens(fresh.tokens);
         const index = tokens.findIndex((t) => t.id === tokenId);
-        if (index !== -1) tokens[index] = { ...tokens[index], position: { x, y } };
+        if (index === -1) return { refused: 'Token not found', putBack: false } as const;
+        const freshToken = tokens[index];
+        if (!canControlToken(authz.role, freshToken.controlledBy, socket.userId)) {
+          return { refused: moveRefusal(authz.role), putBack: false } as const;
+        }
+        if (!(await canActOnTokenPlane(authz.role, freshToken, campaignId, socket.userId!))) {
+          return { refused: 'You cannot interact with spirit layer tokens', putBack: false } as const;
+        }
+        if (!canMoveTokensNow(authz.role, fresh.campaign.status)) {
+          return { refused: PAUSED_MOVE_REFUSAL, putBack: true } as const;
+        }
+        const dropped = clampTokenPosition(
+          { x: dropX, y: dropY },
+          freshToken.size ?? { width: 1, height: 1 },
+          { width: fresh.width, height: fresh.height }
+        );
+        tokens[index] = { ...freshToken, position: dropped };
         await tx.map.update({ where: { id: mapId }, data: { tokens: toJson(tokens) } });
-        return tokens;
+        return { tokens, x: dropped.x, y: dropped.y };
       });
+      if ('denied' in outcome) {
+        await applyWriteAuthzDrop(socket, outcome);
+        return;
+      }
+      if ('refused' in outcome) {
+        socket.emit('error', { message: outcome.refused });
+        await putBack(outcome.putBack);
+        return;
+      }
+      token.position = { x: outcome.x, y: outcome.y };
+      const updatedTokens = outcome.tokens;
+      const { x, y } = outcome;
 
       if (map.lightingEnabled) {
         // Dynamic lighting: per-player visibility filtering. The plane and

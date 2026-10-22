@@ -15,6 +15,7 @@ import { withMapsLocked } from '../../utils/mapTokens';
 import { getState as getCombatState } from '../initiativeState';
 import { resendInitiativeState } from './initiative';
 import { bestEffort, campaignSockets } from '../utils';
+import { applyWriteAuthzDrop, confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -38,6 +39,13 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
 
       if (typeof visible !== 'boolean') {
         socket.emit('error', { message: 'visible must be a boolean' });
+        return;
+      }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
+        socket.emit('error', { message: 'Only the DM can toggle the spirit layer' });
         return;
       }
 
@@ -92,7 +100,7 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
    * SPIRIT_LAYER.STYLE_CHANGE - DM changes the realm atmosphere style.
    * No DB write here — the REST API already persisted it.
    */
-  socket.on('spirit_layer.style_change', (data: { style: string }) => {
+  socket.on('spirit_layer.style_change', async (data: { style: string }) => {
     if (!socket.campaignId) return;
     if (!withinCeiling(socket, 'spirit_layer.style_change')) return;
     if (socket.role !== 'DM') {
@@ -103,6 +111,12 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
     // Every client renders the value as CSS.
     if (typeof data?.style !== 'string' || !isValidSpiritStyle(data.style)) {
       socket.emit('error', { message: 'Invalid spirit layer style' });
+      return;
+    }
+    const authz = await confirmWriteAuthorization(socket);
+    if (!authz.ok) return;
+    if (authz.role !== 'DM') {
+      socket.emit('error', { message: 'Only DMs can change spirit layer style' });
       return;
     }
     io.to(socket.campaignId).emit('spirit_layer.style_changed', { style: data.style });
@@ -146,18 +160,32 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
       // Find and update the token, in the list as it is under the map's
       // lock, like every other write to a map's tokens: a move or an add
       // landing meanwhile used to be written away.
+      const pre = await confirmWriteAuthorization(socket);
+      if (!pre.ok) return;
       const updatedTokens = await withMapsLocked([mapId], async (tx) => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign } as const;
+        if (authz.role !== 'DM') return { refused: 'Only the DM can toggle token visibility' } as const;
         const fresh = await tx.map.findUniqueOrThrow({ where: { id: mapId }, select: { tokens: true } });
         const tokens = readTokens(fresh.tokens);
         const index = tokens.findIndex((t) => t.id === tokenId);
-        if (index === -1) return null;
+        if (index === -1) return { missing: true } as const;
         tokens[index] = { ...tokens[index], visible };
         await tx.map.update({ where: { id: mapId }, data: { tokens: toJson(tokens) } });
-        return tokens;
+        return { tokens };
       });
-      const token: Token | undefined = updatedTokens?.find((t) => t.id === tokenId);
+      if (updatedTokens && 'denied' in updatedTokens) {
+        await applyWriteAuthzDrop(socket, updatedTokens);
+        return;
+      }
+      if (updatedTokens && 'refused' in updatedTokens) {
+        socket.emit('error', { message: updatedTokens.refused });
+        return;
+      }
+      const tokens = updatedTokens && 'tokens' in updatedTokens ? updatedTokens.tokens : undefined;
+      const token: Token | undefined = tokens?.find((t) => t.id === tokenId);
 
-      if (!updatedTokens || !token) {
+      if (!tokens || !token) {
         socket.emit('error', { message: 'Token not found' });
         return;
       }
@@ -179,7 +207,7 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
         // client onto the map it carries.
         const campaign = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { currentMapId: true } });
         if (campaign?.currentMapId === mapId) {
-          await broadcastMapData(io, campaignId, { ...map, tokens: toJson(updatedTokens) });
+          await broadcastMapData(io, campaignId, { ...map, tokens: toJson(tokens) });
         }
         // Any token: revealing or hiding a player's own spirit-plane token
         // moves them between planes, which changes what they are sent of the

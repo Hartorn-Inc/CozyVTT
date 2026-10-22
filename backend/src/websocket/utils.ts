@@ -393,63 +393,61 @@ export async function sendSystemMessage(
 }
 
 /**
- * Point a user's live sockets at their new campaign role.
+ * Drop a user's live sockets for one campaign after their role there changed.
  *
- * `socket.role` is read from the session once, when the socket authenticates to
- * a campaign, and then trusted by every handler that gates on it. That is the
- * right place to read it from — a handler must never take a role off the wire —
- * but it means the value is a snapshot. When a role changes underneath a
- * connected socket the snapshot is simply wrong, and wrong in the dangerous
- * direction: a demoted DM keeps DM powers over that connection until they
- * happen to reload.
- *
- * REST has no equivalent problem because its middleware reads the membership per
- * request. This closes the same gap for sockets rather than waiting for a
- * reconnect, so a handover does not interrupt play.
+ * `socket.role` is set when the socket authenticates, and handlers never take
+ * a role off the wire. Updating it in place used to let a demoted DM keep
+ * DM powers on that connection. A role change now drops those campaign
+ * sockets (ADR 0007): no `campaign.access.revoked` (they are still a member),
+ * the login session remains, and a reconnecting client `authenticate`s and
+ * picks up the new role from membership. HTTP routes still broadcast
+ * `campaign.role.changed` / `campaign.dm.transferred` themselves.
  *
  * Only sockets attached to this campaign are touched: the same person may have
  * another tab open on a different campaign, where this role means nothing.
  *
- * Returns how many sockets were updated, which is 0 when the user is offline —
- * the ordinary case, and not a failure.
+ * Returns how many sockets were dropped, which is 0 when the user is offline —
+ * the ordinary case, and not a failure. `role` is the membership value the
+ * reconnect will read; it is not written onto the sockets being closed.
  */
 export async function applyRoleToLiveSockets(
   userId: string,
   campaignId: string,
   role: CampaignRole
 ): Promise<number> {
+  void role;
   const io = getSocketInstance();
   // Sockets join a room named for their user (see events.ts), which is how a
   // specific person's connections are addressed.
   const sockets = await io.in(userId).fetchSockets();
 
-  let updated = 0;
+  let dropped = 0;
   for (const socket of sockets) {
     // The default in-memory adapter hands back the real sockets, so the fields
     // set during authentication are both readable and writable — the same
     // approach getOnlineUserIds and the secret dice-roll fan-out rely on.
     const authed = socket as unknown as AuthenticatedFields;
     if (authed.campaignId === campaignId || socket.rooms.has(campaignId)) {
-      authed.role = role;
-      updated += 1;
+      socket.disconnect(true);
+      dropped += 1;
     }
   }
 
-  return updated;
+  return dropped;
 }
 
 /**
  * Cut a user's live connections to one campaign.
  *
- * Removing someone from a campaign, like changing their role, leaves any socket
- * they already have authenticated for it. The handlers read the campaign and
- * the role from the socket, so without this they keep sending and keep
- * receiving every broadcast until they close the tab.
+ * Removing someone from a campaign used to leave the socket open after it
+ * left the room. ADR 0007 drops those campaign sockets after telling them
+ * `campaign.access.revoked` `{ reason: 'removed' }`. The login session
+ * remains: a later handshake with the same cookie is accepted; `authenticate`
+ * to this campaign is then refused. A socket authenticates to one campaign,
+ * so a person playing elsewhere in another tab is left alone.
  *
- * Clearing `campaignId` is what stops them acting: every handler refuses a
- * socket that is not authenticated to a campaign. Leaving the room is what
- * stops them listening. A socket authenticates to one campaign, so a person
- * playing elsewhere in another tab is left alone.
+ * `campaignId` is left set until disconnect so the existing disconnect
+ * handler can tell the table they left and refresh presence.
  *
  * @returns number of connections closed off
  */
@@ -464,12 +462,8 @@ export async function clearCampaignFromLiveSockets(
   for (const socket of sockets) {
     const authed = socket as unknown as AuthenticatedFields;
     if (authed.campaignId === campaignId || socket.rooms.has(campaignId)) {
-      socket.leave(campaignId);
-      if (authed.campaignId === campaignId) {
-        authed.campaignId = undefined;
-        authed.role = undefined;
-      }
       tellAccessRevoked(socket, { campaignId, reason: 'removed', message: REMOVED_MESSAGE });
+      socket.disconnect(true);
       cleared += 1;
     }
   }

@@ -17,6 +17,7 @@ import {
 import logger from '../../utils/logger';
 import { readTokens, toJson } from '../../utils/prisma-json';
 import { withMapsLocked } from '../../utils/mapTokens';
+import { applyWriteAuthzDrop, confirmWriteAuthorization } from '../writeAuthz';
 import { filterTokensByRole, getSpiritVisibilityBatch } from '../../utils/spirit-layer';
 import { canControlToken, canReadMap, canRollDice } from '../../services/permissions';
 import {
@@ -34,7 +35,7 @@ import {
   type CombatState,
 } from '../initiativeState';
 import { bestEffort, campaignSockets, getSocketInstance, stillInCampaign } from '../utils';
-import { stateRequestAllowed, withinCeiling } from '../shared';
+import { stateRequestAllowed, withinCeiling, type Token } from '../shared';
 
 /** What a send needs of a socket; a connected one and a fetched one both have it. */
 type Recipient = Pick<AuthenticatedFields, 'userId' | 'role'> & {
@@ -165,17 +166,45 @@ export async function resendInitiative(campaignId: string, options: { evenWhenEm
 /**
  * Store a token's initiative on its map, in the list as it is under the map's
  * lock like every other write to a map's tokens. A token no longer on the
- * map is left alone.
+ * map is left alone. `allowed` is the permission rule at commit, with the
+ * fresh role and the token row as they are under the lock.
  */
-async function setTokenInitiative(mapId: string, tokenId: string, value: number | null): Promise<void> {
-  await withMapsLocked([mapId], async (tx) => {
-    const fresh = await tx.map.findUniqueOrThrow({ where: { id: mapId }, select: { tokens: true } });
+async function setTokenInitiative(
+  socket: AuthenticatedSocket,
+  mapId: string,
+  tokenId: string,
+  value: number | null,
+  allowed: (role: string, freshToken: Token, currentMapId: string | null) => true | string,
+): Promise<{ ok: true; role: string } | { ok: false; denied?: true; message?: string }> {
+  const pre = await confirmWriteAuthorization(socket);
+  if (!pre.ok) return { ok: false, denied: true };
+
+  type Locked =
+    | { ok: true; role: string }
+    | { ok: false; denied: true; dropCampaign?: true }
+    | { ok: false; message: string };
+  const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked> => {
+    const authz = await confirmWriteAuthorization(socket, { db: tx });
+    if (!authz.ok) return { ok: false, denied: true, dropCampaign: authz.dropCampaign };
+    const fresh = await tx.map.findUniqueOrThrow({
+      where: { id: mapId },
+      select: { tokens: true, campaign: { select: { currentMapId: true } } },
+    });
     const tokens = readTokens(fresh.tokens);
     const index = tokens.findIndex((t) => t.id === tokenId);
-    if (index === -1) return;
-    tokens[index] = { ...tokens[index], initiative: value };
+    if (index === -1) return { ok: true, role: authz.role };
+    const freshToken = tokens[index];
+    const permission = allowed(authz.role, freshToken, fresh.campaign.currentMapId);
+    if (permission !== true) return { ok: false, message: permission };
+    tokens[index] = { ...freshToken, initiative: value };
     await tx.map.update({ where: { id: mapId }, data: { tokens: toJson(tokens) } });
+    return { ok: true, role: authz.role };
   });
+  if (!outcome.ok) {
+    await applyWriteAuthzDrop(socket, outcome);
+    return 'denied' in outcome ? { ok: false, denied: true } : { ok: false, message: outcome.message };
+  }
+  return outcome;
 }
 
 export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSocket): void {
@@ -202,6 +231,10 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       const tokens = readTokens(map.tokens);
       const token = tokens.find((t) => t.id === tokenId);
       if (!token) { socket.emit('error', { message: 'Token not found' }); return; }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can modify initiative' }); return; }
 
       const state = getCombatState(socket.campaignId);
 
@@ -254,6 +287,10 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       const { tokenId } = data;
       if (!tokenId) { socket.emit('error', { message: 'tokenId required' }); return; }
 
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can modify initiative' }); return; }
+
       // The turn passes on, and an emptied order ends the fight, as when a
       // combatant's token is deleted (withoutCombatants).
       const next = withoutCombatants(getCombatState(socket.campaignId), (c) => c.tokenId === tokenId);
@@ -282,7 +319,13 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       const map = await prisma.map.findUnique({ where: { id: mapId } });
       if (!map || map.campaignId !== socket.campaignId) { socket.emit('error', { message: 'Map not found' }); return; }
 
-      await setTokenInitiative(mapId, tokenId, value);
+      const persisted = await setTokenInitiative(socket, mapId, tokenId, value, (role) =>
+        role === 'DM' ? true : 'Only the DM can modify initiative'
+      );
+      if (!persisted.ok) {
+        if (!persisted.denied) socket.emit('error', { message: persisted.message ?? 'Only the DM can modify initiative' });
+        return;
+      }
 
       // Update in-memory combat state
       const state = getCombatState(socket.campaignId);
@@ -442,8 +485,14 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // always gets the default: they may control a token with no sheet and no
       // stat block (a DM can assign one to them), and without this they could
       // send `1d20+9999` and hand themselves the top of the order.
+      const pre = await confirmWriteAuthorization(socket);
+      if (!pre.ok) return;
+      if (!canRollDice(pre.role)) {
+        socket.emit('error', { message: 'Spectators cannot roll initiative' });
+        return;
+      }
       const fallbackExpression =
-        socket.role === 'DM' && expression ? expression : DEFAULT_INITIATIVE_EXPRESSION;
+        pre.role === 'DM' && expression ? expression : DEFAULT_INITIATIVE_EXPRESSION;
 
       let rolledValue: number;
       let rollResult: ReturnType<typeof rollDice> | null = null;
@@ -470,7 +519,36 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
 
       // Persist to token, in the list as it is under the map's lock: the
       // copy fetched before the character lookups above is stale by now.
-      await setTokenInitiative(mapId, tokenId, rolledValue);
+      // Control, spectator, current-map, in-order and combat-active are
+      // re-applied here with the fresh role and token row (ADR 0007).
+      const persisted = await setTokenInitiative(
+        socket,
+        mapId,
+        tokenId,
+        rolledValue,
+        (role, freshToken, currentMapId) => {
+          if (!canRollDice(role)) return 'Spectators cannot roll initiative';
+          if (!canReadMap(role, mapId, currentMapId)) return 'Map not found';
+          if (role === 'DM') return true;
+          if (!canControlToken(role, freshToken.controlledBy, socket.userId)) {
+            return 'You can only roll initiative for your own token';
+          }
+          const combat = getCombatState(socket.campaignId!);
+          if (!combat.combatants.some((c) => c.tokenId === tokenId)) {
+            return 'That token is not in the initiative order yet';
+          }
+          if (combat.active) {
+            return 'Combat has started — ask your DM to change your initiative';
+          }
+          return true;
+        },
+      );
+      if (!persisted.ok) {
+        if (!persisted.denied) {
+          socket.emit('error', { message: persisted.message ?? 'Spectators cannot roll initiative' });
+        }
+        return;
+      }
 
       // Update in-memory state — add to combatants if not already present.
       // Only for a DM, and only a token that was not in the order when the
@@ -487,7 +565,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         current.combatants[combatantIndex].initiative = rolledValue;
         current.combatants = sortCombatants(current.combatants);
         setCombatState(socket.campaignId, current);
-      } else if (socket.role === 'DM' && existingIndex === -1) {
+      } else if (persisted.role === 'DM' && existingIndex === -1) {
         // The DM's roll adds a token that was not in the order when the roll
         // began. One that was, and is gone now, was removed meanwhile (or
         // the fight ended), and stays out.
@@ -564,6 +642,10 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       const { orderedTokenIds } = data;
       if (!Array.isArray(orderedTokenIds)) { socket.emit('error', { message: 'orderedTokenIds must be an array' }); return; }
 
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can reorder initiative' }); return; }
+
       const state = getCombatState(socket.campaignId);
       const combatantMap = new Map(state.combatants.map((c) => [c.tokenId, c]));
       const reordered: CombatantEntry[] = [];
@@ -596,6 +678,10 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       const state = getCombatState(socket.campaignId);
       if (state.combatants.length === 0) { socket.emit('error', { message: 'Add combatants before starting combat' }); return; }
 
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can start combat' }); return; }
+
       state.active = true;
       state.round = 1;
       state.currentTokenId = state.combatants[0].tokenId;
@@ -619,6 +705,10 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
 
       const state = getCombatState(socket.campaignId);
       if (!state.active || state.combatants.length === 0) { socket.emit('error', { message: 'Combat is not active' }); return; }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can advance the turn' }); return; }
 
       const currentIndex = state.combatants.findIndex((c) => c.tokenId === state.currentTokenId);
       const nextIndex = currentIndex + 1;
@@ -648,6 +738,10 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
       if (!withinCeiling(socket, 'initiative.end')) return;
       if (socket.role !== 'DM') { socket.emit('error', { message: 'Only the DM can end combat' }); return; }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can end combat' }); return; }
 
       clearCombatState(socket.campaignId);
       await broadcastInitiativeState(socket.campaignId);

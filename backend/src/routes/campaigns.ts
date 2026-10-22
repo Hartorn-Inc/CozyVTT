@@ -1042,10 +1042,11 @@ router.delete('/:campaignId/members/:userId', campaignDM, async (req: Authentica
       });
     }
 
-    // A socket caches the campaign from when it authenticated, so without this
-    // the person carries on playing until they close the tab. Best-effort: the
-    // membership is already gone and a socket layer that is not up must not
-    // fail the request.
+    // A socket caches the campaign from when it authenticated. Tell those
+    // campaign sockets `campaign.access.revoked` `{ reason: 'removed' }` and
+    // disconnect them so they cannot keep playing at a table they left (ADR
+    // 0007). The login session remains. Best-effort: the membership is already
+    // gone and a socket layer that is not up must not fail the request.
     try {
       await clearCampaignFromLiveSockets(userId, campaignId);
     } catch (error) {
@@ -1072,12 +1073,14 @@ router.delete('/:campaignId/members/:userId', campaignDM, async (req: Authentica
 });
 
 /**
- * What the open pages need after members' roles change, the new roles
- * already applied to their live connections: the roster panel regroups
- * (it groups by role from its own list), and each copy of the initiative
- * order and of the map the table is on is sent again as the new roles see
- * it. A spectator on a lit map is sent no tokens, a player their own and
- * what they see, a DM every hidden creature and its notes.
+ * What the open pages still in the room need after members' roles change.
+ * The affected members' campaign sockets are already dropped so they
+ * reconnect and authenticate with the new role; this is for everyone who
+ * stayed: the roster panel regroups (it groups by role from its own list),
+ * and each copy of the initiative order and of the map the table is on is
+ * sent again as the remaining roles see it. A spectator on a lit map is
+ * sent no tokens, a player their own and what they see, a DM every hidden
+ * creature and its notes.
  */
 async function followNewRoles(campaignId: string, userIds: string[]): Promise<void> {
   for (const userId of userIds) announceRosterChange(userId, [campaignId], 'member.role');
@@ -1158,13 +1161,14 @@ router.put('/:campaignId/members/:userId/role', campaignDM, async (req: Authenti
     }
     const updatedMembership = outcome.updated;
 
-    // Same reason as the DM transfer below: a socket caches its role from when
-    // it authenticated, so a demotion has to reach any open connection or the
-    // person keeps what they had until they reload.
+    // Drop the member's campaign sockets so a cached authenticate-time role
+    // cannot outlive the membership write (ADR 0007). No
+    // `campaign.access.revoked` — they are still a member; the login session
+    // remains and a reconnecting client authenticates with the new role.
     try {
       await applyRoleToLiveSockets(userId, campaignId, role);
-      // And every open page, the member's own included, so the controls
-      // follow the role without a reload (the client patches its list).
+      // Tell whoever is still in the room (the member's own campaign sockets
+      // are already gone) so the roster and controls follow the new role.
       broadcastToCampaign(campaignId, 'campaign.role.changed', { campaignId, userId, role });
       await followNewRoles(campaignId, [userId]);
     } catch (error) {
@@ -1287,11 +1291,12 @@ router.put('/:campaignId/dm', authenticated, async (req: AuthenticatedRequest, r
       },
     });
 
-    // Bring any live connections into line before telling anyone the seat has
-    // moved. Sockets cache the role from when they authenticated, so until this
-    // runs the outgoing DM still holds DM powers over an open connection and the
-    // incoming one cannot use theirs. Best-effort: a socket layer that is not up
-    // must not fail a transfer that is already committed.
+    // Drop both seats' campaign sockets before telling anyone the seat has
+    // moved, so a cached authenticate-time role cannot keep the outgoing DM
+    // in power or leave the incoming one without theirs (ADR 0007). No
+    // `campaign.access.revoked` — both remain members; they reconnect and
+    // authenticate with the new roles. Best-effort: a socket layer that is not
+    // up must not fail a transfer that is already committed.
     try {
       for (const previous of steppedDown) {
         await applyRoleToLiveSockets(previous, campaignId, 'PLAYER');

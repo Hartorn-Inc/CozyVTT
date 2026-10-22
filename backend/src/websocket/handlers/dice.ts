@@ -12,6 +12,7 @@ import { toJson } from '../../utils/prisma-json';
 import { canRollDice } from '../../services/permissions';
 import { campaignSockets } from '../utils';
 import { DiceRollSchema } from '../../validators/dice';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -69,6 +70,13 @@ export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): v
 
       if (!user) {
         socket.emit('error', { message: 'User not found' });
+        return;
+      }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (!canRollDice(authz.role)) {
+        socket.emit('error', { message: 'Spectators cannot roll dice' });
         return;
       }
 
@@ -168,8 +176,11 @@ export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): v
       // facts — `Campaign.ownerId` never moves, while the DM seat can — and they
       // only coincide in a campaign whose creator still runs it. Reading
       // ownership here refused the actual DM after a handover and let the former
-      // DM, now a player, keep clearing the panel for everyone.
-      if (socket.role !== 'DM') {
+      // DM, now a player, keep clearing the panel for everyone. Rechecked at
+      // commit so a demotion that landed on this socket cannot clear (ADR 0007).
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
         socket.emit('error', { message: 'Only the DM can clear roll history' });
         return;
       }

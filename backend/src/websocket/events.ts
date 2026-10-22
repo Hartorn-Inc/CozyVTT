@@ -1,6 +1,7 @@
 import { types } from 'util';
 import { Server } from 'socket.io';
 import { AuthenticatedSocket, authenticateSocket, authenticateCampaign, socketSessionIsLive } from './auth';
+import { markWriteAuthzConfirmed, startWriteAuthzMonitor, stopWriteAuthzMonitor } from './writeAuthz';
 import { databaseBeingReplaced, RESTORING_MESSAGE } from '../services/restoreState';
 import { broadcastPresence, getOnlineUserIds } from './utils';
 import logger from '../utils/logger';
@@ -148,6 +149,8 @@ export function registerEventHandlers(io: Server): void {
         socket.join(data.campaignId);
         socket.campaignId = data.campaignId;
         socket.role = result.role;
+        markWriteAuthzConfirmed(socket);
+        startWriteAuthzMonitor(socket);
 
         // Notify the user they've been authenticated
         socket.emit('authenticated', {
@@ -224,6 +227,7 @@ export function registerEventHandlers(io: Server): void {
     // Clean up when user disconnects
     // ============================================
     socket.on('disconnect', async (reason: string) => {
+      stopWriteAuthzMonitor(socket);
       logger.debug('ws disconnected', { socketId: socket.id, reason });
 
       // Notify campaign members if user was in a campaign

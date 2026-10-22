@@ -11,6 +11,7 @@ import { lastAmbientVolume, setCampaignAmbientAudio } from '../../services/atmos
 import { sendSystemMessage } from '../utils';
 import { withinCeiling } from '../shared';
 import logger from '../../utils/logger';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -67,6 +68,13 @@ export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): v
         socket.emit('error', {
           message: `Unknown vibe period '${period}'. Available: ${availablePeriods}`,
         });
+        return;
+      }
+
+      const authz = await confirmWriteAuthorization(socket);
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
+        socket.emit('error', { message: 'Only the DM can change the vibe' });
         return;
       }
 

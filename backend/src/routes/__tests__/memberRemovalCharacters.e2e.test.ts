@@ -73,6 +73,9 @@ it("takes the removed member's characters out of the campaign", async () => {
 
   expect((await dm.delete(`/api/campaigns/${campaignId}/members/${leaverId}`)).status).toBe(200);
 
+  // Kick drops campaign sockets, not the login session (ADR 0007).
+  expect((await leaver.get('/api/auth/me')).status).toBe(200);
+
   expect((await prisma.character.findUniqueOrThrow({ where: { id: character.id } })).campaignId).toBeNull();
   expect((await stayer.get(`/api/characters/${character.id}`)).status).toBe(403);
   expect((await dm.put(`/api/characters/${character.id}`).send({ name: 'Renamed' })).status).toBe(403);

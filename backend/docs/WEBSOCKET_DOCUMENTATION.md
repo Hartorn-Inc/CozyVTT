@@ -1,6 +1,6 @@
 # CozyVTT WebSocket Documentation
 
-**Last Updated:** 2026-10-13
+**Last Updated:** 2026-10-22
 
 > **This is not a public API.** These events are the ones CozyVTT's own web
 > client sends and receives. They are not versioned, carry no compatibility
@@ -96,6 +96,13 @@ Two things people expect on the socket are not there:
 - Deleting a campaign empties its room: every connection in it gets
   `campaign.access.revoked` with reason `campaign-deleted` ("This campaign was
   deleted.") and forgets the campaign
+- Removing a member from a campaign tells those sockets
+  `campaign.access.revoked` with reason `removed` and disconnects them. The
+  login session remains: a new connection with the same cookie is accepted,
+  then `authenticate` to that campaign is refused. A role change in a campaign
+  disconnects those sockets without `campaign.access.revoked`, so the client
+  reconnects and `authenticate`s with the new role. Other campaigns' sockets
+  for the same user stay up
 - Used for broadcasting game events
 
 ---
@@ -187,7 +194,19 @@ account's two-factor deadline, so a sign-in that ends later (signing out,
 expiry, a password change elsewhere) cannot join a campaign, nor can an
 administrator whose 7 days ran out while the connection was open. A database
 error while the deadline is checked lets the connection through, as the HTTP
-API lets the request through.
+API lets the request through. Discrete socket writes re-read the login session
+and CampaignMembership immediately before they land (after awaits that could
+race a kick or demotion) and fail closed if the store or two-factor policy
+cannot be confirmed, with the same sentence HTTP uses for a store outage
+("The login session could not be confirmed. Try again in a moment."). They do
+not treat an unconfirmable store as signed-out. A dead login session is
+`Unauthorized` and the connection is closed, as at handshake. High-frequency
+`token.move` frames may reuse a successful confirm for at most 2 seconds; a
+per-socket monitor then reconfirms at that bound and disconnects if
+authorization is gone, so a demoted member cannot drag forever on a cached
+role. `token.move.start` and `token.move.end` are discrete (0 s stale); the
+drop rechecks control, plane and pause under the map's lock with the fresh
+role and a fresh token row.
 
 While an administrator restores a backup, from the moment the database starts
 being replaced until the restore ends, every open connection is sent
@@ -327,7 +346,7 @@ For every other event, see the [Event Inventory](#event-inventory).
 
 #### `campaign.access.revoked`
 **Direction:** Server → Client
-**When:** This connection may no longer use its campaign: the DM removed the member, the owner deleted the campaign, or the sign-in the connection was opened under ended (signed out, a password changed or reset, two-factor authentication turned on or off from another device, a platform role changed, the account deleted, or the instance restored from a backup). A sign-in that expires, reaches its 30 days, or is removed to keep the account at 20 sign-ins sends nothing: the connection stays open until its next `authenticate` is refused
+**When:** This connection may no longer use its campaign: the DM removed the member, the owner deleted the campaign, or the sign-in the connection was opened under ended (signed out, a password changed or reset, two-factor authentication turned on or off from another device, a platform role changed, the account deleted, the instance restored from a backup, or a drag/monitor found the login session dead). A sign-in that expires, reaches its 30 days, or is removed to keep the account at 20 sign-ins sends nothing: the connection stays open until its next `authenticate` is refused. A role change is not this event: those campaign sockets are disconnected without it so the client reconnects and re-authenticates with the new role; the login session remains
 **Payload:**
 ```typescript
 {
@@ -341,8 +360,8 @@ What follows depends on the reason:
 
 | `reason` | The connection afterwards | What a client should do |
 | --- | --- | --- |
-| `removed` | Stays open, but has left the campaign's room and is no longer authenticated to any campaign: it hears nothing from the table, and every campaign event it sends is refused | Stop, show `message`, leave the campaign |
-| `campaign-deleted` | The same, for every connection that was in the campaign | The same |
+| `removed` | The server closes it straight after (`disconnect` with reason `io server disconnect`). The login session remains: a new connection with the same cookie is accepted, then `authenticate` to this campaign is refused | Stop, show `message`, leave the campaign. Do not reconnect this campaign on this event |
+| `campaign-deleted` | Stays open, but has left the campaign's room and is no longer authenticated to any campaign: it hears nothing from the table, and every campaign event it sends is refused | The same |
 | `signed-out` | The server closes it straight after (`disconnect` with reason `io server disconnect`) | Do not reconnect: a new connection would be refused. Sign in again |
 
 Before this event existed the server sent an `error` with the reason instead ("You are no longer a member of this campaign", "This campaign was deleted", or the sign-in's reason); it no longer does.
@@ -762,7 +781,7 @@ An `initiative.request_state` while nothing is in the order is answered from mem
 
 **Dynamic lighting** decides which tokens a player is *sent*. The rule lives in `utils/visibilityRule.ts`, shared byte for byte with the client: walls first (nothing outside a controlled token's line of sight is sent, lit or not), then the map's `globalIllumination` flag, then darkvision, the token's own square and light. Sight is judged from the centre of each of the player's tokens, and a token is seen when its centre is; both centres come from `utils/tokenCentre.ts`, shared byte for byte with the client too. A player's own tokens are always in their sight. A player who is sent none of their own tokens on a lit map is sent no other token there, and neither is a spectator, who controls none. Token moves apply the same plane and hidden-token rules as the map fetch before line of sight, so a player never receives on a move what opening the map would not have given them. The frames of a drag (`token.moved` from `token.move`) go, on a lit map, to the DM's sockets and to the players whose tokens can see each frame's position, with `token:disappeared` to a player at the frame that takes the token out of their sight and `token:appeared` at the frame that brings it into it; `token.move.end` then decides, per player, who is sent where it stopped. Any per-map flag change is broadcast as one `map:settings:updated` event carrying every flag. A change to `lightingEnabled` or `globalIllumination` on the map the campaign is showing also re-sends `map.changed` to every member with the map as they can now see it, the same event a map switch or a spirit-realm crossing sends, since those two flags decide which tokens a player is sent. So does a light, wall or door change on a lit map the campaign is showing, over the socket or the REST routes, to players only (the DM is sent every token already): one `map.changed` per map, 150 ms after the last change of a burst. A change that sends players no event (see **A locked door and a light that is off are the DM's** below) sends them no `map.changed` either: it changes nothing they can see, and the map arriving would tell them that something had just changed. Revealing or hiding one token with `spirit_layer.token.toggle` works the same way: `spirit_layer.token.toggled`, which carries the token, goes to the DM's own sockets only, and when the token is on the map the campaign is showing, every member then receives `map.changed` with the map as they may see it.
 
-**A character sheet in `character.updated` is sent as each member may read it.** Derived values are projected at read when their inputs exist, then Keeper's Notes are filtered. Current resources are left as stored; a projection outside schema bounds is clamped (Mythos 100 → sanity maximum 0). The event goes to the character's campaign after a sheet save over REST and after `character.hitdice.spend`. A save that changes the picture of the character's tokens on another campaign's maps sends that campaign `character.updated` with only `characterId` and `tokensChanged: true`, and no sheet. A Call of Cthulhu sheet's top-level `notes` (Keeper's Notes) is in the copy sent to the campaign's DM, always (an empty string when nothing is written), and left out of everyone else's, the character's owner included. The same rule applies to the REST reads; see `Character.data` in `API_DOCUMENTATION.yaml`. **A frozen Shadowrun 6e Character refuses live HP and hit-die writes.** After campaign and permission checks, `character.hp.update` and `character.hitdice.spend` answer `error` with `Shadowrun 6e Characters cannot be created or edited until the sheet and an attribution section exist.` and store nothing. Other game systems are unchanged.
+**A character sheet in `character.updated` is sent as each member may read it.** Derived values are projected at read when their inputs exist, then Keeper's Notes are filtered. Current resources are left as stored; a projection outside schema bounds is clamped (Mythos 100 → sanity maximum 0). The event goes to the character's campaign after a sheet save over REST and after `character.hitdice.spend`. A save that changes the picture of the character's tokens on another campaign's maps sends that campaign `character.updated` with only `characterId` and `tokensChanged: true`, and no sheet. A Call of Cthulhu sheet's top-level `notes` (Keeper's Notes) is in the copy sent to the campaign's DM, always (an empty string when nothing is written), and left out of everyone else's, the character's owner included. The same rule applies to the REST reads; see `Character.data` in `API_DOCUMENTATION.yaml`. **A frozen Shadowrun 6e Character refuses live HP and hit-die writes.** After campaign and permission checks, `character.hp.update` and `character.hitdice.spend` answer `error` with `Shadowrun 6e Characters cannot be created or edited until the sheet and an attribution section exist.` and store nothing. Other game systems are unchanged. **Live HP and hit-die use the REST Zod seam.** `character.hp.update` requires a finite integer `delta`; a non-numeric or fractional patch is refused and stores nothing. After `applyHpDelta` / `spendHitDie`, the patched blob goes through `acceptLiveSheetPatch` (the same Zod storage boundary REST uses): a patch is refused only if the patched fields are invalid or it introduces a new schema error. A legacy over-limit sheet stays playable at the table (current HP changes, inventory length unchanged); a REST save of that same sheet is still 400. Current resources are writes; clamp uses the projected maximum. Spectators cannot change a Character; the permission decision uses the membership role re-read at commit, so a PLAYER demoted to SPECTATOR mid-write cannot land HP or a hit die.
 
 **Walls and lights stay near their map.** `wall:add`, the DM's `wall:update`, `walls:replace`, `light:add`, `light:update` and `lights:replace` answer `error` and store nothing for a wall end or light more than 250,000 pixels from the map's corner either way, or more than 500 of the map's grid squares outside its edges. A wall or light already stored outside the second bound, before it existed, is kept when sent back with the same id and position (both ends, for a wall), whatever its other fields say, so a list holding one still saves. The REST wall and light routes apply the same bounds. Ids are unique within a map's list: `wall:add` and `light:add` answer `error` for an id already on the map, and `walls:replace` and `lights:replace` for a list that repeats one.
 

@@ -1,15 +1,11 @@
 /**
  * Removing someone from a campaign reaching a connection that is already open.
  *
- * A socket reads its campaign and role once, when it authenticates, and every
- * handler trusts that from then on. Changing the DM seat already pushed the new
- * role to live connections. Removing a member did not, so a player the DM had
- * just removed kept sending chat and dice and kept receiving everything the
- * table did, for as long as they left the tab open.
- *
- * These drive the real socket server and assert on the same connection before
- * and after. A reconnect would prove nothing, because a fresh socket is
- * refused at authentication anyway.
+ * Kick tells the socket `campaign.access.revoked` `{ reason: 'removed' }` and
+ * disconnects it (ADR 0007). Discrete writes also re-read membership at
+ * commit. The login session remains: a later handshake with the same cookie
+ * is accepted; `authenticate` to the campaign they were removed from is then
+ * refused. Another campaign's socket is left alone.
  *
  * Requires PostgreSQL at DATABASE_URL.
  */
@@ -37,6 +33,16 @@ let campaignId: string;
 let otherCampaignId: string;
 let dmCookie: string;
 let playerCookie: string;
+
+function waitDisconnect(client: ClientSocket): Promise<string> {
+  return new Promise((resolve) => {
+    if (!client.connected) {
+      resolve('already');
+      return;
+    }
+    client.once('disconnect', (reason: string) => resolve(reason));
+  });
+}
 
 /** Try to speak in the campaign; resolve with what came back. */
 function attemptChat(client: ClientSocket, content: string): Promise<'sent' | 'refused'> {
@@ -98,18 +104,22 @@ afterAll(async () => {
 });
 
 describe('clearCampaignFromLiveSockets', () => {
-  it('stops an open connection speaking in a campaign it was removed from', async () => {
+  it('tells the connection why, then disconnects it', async () => {
     const playerClient = await server.connectAndAuth(playerCookie, campaignId);
 
-    // Baseline: this connection really can speak.
-    expect(await attemptChat(playerClient, 'still a member')).toBe('sent');
-
+    const told = waitForEvent<{ campaignId: string | null; reason: string; message: string }>(
+      playerClient,
+      'campaign.access.revoked'
+    );
+    const dropped = waitDisconnect(playerClient);
     await clearCampaignFromLiveSockets(playerId, campaignId);
 
-    // Same socket, never reconnected.
-    expect(await attemptChat(playerClient, 'removed by now')).toBe('refused');
-
-    playerClient.disconnect();
+    await expect(told).resolves.toEqual({
+      campaignId,
+      reason: 'removed',
+      message: 'You were removed from this campaign.',
+    });
+    await expect(dropped).resolves.toBe('io server disconnect');
   });
 
   it('stops it hearing what the table says', async () => {
@@ -120,13 +130,14 @@ describe('clearCampaignFromLiveSockets', () => {
     dmClient.emit('chat.message', { content: 'before removal', type: 'DM' });
     await expect(heard).resolves.toBeDefined();
 
+    const dropped = waitDisconnect(playerClient);
     await clearCampaignFromLiveSockets(playerId, campaignId);
+    await dropped;
 
     const silence = expectNoEvent(playerClient, 'chat.message', 500);
     dmClient.emit('chat.message', { content: 'after removal', type: 'DM' });
     await expect(silence).resolves.toBeUndefined();
 
-    playerClient.disconnect();
     dmClient.disconnect();
   });
 
@@ -137,27 +148,50 @@ describe('clearCampaignFromLiveSockets', () => {
 
     await clearCampaignFromLiveSockets(playerId, campaignId);
 
-    // The game they were removed from is not this one.
     expect(await attemptChat(elsewhere, 'still in my own game')).toBe('sent');
+    expect(elsewhere.connected).toBe(true);
 
     elsewhere.disconnect();
   });
 
-  // The connection stays open, so nothing else would tell the page: it used
-  // to get a plain 'error' that only an open Dice tab showed.
-  it('tells the connection why, with campaign.access.revoked', async () => {
+  it('does not tell another campaign, and does not revoke the login session', async () => {
     const playerClient = await server.connectAndAuth(playerCookie, campaignId);
     const elsewhere = await server.connectAndAuth(playerCookie, otherCampaignId);
 
-    const told = waitForEvent<{ campaignId: string | null; reason: string; message: string }>(playerClient, 'campaign.access.revoked');
+    const told = waitForEvent<{ campaignId: string | null; reason: string }>(playerClient, 'campaign.access.revoked');
     const notTold = expectNoEvent(elsewhere, 'campaign.access.revoked', 500);
+    const dropped = waitDisconnect(playerClient);
     await clearCampaignFromLiveSockets(playerId, campaignId);
 
-    await expect(told).resolves.toEqual({ campaignId, reason: 'removed', message: 'You were removed from this campaign.' });
+    await expect(told).resolves.toMatchObject({ campaignId, reason: 'removed' });
     await expect(notTold).resolves.toBeUndefined();
+    await dropped;
 
-    playerClient.disconnect();
+    const again = await server.connectClient(playerCookie);
+    expect(again.connected).toBe(true);
+    again.disconnect();
     elsewhere.disconnect();
+  });
+
+  it('refuses authenticate to the campaign after membership is gone, while the cookie still connects', async () => {
+    const playerClient = await server.connectAndAuth(playerCookie, campaignId);
+    await prisma.campaignMembership.delete({
+      where: { userId_campaignId: { userId: playerId, campaignId } },
+    });
+    const dropped = waitDisconnect(playerClient);
+    await clearCampaignFromLiveSockets(playerId, campaignId);
+    await dropped;
+
+    const again = await server.connectClient(playerCookie);
+    const refusal = waitForEvent<{ message: string }>(again, 'error');
+    again.emit('authenticate', { campaignId });
+    expect((await refusal).message).toMatch(/not a member/i);
+    expect(again.connected).toBe(true);
+
+    await prisma.campaignMembership.create({
+      data: { userId: playerId, campaignId, role: 'PLAYER', characterIds: [] },
+    });
+    again.disconnect();
   });
 
   it('is a quiet no-op when the user has no connection open', async () => {
