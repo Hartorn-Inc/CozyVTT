@@ -491,6 +491,9 @@ def get_pr(repo, pr_number):
 
 
 def collect_pr_files(repo, pr_number):
+    # GitHub's pull file list is the three-dot PR diff against this PR's
+    # recorded base (merge-base with base.sha), not `git diff` against the
+    # current default-branch tip. dest-only commits must not appear here.
     files = collect_paginated(f'repos/{repo}/pulls/{pr_number}/files')
     result = []
     for item in files:

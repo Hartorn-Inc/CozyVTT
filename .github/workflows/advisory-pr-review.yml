@@ -258,8 +258,10 @@ jobs:
             sudo useradd --system --create-home advisoryreview
           fi
           # actions/checkout trees are 0700. The unprivileged user must read
-          # trusted automation, the PR tree, and assessment inputs.
-          chmod -R a+rX .trusted-automation review-tree assessment
+          # the PR tree and assessment inputs. Do not chmod .trusted-automation:
+          # that tree is current `dev`, and a stale PR must not be reviewed
+          # against dest-only commits.
+          chmod -R a+rX review-tree assessment
           # GitHub-hosted /home/runner is 750. Grant execute on parents so
           # advisoryreview can reach GITHUB_WORKSPACE without joining sudo.
           path="$GITHUB_WORKSPACE"
@@ -267,6 +269,9 @@ jobs:
             sudo chmod a+x "$path"
             path="$(dirname "$path")"
           done
+          sudo mkdir -p /home/advisoryreview/.config /home/advisoryreview/.cache \
+            /home/advisoryreview/.local/share
+          sudo chown -R advisoryreview:advisoryreview /home/advisoryreview
           sudo chown -R advisoryreview:runner assessment review-tree/assessment
           sudo chmod -R ug+rwX assessment review-tree/assessment
 
@@ -278,15 +283,29 @@ jobs:
           REVIEWER_NAME: ${{ matrix.name }}
         run: |
           set -euo pipefail
+          # Full Cursor sandbox needs unprivileged user namespaces; GitHub-hosted
+          # ubuntu-26.04 AppArmor refuses that (CLI: "Sandbox failed to start").
+          # `--sandbox disabled` is Cursor allowlist mode. Isolation is the
+          # unprivileged user, env -i, ask mode, and a workspace that is the
+          # PR head only.
           sudo -u advisoryreview \
-            env HOME=/home/advisoryreview CI=true \
+            env -i \
+            HOME=/home/advisoryreview \
+            USER=advisoryreview \
+            LOGNAME=advisoryreview \
+            XDG_CONFIG_HOME=/home/advisoryreview/.config \
+            XDG_CACHE_HOME=/home/advisoryreview/.cache \
+            XDG_DATA_HOME=/home/advisoryreview/.local/share \
+            TMPDIR=/tmp \
+            LANG=C.UTF-8 \
+            CI=true \
             PATH="/opt/cursor-cli:/usr/bin:/bin" \
             CURSOR_API_KEY="$CURSOR_API_KEY" \
             /opt/cursor-cli/cursor-agent \
             -p "$(cat assessment/reviewer-task.md)" \
             --mode=ask \
             --trust \
-            --sandbox enabled \
+            --sandbox disabled \
             --workspace "${GITHUB_WORKSPACE}/review-tree" \
             --model grok-4.7 \
             --output-format text \
