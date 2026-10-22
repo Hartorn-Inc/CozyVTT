@@ -59,6 +59,9 @@ import {
   customHeaderTextClass,
   customHeaderPlaceholderClass,
   CUSTOM_HEADER_FIELD_SURFACE,
+  CUSTOM_HEADER_CONTROL_SURFACE,
+  CUSTOM_HEADER_FIELD_BORDER,
+  CUSTOM_HEADER_FIELD_FOCUS,
   THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
 import {
@@ -864,6 +867,8 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : (shouldUseWhiteText(selectedColor.hex) ? 'text-white' : 'text-stone-900');
     const headerPlaceholder = isCustomColor ? customHeaderPlaceholderClass(customColorHex) : 'placeholder-current/50';
     const headerFieldBg = isCustomColor ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10';
+    const headerFieldBorder = isCustomColor ? CUSTOM_HEADER_FIELD_BORDER : 'border-white/20';
+    const headerFieldFocus = isCustomColor ? CUSTOM_HEADER_FIELD_FOCUS : 'focus:border-white/40';
     const headerClasses = isCustomColor ? `${headerTextColor} p-6 rounded-t-lg relative` : `bg-gradient-to-r ${selectedColor.from} ${selectedColor.to} ${headerTextColor} p-6 rounded-t-lg relative`;
 
     return (
@@ -887,7 +892,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
           </button>
         </div>
 
-        <button onClick={() => setShowColorPicker(!showColorPicker)} className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors" title="Change theme color" aria-invalid={Boolean(errors.themeColor)} aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}>
+        <button onClick={() => setShowColorPicker(!showColorPicker)} className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`} title="Change theme color" aria-invalid={Boolean(errors.themeColor)} aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}>
           <Palette className="w-5 h-5" />
         </button>
         {errors.themeColor && !showColorPicker && (
@@ -951,7 +956,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
             </div>
 
             <div className="space-y-2 min-w-0">
-              <input type="text" value={formData.characterName || ''} onChange={(e) => updateField('characterName', e.target.value)} maxLength={SHEET_NAME_MAX} placeholder="Character Name" className={`w-full text-3xl font-bold ${headerFieldBg} border-2 ${errors.characterName ? 'border-red-300' : 'border-white/20'} rounded px-3 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
+              <input type="text" value={formData.characterName || ''} onChange={(e) => updateField('characterName', e.target.value)} maxLength={SHEET_NAME_MAX} placeholder="Character Name" className={`w-full text-3xl font-bold ${headerFieldBg} border-2 ${errors.characterName ? 'border-red-300' : headerFieldBorder} rounded px-3 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
               <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
                 {/* Read-only: the player name is whoever owns the character,
                     filled from their display name at creation. */}
@@ -961,17 +966,17 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
                 <div className="flex items-center space-x-2">
                   <span className="text-xs">Level</span>
                   <NumberField
-min={1} max={20} value={formData.level} onChange={(v: number) => updateField('level', v)} className={`w-16 ${headerFieldBg} border ${errors.level ? 'border-red-300' : 'border-white/20'} rounded px-2 py-0.5 text-sm ${headerTextColor} focus:outline-none focus:border-white/40`} fallback={1} />
+min={1} max={20} value={formData.level} onChange={(v: number) => updateField('level', v)} className={`w-16 ${headerFieldBg} border ${errors.level ? 'border-red-300' : headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} focus:outline-none ${headerFieldFocus}`} fallback={1} />
                 </div>
-                <input type="text" value={formData.class || ''} onChange={(e) => updateField('class', e.target.value)} placeholder="Class" className={`${headerFieldBg} border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
-                <input type="text" value={formData.ancestry || ''} onChange={(e) => updateField('ancestry', e.target.value)} placeholder="Ancestry" className={`${headerFieldBg} border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
-                <input type="text" value={formData.heritage || ''} onChange={(e) => updateField('heritage', e.target.value)} placeholder="Heritage" className={`${headerFieldBg} border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
-                <input type="text" value={formData.background || ''} onChange={(e) => updateField('background', e.target.value)} placeholder="Background" className={`${headerFieldBg} border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
+                <input type="text" value={formData.class || ''} onChange={(e) => updateField('class', e.target.value)} placeholder="Class" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
+                <input type="text" value={formData.ancestry || ''} onChange={(e) => updateField('ancestry', e.target.value)} placeholder="Ancestry" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
+                <input type="text" value={formData.heritage || ''} onChange={(e) => updateField('heritage', e.target.value)} placeholder="Heritage" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
+                <input type="text" value={formData.background || ''} onChange={(e) => updateField('background', e.target.value)} placeholder="Background" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
                 {/* Deity and alignment are part of the sheet the schema
                     describes, and matter for a cleric, champion or oracle, but
                     had no field anywhere in the app until now. */}
-                <input type="text" value={formData.deity || ''} onChange={(e) => updateField('deity', e.target.value)} placeholder="Deity" className={`${headerFieldBg} border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
-                <input type="text" value={formData.alignment || ''} onChange={(e) => updateField('alignment', e.target.value)} placeholder="Alignment" className={`${headerFieldBg} border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`} />
+                <input type="text" value={formData.deity || ''} onChange={(e) => updateField('deity', e.target.value)} placeholder="Deity" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
+                <input type="text" value={formData.alignment || ''} onChange={(e) => updateField('alignment', e.target.value)} placeholder="Alignment" className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`} />
               </div>
             </div>
           </div>
@@ -979,10 +984,10 @@ min={1} max={20} value={formData.level} onChange={(v: number) => updateField('le
           <div className="text-right space-y-2">
             <div className={`text-xs ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
             <NumberField
-min={0} value={formData.experiencePoints} onChange={(v: number) => updateField('experiencePoints', v)} className={`w-24 text-xl font-bold ${headerFieldBg} border border-white/20 rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none focus:border-white/40`} fallback={0} />
+min={0} value={formData.experiencePoints} onChange={(v: number) => updateField('experiencePoints', v)} className={`w-24 text-xl font-bold ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none ${headerFieldFocus}`} fallback={0} />
             <div className={`text-xs mt-2 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
             <NumberField
-min={0} max={3} value={formData.heroPoints} onChange={(v: number) => updateField('heroPoints', Math.min(v, 3))} className={`w-16 text-lg font-bold ${headerFieldBg} border border-white/20 rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none focus:border-white/40`} fallback={0} />
+min={0} max={3} value={formData.heroPoints} onChange={(v: number) => updateField('heroPoints', Math.min(v, 3))} className={`w-16 text-lg font-bold ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none ${headerFieldFocus}`} fallback={0} />
           </div>
         </div>
       </div>

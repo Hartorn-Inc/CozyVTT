@@ -77,6 +77,9 @@ import {
   customHeaderTextClass,
   customHeaderPlaceholderClass,
   CUSTOM_HEADER_FIELD_SURFACE,
+  CUSTOM_HEADER_CONTROL_SURFACE,
+  CUSTOM_HEADER_FIELD_BORDER,
+  CUSTOM_HEADER_FIELD_FOCUS,
   THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
 import { SHEET_LIST_MAX, SHEET_NAME_MAX, SPELL_SLOTS_MAX } from '@/constants/sheetLimits';
@@ -1065,6 +1068,8 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
       ? customHeaderPlaceholderClass(customColorHex)
       : 'placeholder-current/50';
     const headerFieldBg = isCustomColor ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10';
+    const headerFieldBorder = isCustomColor ? CUSTOM_HEADER_FIELD_BORDER : 'border-white/20';
+    const headerFieldFocus = isCustomColor ? CUSTOM_HEADER_FIELD_FOCUS : 'focus:border-white/40';
 
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative`
@@ -1094,7 +1099,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
         {/* Color Picker Button */}
         <button
           onClick={() => setShowColorPicker(!showColorPicker)}
-          className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors"
+          className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`}
           title="Change theme color"
           aria-invalid={Boolean(errors.themeColor)}
           aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}
@@ -1248,8 +1253,8 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
               maxLength={SHEET_NAME_MAX}
               placeholder="Character Name"
               className={`w-full text-3xl font-bold ${headerFieldBg} border-2 ${
-                errors.characterName ? 'border-red-300' : 'border-white/20'
-              } rounded px-3 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`}
+                errors.characterName ? 'border-red-300' : headerFieldBorder
+              } rounded px-3 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
             {/* Player name is who owns this character, not free text — it is
                 filled from their display name when the character is created
@@ -1268,8 +1273,8 @@ min={1}
                   value={formData.level}
                   onChange={(v: number) => updateField('level', v)}
                   className={`w-16 ${headerFieldBg} border ${
-                    errors.level ? 'border-red-300' : 'border-white/20'
-                  } rounded px-2 py-0.5 text-sm ${headerTextColor} focus:outline-none focus:border-white/40`}
+                    errors.level ? 'border-red-300' : headerFieldBorder
+                  } rounded px-2 py-0.5 text-sm ${headerTextColor} focus:outline-none ${headerFieldFocus}`}
                 fallback={1}
                 />
               </div>
@@ -1278,14 +1283,14 @@ min={1}
                 value={formData.race || ''}
                 onChange={(e) => updateField('race', e.target.value)}
                 placeholder="Race"
-                className={`${headerFieldBg} border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`}
+                className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
               />
               <input
                 type="text"
                 value={formData.class || ''}
                 onChange={(e) => updateField('class', e.target.value)}
                 placeholder="Class"
-                className={`${headerFieldBg} border border-white/20 rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:border-white/40`}
+                className={`${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-0.5 text-sm ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
               />
             </div>
           </div>
@@ -1297,7 +1302,7 @@ min={1}
 min={0}
             value={formData.experiencePoints}
             onChange={(v: number) => updateField('experiencePoints', v)}
-            className={`w-24 text-xl font-bold ${headerFieldBg} border border-white/20 rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none focus:border-white/40`}
+            className={`w-24 text-xl font-bold ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} text-right focus:outline-none ${headerFieldFocus}`}
           fallback={0}
           />
         </div>

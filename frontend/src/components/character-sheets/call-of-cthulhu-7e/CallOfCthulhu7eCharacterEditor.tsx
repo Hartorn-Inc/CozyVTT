@@ -66,6 +66,9 @@ import {
   customHeaderTextClass,
   customHeaderPlaceholderClass,
   CUSTOM_HEADER_FIELD_SURFACE,
+  CUSTOM_HEADER_CONTROL_SURFACE,
+  CUSTOM_HEADER_FIELD_BORDER,
+  CUSTOM_HEADER_FIELD_FOCUS,
   THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
 import { omitUnnamedRows } from '@/utils/sheetNamedRows';
@@ -550,6 +553,8 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
     const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-parchment';
     const headerPlaceholder = isCustomColor ? customHeaderPlaceholderClass(customColorHex) : 'placeholder:text-parchment-light/50';
     const headerFieldBg = isCustomColor ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10';
+    const headerFieldBorder = isCustomColor ? CUSTOM_HEADER_FIELD_BORDER : 'border-white/30';
+    const headerFieldFocus = isCustomColor ? CUSTOM_HEADER_FIELD_FOCUS : 'focus:ring-2 focus:ring-amber-500';
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
       : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
@@ -559,7 +564,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
         {/* Color Picker Button */}
         <button
           onClick={() => setShowColorPicker(!showColorPicker)}
-          className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors"
+          className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`}
           title="Change theme color"
           aria-invalid={Boolean(errors.themeColor)}
           aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}
@@ -721,7 +726,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
             onChange={(e) => setFormData({ ...formData, investigatorName: e.target.value })}
             maxLength={SHEET_NAME_MAX}
             placeholder="Investigator Name"
-            className={`text-3xl font-bold ${headerFieldBg} border-2 border-white/30 rounded px-3 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+            className={`text-3xl font-bold ${headerFieldBg} border-2 ${headerFieldBorder} rounded px-3 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
           />
 
           <div className="grid grid-cols-3 gap-3">
@@ -735,14 +740,14 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.occupation || ''}
               onChange={(e) => setFormData({ ...formData, occupation: e.target.value })}
               placeholder="Occupation"
-              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
             <input
               type="text"
               value={formData.era || ''}
               onChange={(e) => setFormData({ ...formData, era: e.target.value })}
               placeholder="Era (e.g., 1920s)"
-              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
           </div>
 
@@ -751,7 +756,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.age ?? 0}
               onChange={(v: number) => setFormData({ ...formData, age: v })}
               placeholder="Age"
-              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
               fallback={0}
             />
             <input
@@ -759,14 +764,14 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.sex || ''}
               onChange={(e) => setFormData({ ...formData, sex: e.target.value })}
               placeholder="Sex"
-              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
             <input
               type="text"
               value={formData.residence || ''}
               onChange={(e) => setFormData({ ...formData, residence: e.target.value })}
               placeholder="Residence"
-              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 col-span-2 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 col-span-2 ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
             />
           </div>
 
@@ -775,7 +780,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
             value={formData.birthplace || ''}
             onChange={(e) => setFormData({ ...formData, birthplace: e.target.value })}
             placeholder="Birthplace"
-            className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+            className={`text-sm ${headerFieldBg} border ${headerFieldBorder} rounded px-2 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none ${headerFieldFocus}`}
           />
         </div>
       </div>

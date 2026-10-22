@@ -47,7 +47,7 @@ import { dnd5eInitiativeModifier } from '../../../utils/rules/initiative';
 import { collectSheetFeatures } from '../../../utils/featureEntries';
 import { readProficiencyGroups } from '../../../utils/proficiencies';
 import { isHexColor } from '@/utils/styleAllowlists';
-import { customHeaderFill, customHeaderTextClass } from '@/utils/themeColor';
+import { customHeaderFill, customHeaderTextClass, CUSTOM_HEADER_CONTROL_SURFACE } from '@/utils/themeColor';
 
 interface DnD5eCharacterViewProps {
   character: Character;
@@ -174,7 +174,7 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
           <button
             onClick={onEdit}
             className={`absolute top-4 right-4 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 font-medium ${
-              isCustomColor ? 'border border-current bg-transparent' : 'bg-white/20 hover:bg-white/30'
+              isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'
             }`}
             title="Edit character"
           >

@@ -9,8 +9,9 @@
  * A completed custom hex must also meet WCAG 2.1 contrast of 4.5:1 against
  * the fixed light header text (`#FFFFFF`). Pale picks are refused on save;
  * they are not auto-adjusted. Already-stored pale hex still loads; the view
- * and editor paint dark name text so the sheet is readable until the next
- * save is a passing hex or a preset. The stored colour is not rewritten.
+ * and editor paint white or black name text, whichever has the higher
+ * contrast against that hex, so the sheet is readable until the next save
+ * is a passing hex or a preset. The stored colour is not rewritten.
  */
 
 import { AA_TEXT, contrastRatio, type Rgb } from './color';
@@ -42,6 +43,15 @@ export const CUSTOM_HEADER_PLACEHOLDER_CLASS = 'placeholder:text-white';
 
 /** Field fill on a custom header: the validated hex, not a 10% white wash. */
 export const CUSTOM_HEADER_FIELD_SURFACE = 'bg-transparent';
+
+/** Palette / chip / control on a custom header: icon sits on the validated fill. */
+export const CUSTOM_HEADER_CONTROL_SURFACE = 'border border-current bg-transparent';
+
+/** Empty-field border on a custom header: current black/white foreground, not white/20. */
+export const CUSTOM_HEADER_FIELD_BORDER = 'border-current';
+
+/** Focused perimeter on a custom header: a current-color ring, not a duplicate of the resting border. */
+export const CUSTOM_HEADER_FIELD_FOCUS = 'focus:ring-2 focus:ring-current';
 
 const WHITE: Rgb = [255, 255, 255];
 const BLACK: Rgb = [0, 0, 0];

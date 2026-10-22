@@ -76,6 +76,10 @@ const hexBox = () => screen.getByLabelText('Custom colour hex code') as HTMLInpu
 const savedColour = (onSave: ReturnType<typeof open>) =>
   (onSave.mock.calls[0][0] as unknown as { themeColor?: string }).themeColor;
 const nameBox = () => screen.getByPlaceholderText(/^(Character|Investigator) Name$/);
+const paletteButton = () => screen.getByTitle('Change theme color');
+
+/** Near-threshold passing grey, a passing dark, and a stored pale hex. */
+const STORED_CUSTOM_COLOURS = ['#737373', '#14532d', '#FFFF00'] as const;
 
 describe.each(EDITORS)('$system custom colour', (entry) => {
   it('saves a three-digit colour as the six-digit form the server accepts', async () => {
@@ -161,6 +165,29 @@ describe.each(EDITORS)('$system custom colour', (entry) => {
     expect(name.className).toContain('text-black');
     expect(name.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
   });
+
+  it.each(STORED_CUSTOM_COLOURS)('paints the palette control on a transparent current-color surface for %s', (themeColor) => {
+    const { Editor, character } = entry;
+    render(<Editor character={character({ themeColor })} onSave={vi.fn()} onCancel={vi.fn()} />);
+    const button = paletteButton();
+    expect(button.className).not.toContain('bg-white/20');
+    expect(button.className).not.toContain('bg-white/30');
+    expect(button.className).toContain('bg-transparent');
+    expect(button.className).toContain('border-current');
+  });
+
+  it.each(STORED_CUSTOM_COLOURS)('paints header field borders as current color for %s', (themeColor) => {
+    const { Editor, character } = entry;
+    render(<Editor character={character({ themeColor })} onSave={vi.fn()} onCancel={vi.fn()} />);
+    const name = nameBox();
+    expect(name.className).not.toContain('border-white/20');
+    expect(name.className).not.toContain('border-white/30');
+    expect(name.className).not.toContain('focus:border-white/40');
+    expect(name.className).not.toContain('focus:ring-amber-500');
+    expect(name.className).toContain('border-current');
+    expect(name.className).toContain('focus:ring-2');
+    expect(name.className).toContain('focus:ring-current');
+  });
 });
 
 const VIEWS: { system: string; View: React.FC<{ character: Character }>; character: (o?: Record<string, unknown>) => Character }[] = [
@@ -210,5 +237,16 @@ describe('Pathfinder custom header chips', () => {
     render(<Pathfinder2eCharacterView character={pf2eCharacter({ themeColor: '#737373' })} />);
     const chip = screen.getByText(/Level 1 Fighter/);
     expect(chip.className).not.toMatch(/bg-white\/(?:10|20)/);
+  });
+});
+
+describe.each(STORED_CUSTOM_COLOURS)('Call of Cthulhu 7e view palette control for %s', (themeColor) => {
+  it('sits on a transparent current-color surface', () => {
+    render(<CallOfCthulhu7eCharacterView character={cocCharacter({ themeColor })} />);
+    const button = paletteButton();
+    expect(button.className).not.toContain('bg-white/20');
+    expect(button.className).not.toContain('bg-white/30');
+    expect(button.className).toContain('bg-transparent');
+    expect(button.className).toContain('border-current');
   });
 });
