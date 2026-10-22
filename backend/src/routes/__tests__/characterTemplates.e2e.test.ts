@@ -41,15 +41,34 @@ const dnd5eSheet = {
 
 const KEEPER_SECRET = '<secret>';
 
+/**
+ * Nested luck notes on the Keeper's Notes fixture — not starter-blank prose.
+ * T4 emptied registry luck notes; this canary proves nested `notes` survive
+ * stripping top-level Keeper's Notes.
+ */
+const LUCK_NOTES_CANARY = 'Rolled at the table';
+
 /** A valid Call of Cthulhu sheet, including nested `notes` that must survive stripping. */
-const cocSheet = (): Record<string, unknown> => ({
-  ...(getBlankCharacterTemplate(AppGameSystem.CALL_OF_CTHULHU_7E) as Record<string, unknown>),
-  investigatorName: 'Harvey Walters',
-  occupation: 'Professor',
-  era: '1920s',
-  possessions: [{ name: 'Knife', notes: 'Family heirloom' }],
-  combat: { weapons: [{ name: 'Revolver', notes: 'Six shots' }] },
-});
+const cocSheet = (): Record<string, unknown> => {
+  const blank = getBlankCharacterTemplate(AppGameSystem.CALL_OF_CTHULHU_7E) as Record<
+    string,
+    unknown
+  >;
+  const derivedStats = blank.derivedStats as Record<string, unknown>;
+  const luck = derivedStats.luck as Record<string, unknown>;
+  return {
+    ...blank,
+    investigatorName: 'Harvey Walters',
+    occupation: 'Professor',
+    era: '1920s',
+    derivedStats: {
+      ...derivedStats,
+      luck: { ...luck, notes: LUCK_NOTES_CANARY },
+    },
+    possessions: [{ name: 'Knife', notes: 'Family heirloom' }],
+    combat: { weapons: [{ name: 'Revolver', notes: 'Six shots' }] },
+  };
+};
 
 describe('Character template routes', () => {
   let authorId: string;
@@ -536,7 +555,7 @@ describe('Character template routes', () => {
       const wealth = data.wealth as { notes?: string };
       const possessions = data.possessions as Array<{ notes?: string }>;
       const combat = data.combat as { weapons?: Array<{ notes?: string }> };
-      expect(derived.luck?.notes).toBe('Rolled 3d6 x 5');
+      expect(derived.luck?.notes).toBe(LUCK_NOTES_CANARY);
       expect(wealth.notes).toBe('');
       expect(possessions[0]?.notes).toBe('Family heirloom');
       expect(combat.weapons?.[0]?.notes).toBe('Six shots');
