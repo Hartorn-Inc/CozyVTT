@@ -223,6 +223,33 @@ jobs:
           mkdir -p review-tree/assessment
           cp assessment/review-context.json assessment/reviewer-instructions.md review-tree/assessment/
 
+      - name: Create unprivileged Codex user
+        run: |
+          set -euo pipefail
+          # drop-sudo is not used: ubuntu-26.04 drop-sudo cannot always ACL
+          # /run/dbus/system_bus_socket (setfacl fails; chmod fallback never
+          # runs). unprivileged-user is the documented key-protection
+          # alternative in openai/codex-action security.md.
+          if ! getent passwd codexreview >/dev/null; then
+            sudo useradd --system --create-home codexreview
+          fi
+          # actions/checkout trees are 0700. The unprivileged user must read
+          # trusted automation, the PR tree, and assessment inputs.
+          chmod -R a+rX .trusted-automation review-tree assessment
+          # GitHub-hosted /home/runner is 750. Grant execute on parents so
+          # codexreview can reach GITHUB_WORKSPACE without joining sudo.
+          path="$GITHUB_WORKSPACE"
+          while [ "$path" != "/" ]; do
+            sudo chmod a+x "$path"
+            path="$(dirname "$path")"
+          done
+          # Codex writes assessment/reviewer-output-*.json at workspace root
+          # (upload-artifact) and under --cd review-tree. Grant write on those
+          # dirs only; do not chmod 777 the repo. Group runner keeps later
+          # placeholder/upload steps working.
+          sudo chown -R codexreview:runner assessment review-tree/assessment
+          sudo chmod -R ug+rwX assessment review-tree/assessment
+
       - name: Run Codex reviewer
         id: codex
         continue-on-error: true
@@ -239,7 +266,12 @@ jobs:
           output-file: assessment/reviewer-output-${{ matrix.name }}.json
           output-schema-file: .trusted-automation/.github/codex/schemas/reviewer-output.schema.json
           sandbox: read-only
-          safety-strategy: drop-sudo
+          # drop-sudo is not used: ubuntu-26.04 drop-sudo cannot always ACL
+          # /run/dbus/system_bus_socket (setfacl fails; chmod fallback never
+          # runs). unprivileged-user is the documented key-protection
+          # alternative in openai/codex-action security.md.
+          safety-strategy: unprivileged-user
+          codex-user: codexreview
           allow-bots: true
           allow-bot-users: github-actions[bot],cursor[bot],renovate[bot]
           codex-args: '["--ephemeral"]'

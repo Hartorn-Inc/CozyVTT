@@ -28,6 +28,8 @@ import { inSerializableTransaction } from '../utils/serializable';
 import { lockCampaignMembership, MembershipGoneError } from '../utils/gameSystemMatchWrite';
 import { toJson, readJsonObject } from '../utils/prisma-json';
 import { extractCharacterHp } from '../utils/characterHp';
+import { projectCharacterData } from '../utils/sheetProjection';
+import { sheetRecord } from '../utils/prepareSheet';
 import logger from '../utils/logger';
 import { encodeMessageCursor, decodeMessageCursor } from '../utils/messageCursor';
 import { MULTIPART_FIELD_LIMITS } from '../utils/multipartLimits';
@@ -45,6 +47,7 @@ import {
 import { randomUUID } from 'crypto';
 import path from 'path';
 import fsp from 'fs/promises';
+
 const router = Router();
 
 // ── Import file upload ──────────────────────────────────────────────────────
@@ -429,7 +432,10 @@ router.get('/:campaignId/characters', campaignMember, async (req: AuthenticatedR
         .filter((c) => membership.characterIds.includes(c.id))
         .map(({ data, ...char }) => ({
           ...char,
-          hp: extractCharacterHp(char.gameSystem, readJsonObject(data)),
+          hp: extractCharacterHp(
+            char.gameSystem,
+            sheetRecord(projectCharacterData(char.gameSystem, readJsonObject(data)))
+          ),
         }));
 
       return {

@@ -8,11 +8,14 @@
 //
 // Only the sender's userId travels with the ping. Clients already hold the
 // campaign roster, so they resolve the display name (and the colour derived
-// from the id) locally — no database round-trip on a gesture people will spam.
+// from the id) locally — the sender's display name is not loaded from the
+// database. A map-ownership lookup is performed so a ping for another
+// campaign is not sent to this room.
 // ============================================
 
 import { Server } from 'socket.io';
 import { AuthenticatedSocket } from '../auth';
+import { prisma } from '../../config/database';
 import logger from '../../utils/logger';
 import { emitToMapReaders } from '../utils';
 import { pingLimiter } from '../shared';
@@ -34,21 +37,25 @@ export function registerPingHandlers(io: Server, socket: AuthenticatedSocket): v
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
 
       const { mapId, x, y } = data ?? {};
 
       if (!mapId || typeof mapId !== 'string') return;
-      // TODO(play): the map is not checked to be one of this campaign's, as the
-      // other handlers check it; refuse a map from outside the campaign.
       if (typeof x !== 'number' || typeof y !== 'number') return;
       if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
       // Silent drop over the limit — see the note in shared.ts.
       if (!pingLimiter.check(socket.userId!, PING_LIMIT, PING_WINDOW_MS)) return;
 
+      // A map of another campaign is dropped silently; emitToMapReaders
+      // would still send it to this campaign's DMs.
+      const map = await prisma.map.findUnique({ where: { id: mapId }, select: { campaignId: true } });
+      if (!map || map.campaignId !== campaignId) return;
+
       // The sender included, so they see their own ping as well; a ping on
       // a map the DM is preparing reaches only the DM.
-      await emitToMapReaders(io, socket.campaignId, mapId, 'map.pinged', {
+      await emitToMapReaders(io, campaignId, mapId, 'map.pinged', {
         mapId,
         x,
         y,

@@ -29,6 +29,7 @@ import { orderedCharacteristics } from './characteristics';
 import { SanityTracker } from './components/SanityTracker';
 import { SkillsList } from './components/SkillsList';
 import { cocDodgeBase } from './dodge';
+import { projectCharacterData } from '../../../utils/sheetProjection';
 import { WeaponsList } from './components/WeaponsList';
 import { BackstorySection } from './components/BackstorySection';
 import { isHexColor } from '@/utils/styleAllowlists';
@@ -79,7 +80,7 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
   onRoll,
 }) => {
   const [activeTab, setActiveTab] = useState<TabId>('overview');
-  const data = character.data as CoC7eCharacterData & SheetChrome;
+  const data = projectCharacterData(character.gameSystem, character.data) as CoC7eCharacterData & SheetChrome;
   const [themeColor, setThemeColor] = useState(COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');

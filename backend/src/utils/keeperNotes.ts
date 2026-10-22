@@ -10,6 +10,12 @@
  * the last campaign's Keeper's, and a player who moved their investigator
  * into a campaign they run would otherwise be its Keeper and read them.
  *
+ * Instance-wide published character templates have no Keeper, so every
+ * publish, update, and template read uses `sheetWithoutKeeperNotes` (the
+ * same helper Character projection uses). Do not reject the field; strip it.
+ * Character paths keep today's DM-only read/write and clear-on-move/copy via
+ * `characterForReader`, `sheetKeepingKeeperNotes`, and `clearKeeperNotes`.
+ *
  * The notes stay inside the stored sheet, so the schema, exports and imports
  * are unchanged. A database backup keeps them; a campaign export carries no
  * character sheets.
@@ -18,6 +24,7 @@
 import type { GameSystem, Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
 import { toJson } from './prisma-json';
+import { projectCharacterData } from './sheetProjection';
 
 /** The sheet field that is the Keeper's alone, by game system. */
 const KEEPER_ONLY_FIELD: Partial<Record<GameSystem, string>> = {
@@ -28,7 +35,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** The sheet with its Keeper-only field taken out; any other sheet as it is. */
+/**
+ * The sheet with its Keeper-only field taken out; any other sheet as it is.
+ * Published character templates always use this helper: they have no Keeper.
+ */
 export function sheetWithoutKeeperNotes<T>(gameSystem: GameSystem | null, data: T): T {
   const field = gameSystem ? KEEPER_ONLY_FIELD[gameSystem] : undefined;
   if (!field || !isPlainObject(data) || !(field in data)) return data;
@@ -48,19 +58,30 @@ export function sheetKeepingKeeperNotes(gameSystem: GameSystem | null, incoming:
 }
 
 /**
- * The character as this reader is sent it. The Keeper always gets the field,
- * empty when nothing is written yet, so the editor knows to offer the box;
- * anyone else never gets it.
+ * The character as this reader is sent it. Derived values are projected first
+ * (`projectCharacterData`) so a stored cache cannot stale the sheet, then the
+ * Keeper's Notes filter runs. The Keeper always gets the field, empty when
+ * nothing is written yet, so the editor knows to offer the box; anyone else
+ * never gets it.
  */
 export function characterForReader<C extends { gameSystem: GameSystem | null; data: Prisma.JsonValue }>(
   character: C,
   keeper: boolean
 ): C {
+  const projected = projectCharacterData(character.gameSystem, character.data);
   const field = character.gameSystem ? KEEPER_ONLY_FIELD[character.gameSystem] : undefined;
-  if (!field || !isPlainObject(character.data)) return character;
-  if (!keeper) return { ...character, data: sheetWithoutKeeperNotes(character.gameSystem, character.data) };
-  if (typeof character.data[field] === 'string') return character;
-  return { ...character, data: { ...character.data, [field]: '' } };
+  if (!field || !isPlainObject(projected)) {
+    if (projected === character.data) return character;
+    return { ...character, data: projected as C['data'] };
+  }
+  if (!keeper) {
+    return { ...character, data: sheetWithoutKeeperNotes(character.gameSystem, projected) as C['data'] };
+  }
+  if (typeof projected[field] === 'string') {
+    if (projected === character.data) return character;
+    return { ...character, data: projected as C['data'] };
+  }
+  return { ...character, data: { ...projected, [field]: '' } as C['data'] };
 }
 
 /**

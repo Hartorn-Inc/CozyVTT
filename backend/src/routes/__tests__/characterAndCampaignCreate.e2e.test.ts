@@ -15,6 +15,8 @@ import {
   cleanupCampaigns,
   TEST_PASSWORD,
 } from '../../__tests__/helpers/db';
+import { getBlankCharacterTemplate } from '../../validators/game-systems';
+import { GameSystem } from '../../game-systems';
 
 const app = createTestApp();
 const users: string[] = [];
@@ -36,6 +38,29 @@ async function character(userId: string, name = 'Ser Testalot', campaignId: stri
   return prisma.character.create({
     data: { userId, name, gameSystem: null, data: { notes: 'kept' }, tokenImageUrl: null, campaignId },
   });
+}
+
+/** Pathfinder inputs that project max HP 22 while the stored maximum stays 1. */
+function pf2eConSheet(): Record<string, unknown> {
+  const blank = getBlankCharacterTemplate(GameSystem.PATHFINDER_2E) as Record<string, unknown> & {
+    attributes: Record<string, { score: number; modifier: number }>;
+    hp: Record<string, unknown>;
+  };
+  return {
+    ...blank,
+    level: 1,
+    attributes: {
+      ...blank.attributes,
+      constitution: { score: 14, modifier: 2 },
+    },
+    hp: {
+      ...blank.hp,
+      ancestryHp: 10,
+      classHpPerLevel: 10,
+      maximum: 1,
+      current: 7,
+    },
+  };
 }
 
 beforeAll(async () => {
@@ -106,6 +131,45 @@ describe('POST /api/characters/:id/copy', () => {
     expect(copy.userId).toBe(ownerId);
     expect(copy.campaignId).toBeNull();
     expect(copy.data).toEqual({ notes: 'kept' });
+  });
+
+  it('returns a projected copy whose sheet name matches the copy name', async () => {
+    const created = await owner.post('/api/characters').send({
+      name: 'Seelah',
+      gameSystem: GameSystem.PATHFINDER_2E,
+      data: pf2eConSheet(),
+    });
+    expect(created.status).toBe(201);
+    const originalId = created.body.character.id as string;
+
+    const res = await owner.post(`/api/characters/${originalId}/copy`);
+    expect(res.status).toBe(201);
+
+    const copy = res.body.character as {
+      id: string;
+      name: string;
+      data: { characterName: string; hp: { maximum: number; current: number } };
+    };
+    expect(copy.name).toBe('Seelah (Copy)');
+    expect(copy.data.characterName).toBe('Seelah (Copy)');
+    expect(copy.data.hp.maximum).toBe(22);
+    expect(copy.data.hp.current).toBe(7);
+
+    const stored = await prisma.character.findUniqueOrThrow({ where: { id: copy.id } });
+    const storedData = stored.data as {
+      characterName: string;
+      hp: { maximum: number; current: number };
+    };
+    expect(storedData.characterName).toBe('Seelah (Copy)');
+    expect(storedData.hp.maximum).toBe(1);
+    expect(storedData.hp.current).toBe(7);
+
+    const loaded = await owner.get(`/api/characters/${copy.id}`);
+    expect(loaded.status).toBe(200);
+    expect(loaded.body.character.name).toBe(copy.name);
+    expect(loaded.body.character.data.characterName).toBe(copy.data.characterName);
+    expect(loaded.body.character.data.hp.maximum).toBe(22);
+    expect(loaded.body.character.data.hp.current).toBe(7);
   });
 
   it('refuses anyone else, and makes no copy', async () => {

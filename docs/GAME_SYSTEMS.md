@@ -75,8 +75,9 @@ A sheet is read by the whole table, its player included, so a field meant for th
 - **Reading.** Only the DM of the character's campaign (the Keeper) is sent it, on `GET /api/characters/:id`, every save's reply and every `character.updated` event (the character list, `GET /api/characters`, carries no sheets). The Keeper is always sent it, as an empty string when nothing is written, and the editor offers the box exactly when the field arrives; anyone else, the character's owner included, never gets the key.
 - **Writing.** Only the Keeper can change it. A save by anyone else (the owner, a script) keeps the stored value, whatever it sent for the field. A character created by anyone but the DM of the campaign it is created in is stored without it.
 - **Moving.** A character entering a campaign it was not in (assigned to another campaign, or brought in when its owner accepts an invitation) loses it, and so does a copy. The notes were the last campaign's Keeper's, and a player who moved their investigator into a campaign they run would otherwise be its Keeper and read them.
+- **Published character templates.** A published character template in the Instance library (`GET/POST/PUT /api/character-templates`) never includes the key: every publish, update, and template read strips it via `sheetWithoutKeeperNotes`. Presence on publish or update does not 400. Using a template (the client POSTs the GET sheet to `/api/characters`) creates a Character without the key; the sitting DM of that Character's Campaign can later write Keeper's Notes there and still receives them on Character GET; a Character owner who is not that DM still does not get the key.
 
-The notes stay inside the stored sheet, so an instance backup keeps them. A campaign export carries no character sheets at all, and a character's JSON export, made from `GET /api/characters/:id`, holds the notes only when the person exporting is the character's Keeper. To give another system such a field, add it to `KEEPER_ONLY_FIELD`; every route already goes through the helpers.
+On a Character the notes stay inside the stored sheet, so an instance backup keeps them. A campaign export carries no character sheets at all, and a character's JSON export, made from `GET /api/characters/:id`, holds the notes only when the person exporting is the character's Keeper. To give another system such a field, add it to `KEEPER_ONLY_FIELD`; every route already goes through the helpers.
 
 ### Flexible sheets
 
@@ -150,7 +151,10 @@ question, and getting it wrong invents numbers the designers never intended.
   — proficiency rank, item bonus, Dex cap, key attribute — so Armor Class, Class
   DC and initiative *are* derivable, and `rules/pathfinder2e.ts` derives them.
   The distinction is where the number comes from: a creature's is printed by
-  Paizo, a character's is built from their own sheet.
+  Paizo, a character's is built from their own sheet. Character derived values
+  are compatibility caches on disk and are projected at read (view, REST,
+  character.updated, initiative) when inputs exist; current resources are never
+  overwritten; out-of-bounds projections are clamped (Mythos 100 → sanity max 0).
 - **Call of Cthulhu 7e and Shadowrun 6e have no equivalent.** Percentile and
   dice-pool systems have neither ability modifiers nor a proficiency bonus, so
   there is nothing to derive and nothing sensible to offer from this data.

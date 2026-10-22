@@ -14,7 +14,7 @@
 #       UnprocessableEntity, ServerError) are pre-defined so future endpoints
 #       can $ref them consistently without us adding the schema later.
 #   • no-ambiguous-paths      — false positive: Express routes literal paths
-#       (e.g. /api/assets/maps/{id}) before parameterized ones (/api/assets/{id})
+#       (e.g. /api/assets/maps/{assetId}) before parameterized ones (/api/assets/{assetId})
 #       so there is no actual conflict at runtime.
 
 extends:

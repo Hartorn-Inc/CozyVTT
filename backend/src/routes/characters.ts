@@ -6,14 +6,7 @@ import type { CampaignRole, Prisma } from '@prisma/client';
 import { normalizeAssetUrl } from '../utils/asset-urls';
 import { canReferenceAsset } from '../services/permissions';
 import { GameSystem } from '../game-systems';
-import {
-  validateCharacterData,
-  validateFlexibleSheet,
-  sheetIssues,
-  applyIdentityToSheet,
-  sheetNameFor,
-  type SheetIssue,
-} from '../validators/game-systems';
+import { validateCharacterData, sheetNameFor } from '../validators/game-systems';
 import { CreateCharacterSchema, UpdateCharacterSchema } from '../validators/characters';
 import { broadcastToCampaign, emitCharacterUpdated } from '../websocket/utils';
 import {
@@ -22,9 +15,10 @@ import {
 import { resendInitiative } from '../websocket/handlers/initiative';
 import logger from '../utils/logger';
 import { cutText } from '../utils/cutText';
-import { readTokens, toJson, readJsonObject } from '../utils/prisma-json';
+import { readTokens, toJson } from '../utils/prisma-json';
 import { extractCharacterHp, sameCharacterHp } from '../utils/characterHp';
-import { migrateLegacySheetFields } from '../utils/sheetFieldMigrations';
+import { prepareSheetForStorage, sheetRecord, type SheetIssue } from '../utils/prepareSheet';
+import { projectCharacterData } from '../utils/sheetProjection';
 import { withMapsLocked } from '../utils/mapTokens';
 import {
   assertCompatible,
@@ -44,9 +38,6 @@ import { getCharacterTemplate } from '../utils/character-templates';
 import { FLEXIBLE_TEMPLATES } from '../utils/character-templates/flexible-templates';
 
 const router = Router();
-
-/** What a refused Flexible sheet answers, beside the list of its problems. */
-const FLEXIBLE_SHEET_REFUSED = 'Character data does not match the Flexible sheet layout';
 
 /**
  * The most characters one account may own, copies included. Each one can be
@@ -78,74 +69,6 @@ class SheetValidationError extends Error {
     this.name = 'SheetValidationError';
     this.validationErrors = validationErrors;
   }
-}
-
-const TYPED_GAME_SYSTEMS: string[] = [
-  GameSystem.DND_5E,
-  GameSystem.PATHFINDER_2E,
-  GameSystem.SHADOWRUN_6E,
-  GameSystem.CALL_OF_CTHULHU_7E,
-];
-
-/**
- * Identity, migrate, validate, and strip Keeper notes for a create sheet.
- * Shared by the outer fast-fail and the in-transaction re-prep when omitted
- * or null inherit sees a different locked Campaign system, or when the locked
- * membership role is no longer DM.
- */
-function prepareCreateSheet(params: {
-  gameSystem: GameSystem | null | undefined;
-  data: unknown;
-  name: string;
-  displayName: string;
-  keeper: boolean;
-}): unknown {
-  const { gameSystem, data, name, displayName, keeper } = params;
-  // A sheet in the shape of a version before 1.3.0 has its older fields
-  // moved where the sheet reads them first, since validation drops them.
-  const dataWithIdentity = applyIdentityToSheet(
-    gameSystem as GameSystem | null,
-    migrateLegacySheetFields(gameSystem, data) as Record<string, unknown> | undefined,
-    name,
-    displayName,
-  );
-  // What gets stored: the schema's parsed output once validated, so a key
-  // the sheet does not declare never reaches the database.
-  let sheetData: unknown = dataWithIdentity;
-
-  if (gameSystem !== undefined && gameSystem !== null) {
-    if (!TYPED_GAME_SYSTEMS.includes(gameSystem as string)) {
-      throw new SheetValidationError(
-        `Invalid game system. Must be one of: ${TYPED_GAME_SYSTEMS.join(', ')}`,
-      );
-    }
-
-    const validationResult = validateCharacterData(gameSystem as GameSystem, dataWithIdentity);
-    if (!validationResult.success) {
-      throw new SheetValidationError(
-        'Character data does not match game system schema',
-        validationResult.errors.issues.map((issue) => ({
-          path: issue.path.join('.'),
-          message: issue.message,
-          code: issue.code,
-        })),
-      );
-    }
-    sheetData = validationResult.data;
-  } else if (data !== undefined) {
-    // A Flexible sheet, checked as sent: the identity step above would turn
-    // a string or a list into an object before it could be refused.
-    const flexible = validateFlexibleSheet(data);
-    if (!flexible.success) {
-      throw new SheetValidationError(FLEXIBLE_SHEET_REFUSED, sheetIssues(flexible.errors));
-    }
-    sheetData = flexible.data;
-  }
-
-  if (!keeper) {
-    sheetData = sheetWithoutKeeperNotes((gameSystem as GameSystem | null | undefined) ?? null, sheetData);
-  }
-  return sheetData;
 }
 
 /** Inside a create's transaction: refuse when the owner already has the most characters allowed. */
@@ -401,12 +324,36 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
     // `name` column, and nothing joined the two — so a character created as
     // "Aldra" opened showing the factory placeholder "New Character" with an
     // empty player name. Done here rather than in the modal so it also covers
-    // copying a template and any API client.
+    // copying a template and any API client. A Flexible sheet is checked as
+    // sent: wrapping identity first would turn a string or a list into an
+    // object before it could be refused.
     const owner = await prisma.user.findUnique({
       where: { id: userId },
       select: { displayName: true },
     });
     const displayName = owner?.displayName ?? '';
+    // What gets stored: the schema's parsed output once validated, so a key
+    // the sheet does not declare never reaches the database. A sheet in the
+    // shape of a version before 1.3.0 has its older fields moved where the
+    // sheet reads them first, since validation drops them.
+    const prepared = finalGameSystem
+      ? prepareSheetForStorage({
+          gameSystem: finalGameSystem,
+          data,
+          identity: { name, playerDisplayName: displayName },
+        })
+      : prepareSheetForStorage({
+          gameSystem: null,
+          data: data === undefined ? {} : data,
+        });
+    if (!prepared.ok) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: prepared.message,
+        validationErrors: prepared.validationErrors,
+      });
+    }
+    let sheetData: unknown = prepared.data;
     // Keeper's Notes are written only by the Keeper: the DM of the campaign
     // the character is created in. Anyone else's are not stored. The pre-tx
     // read is the fast-fail; create-in re-reads the locked membership role
@@ -416,13 +363,9 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
     // Hoisted so the 201 uses the locked seat. With no campaignId,
     // isKeeperOf(..., null) is false and this stays false.
     let lockedKeeper = keeper;
-    let sheetData = prepareCreateSheet({
-      gameSystem: finalGameSystem,
-      data,
-      name,
-      displayName,
-      keeper,
-    });
+    if (!keeper) {
+      sheetData = sheetWithoutKeeperNotes((finalGameSystem as GameSystem | null | undefined) ?? null, sheetData);
+    }
 
     // Normalize tokenImageUrl to full path if provided
     const normalizedTokenImageUrl = tokenImageUrl ? normalizeAssetUrl(tokenImageUrl, 'tokens') : null;
@@ -470,13 +413,23 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         // system, or when the locked seat is no longer DM. Always pass the
         // locked role, never the pre-tx keeper.
         if (lockedKeeper !== keeper || (!gameSystem && storedGameSystem !== sheetValidatedAs)) {
-          sheetData = prepareCreateSheet({
-            gameSystem: storedGameSystem,
-            data,
-            name,
-            displayName,
-            keeper: lockedKeeper,
-          });
+          const rePrepared = storedGameSystem
+            ? prepareSheetForStorage({
+                gameSystem: storedGameSystem,
+                data,
+                identity: { name, playerDisplayName: displayName },
+              })
+            : prepareSheetForStorage({
+                gameSystem: null,
+                data: data === undefined ? {} : data,
+              });
+          if (!rePrepared.ok) {
+            throw new SheetValidationError(rePrepared.message, rePrepared.validationErrors);
+          }
+          sheetData = rePrepared.data;
+          if (!lockedKeeper) {
+            sheetData = sheetWithoutKeeperNotes(storedGameSystem ?? null, sheetData);
+          }
         }
       }
       await roomForCharacter(tx, userId);
@@ -864,33 +817,19 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
     // reads them first, or that would drop their content before
     // `migrate:sheet-fields` could move it.
     let sheetData: unknown = data;
-    if (character.gameSystem && data !== undefined) {
-      const validationResult = validateCharacterData(
-        character.gameSystem as GameSystem,
-        migrateLegacySheetFields(character.gameSystem, data)
-      );
-      if (!validationResult.success) {
+    if (data !== undefined) {
+      const prepared = prepareSheetForStorage({
+        gameSystem: character.gameSystem as GameSystem | null,
+        data,
+      });
+      if (!prepared.ok) {
         return res.status(400).json({
           error: 'Validation Error',
-          message: 'Character data does not match game system schema',
-          validationErrors: validationResult.errors.issues.map((issue) => ({
-            path: issue.path.join('.'),
-            message: issue.message,
-            code: issue.code,
-          })),
+          message: prepared.message,
+          validationErrors: prepared.validationErrors,
         });
       }
-      sheetData = validationResult.data;
-    } else if (data !== undefined) {
-      const flexible = validateFlexibleSheet(data);
-      if (!flexible.success) {
-        return res.status(400).json({
-          error: 'Validation Error',
-          message: FLEXIBLE_SHEET_REFUSED,
-          validationErrors: sheetIssues(flexible.errors),
-        });
-      }
-      sheetData = flexible.data;
+      sheetData = prepared.data;
     }
 
     // Build update data
@@ -1095,13 +1034,18 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
         //
         // Sent only when the value really moved: every roster card and token bar
         // re-renders on this, and most sheet saves do not touch hit points.
+        const previousProjected = projectCharacterData(updatedCharacter.gameSystem, character.data);
+        const currentProjected = projectCharacterData(
+          updatedCharacter.gameSystem,
+          updatedCharacter.data
+        );
         const previousHp = extractCharacterHp(
           updatedCharacter.gameSystem,
-          readJsonObject(character.data)
+          sheetRecord(previousProjected)
         );
         const currentHp = extractCharacterHp(
           updatedCharacter.gameSystem,
-          readJsonObject(updatedCharacter.data)
+          sheetRecord(currentProjected)
         );
         if (currentHp && !sameCharacterHp(previousHp, currentHp)) {
           broadcastToCampaign(sheetCampaignId, 'character.hp.updated', {
@@ -1408,17 +1352,33 @@ router.post('/:id/copy', authenticated, async (req: AuthenticatedRequest, res: R
     }
 
     // Create a copy with modified name. Not the Keeper's Notes: they are the
-    // Keeper's, and the copy is in no campaign.
+    // Keeper's, and the copy is in no campaign. Identity stamps the copy's
+    // name into the sheet so a later save does not rename it back to the original.
+    const copiedName = copyName(originalCharacter.name);
+    const owner = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true },
+    });
+    const prepared = prepareSheetForStorage({
+      gameSystem: originalCharacter.gameSystem as GameSystem | null,
+      data: originalCharacter.data,
+      identity: { name: copiedName, playerDisplayName: owner?.displayName ?? '' },
+    });
+    if (!prepared.ok) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: prepared.message,
+        validationErrors: prepared.validationErrors,
+      });
+    }
+
     const copiedCharacter = await prisma.$transaction(async (tx) => {
       await roomForCharacter(tx, userId);
       return tx.character.create({
         data: {
           userId,
-          // TODO(sheets): the copied sheet keeps the original's name, and the name
-          // sync on save then renames the copy back, dropping " (Copy)"; write the
-          // copy's name into the sheet too.
-          name: copyName(originalCharacter.name),
-          data: toJson(sheetWithoutKeeperNotes(originalCharacter.gameSystem, originalCharacter.data)),
+          name: copiedName,
+          data: toJson(sheetWithoutKeeperNotes(originalCharacter.gameSystem, prepared.data)),
           tokenImageUrl: originalCharacter.tokenImageUrl,
           gameSystem: originalCharacter.gameSystem,
           campaignId: null, // Copies are unassigned by default
@@ -1428,7 +1388,7 @@ router.post('/:id/copy', authenticated, async (req: AuthenticatedRequest, res: R
 
     return res.status(201).json({
       message: 'Character copied successfully',
-      character: copiedCharacter,
+      character: characterForReader(copiedCharacter, false),
     });
   } catch (error) {
     if (error instanceof CharacterLimitReached) {

@@ -301,7 +301,7 @@ A template is a starter sheet somebody has already filled in and shared. If you'
 
 Open **Character Templates** from the dashboard. Every template on the instance is listed; filter by game system, search by name, or tick **Only mine** to see just your own.
 
-**Using one.** Click **Use** on any template. That creates a character that belongs entirely to you — you can rename it and change anything you like, and the original template is untouched. Whoever published it has no control over your character.
+**Using one.** Click **Use** on any template. That creates a character that belongs entirely to you — you can rename it and change anything you like, and the original template is untouched. Whoever published it has no control over your character. Use does not copy Keeper's Notes.
 
 **Publishing one.** There are four ways:
 
@@ -380,7 +380,7 @@ For when the vibes turn from cozy to eldritch:
 - Weapons and attacks
 - Backstory, personal description, and ideals
 - Possessions and important people
-- **Keeper's Notes**, on the Backstory tab, for the Keeper alone: only the DM of the investigator's campaign can see or change them, so the investigator's player and the rest of the table never see them. They stay with the campaign: moving the investigator into another campaign, bringing it into one when you accept an invitation, or copying it, leaves them behind.
+- **Keeper's Notes**, on the Backstory tab, for the Keeper alone: only the DM of the investigator's campaign can see or change them, so the investigator's player and the rest of the table never see them. They stay with the campaign: moving the investigator into another campaign, bringing it into one when you accept an invitation, or copying it, leaves them behind. A published character template never includes them; Use does not copy them.
 
 *Screenshot pending — Call of Cthulhu 7e character sheet.*
 

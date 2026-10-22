@@ -374,7 +374,8 @@ Update campaign properties (DM only). Every field is optional and is validated w
 The campaign's roster: one entry for every member, with the characters that
 member brings to the campaign. A member with no character has an empty
 `characters` list. `hp` is `null` for a character whose sheet has no hit
-points to read.
+points to read. When present, `max` is the projected maximum when the sheet's
+inputs exist; `current` and `temp` are stored current resources.
 
 **Response:**
 ```json
@@ -757,7 +758,7 @@ the most one account can. Delete one you no longer need to make room."
 }
 ```
 
-For a character with a game system, `name` is written into the sheet's `characterName` (`investigatorName` in Call of Cthulhu), and your display name into `playerName`, before the sheet is checked; a Flexible sheet (no game system) gets neither. A D&D 5e sheet needs at least the fields above; a sheet that does not pass answers `400` with `validationErrors`, as on `PUT`.
+For a character with a game system, `name` is written into the sheet's `characterName` (`investigatorName` in Call of Cthulhu), and your display name into `playerName`, before the sheet is checked; a Flexible sheet (no game system) gets neither. A D&D 5e sheet needs at least the fields above; a sheet that does not pass answers `400` with `validationErrors`, as on `PUT`. The 201 `data` is projected at read as on GET.
 
 If `campaignId` is sent, the caller must already be a member of that Campaign. When `gameSystem` is omitted or null, the Character inherits the Campaign `gameSystem` committed at write. After that inherit, the resolved Character game system must be compatible with the Campaign: a typed Campaign requires the same system (a Flexible sheet is a mismatch); a Campaign with no game system accepts any Character. Otherwise the request answers `400` with `error` `Game System Mismatch` and nothing is created.
 
@@ -765,7 +766,7 @@ If `campaignId` is sent, the caller must already be a member of that Campaign. W
 
 ### `GET /api/characters/:id`
 
-Get a single character, with its sheet in `data`, its `campaign` (`{ id, name }` or null) and its owner as `user` (`{ id, displayName, avatarUrl }`). The owner may always read it, and so may any member of its campaign while the owner is still a member there; anyone else gets `403`. On a Call of Cthulhu sheet the Keeper's Notes (`notes`) are sent only to the DM of the character's campaign, and are left out for everyone else, its owner included.
+Get a single character, with its sheet in `data`, its `campaign` (`{ id, name }` or null) and its owner as `user` (`{ id, displayName, avatarUrl }`). The owner may always read it, and so may any member of its campaign while the owner is still a member there; anyone else gets `403`. Derived values are projected at read when their inputs exist; current resources (current HP, remaining hit dice, current sanity, current magic points) are left as stored; a projection outside schema bounds is clamped (Mythos 100 → sanity maximum 0). On a Call of Cthulhu sheet the Keeper's Notes (`notes`) are sent only to the DM of the character's campaign, and are left out for everyone else, its owner included.
 
 ---
 
@@ -773,7 +774,7 @@ Get a single character, with its sheet in `data`, its `campaign` (`{ id, name }`
 
 Save a character. Every field is optional, but `data` is the **whole sheet**: it replaces the stored one. For a character with a game system it is checked against that system's sheet first, and a field the sheet does not define is dropped. A Flexible character's sheet (no game system) must be an object whose `sections` are laid out as the Flexible sheet's are; keys beside `sections` are kept. Either way a sheet that does not pass answers `400` with `validationErrors`, each giving the `path` of a field and what is wrong with it, and nothing is saved. On a Call of Cthulhu sheet, a save by anyone but the DM of the character's campaign keeps the stored `notes` (Keeper's Notes), whatever it sends for them.
 
-Send `updatedAt` exactly as `GET /api/characters/:id` gave it, and the save is refused with **409 Conflict** if the character has changed since (another save, or hit points changed at the table). Nothing is written; load the character again and make the change on the new version. Leave `updatedAt` out and the save is made whatever changed in between. A successful save returns the character with its new `updatedAt`.
+Send `updatedAt` exactly as `GET /api/characters/:id` gave it, and the save is refused with **409 Conflict** if the character has changed since (another save, or hit points changed at the table). Nothing is written; load the character again and make the change on the new version. Leave `updatedAt` out and the save is made whatever changed in between. A successful save returns the character with its new `updatedAt` and the sheet in `data` projected at read as on GET.
 
 **Request:**
 ```json
@@ -873,7 +874,9 @@ its sheet (`data`), which a page of 100 would otherwise carry 100 times.
 ### `GET /api/character-templates/:id`
 
 One template, with its sheet in `data`. Fetch this before copying a template
-into a character or editing it.
+into a character or editing it. A published Call of Cthulhu sheet never
+includes Keeper's Notes (the top-level `notes` key), even if an older row
+still stored them.
 
 ### `POST /api/character-templates`
 
@@ -892,10 +895,13 @@ into a character or editing it.
 - `name` is required; `gameSystem` may be null for a flexible template.
 - `data` is validated against the game system's schema exactly as a character's
   is, and stored as the schema returns it, so a field the sheet does not define
-  is dropped. Fields from a sheet written before 1.3.0 are moved to where the
-  sheet reads them first, as they are for a character. A flexible template's
-  `data` must be an object laid out as a Flexible sheet, as a Flexible
-  character's must; anything else answers `400` with `validationErrors`.
+  is dropped. On a Call of Cthulhu sheet, Keeper's Notes (the top-level `notes`)
+  are stripped before the published character template is stored; sending them
+  does not answer `400`. Fields from a sheet written before 1.3.0 are moved to
+  where the sheet reads them first, as they are for a character. A flexible
+  template's `data` must be an object laid out as a Flexible sheet, as a
+  Flexible character's must; anything else answers `400` with
+  `validationErrors`.
 - **`tokenImageUrl` must reference a `GLOBAL` asset.** A template is visible to
   everyone, so a `USER`- or `CAMPAIGN`-scoped image would 403 for other readers
   and show as broken. A non-global asset returns `400` with an explanation.
@@ -907,7 +913,10 @@ into a character or editing it.
 
 Accepts `name`, `description`, `tokenImageUrl`, `data`. An empty body returns
 `400`. `gameSystem` is fixed at creation, as it is for a character — the sheet
-data is only meaningful against the system it was built for.
+data is only meaningful against the system it was built for. On a Call of
+Cthulhu sheet, Keeper's Notes are stripped on update the same way as on
+publish; a name-, description-, or image-only save also drops stored
+Keeper's Notes without putting back a sheet that changed in between.
 
 ### `DELETE /api/character-templates/:id`
 
@@ -916,7 +925,8 @@ data is only meaningful against the system it was built for.
 There is no dedicated endpoint. The client reads the template and posts its
 `data`, `gameSystem` and `tokenImageUrl` to `POST /api/characters` — the
 resulting character belongs to whoever made the request, not to the template's
-author.
+author. Use copies a sheet without Keeper's Notes: a published Call of Cthulhu
+template never carries the key, so the created Character is stored without it.
 
 ---
 
@@ -1212,6 +1222,13 @@ A request may carry at most 100 text fields. A field name is at most 100 bytes, 
 ### `GET /api/assets/:id`
 
 Get a single asset's metadata.
+
+Who may read it is `canReadAsset`, the same rule as the file-serving routes
+(maps, tokens, audio, documents, and download). An unreadable asset answers
+`404`, not `403`, with `{ "error": "Not Found", "message": "Asset not found" }`,
+so metadata and bytes cannot disagree and the reply never confirms a private
+id exists. A caller who can read still gets `200` on both this route and the
+bytes route for the same id.
 
 ---
 

@@ -42,6 +42,7 @@ jest.mock('../../websocket/utils', () => ({
   }),
 }));
 
+import type { Prisma } from '@prisma/client';
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import {
   prisma,
@@ -51,6 +52,8 @@ import {
   cleanupCampaigns,
   TEST_PASSWORD,
 } from '../../__tests__/helpers/db';
+import { getBlankCharacterTemplate } from '../../validators/game-systems';
+import { GameSystem } from '../../game-systems';
 
 const app = createTestApp();
 
@@ -151,7 +154,6 @@ describe('character HP broadcast on sheet save', () => {
     await prisma.character.deleteMany({ where: { id: { in: [characterId, looseCharacterId] } } });
     await cleanupCampaigns([campaignId]);
     await cleanupUsers([dmId, playerId]);
-    await prisma.$disconnect();
   });
 
   const save = (id: string, body: Record<string, unknown>) =>
@@ -220,5 +222,93 @@ describe('character HP broadcast on sheet save', () => {
     await save(characterId, { data: sheet({ maximum: 27, current: 11, temporary: 0 }) });
 
     expect(mockBroadcasts.map((b) => b.event)).toContain('character.updated');
+  });
+});
+
+describe('Pathfinder 2e HP broadcast from projected CON', () => {
+  let dmId: string;
+  let playerId: string;
+  let campaignId: string;
+  let characterId: string;
+  let playerAgent: ReturnType<typeof request.agent>;
+
+  function pf2eConSheet(): Record<string, unknown> {
+    const blank = getBlankCharacterTemplate(GameSystem.PATHFINDER_2E) as Record<string, unknown> & {
+      attributes: Record<string, { score: number; modifier: number }>;
+      hp: Record<string, unknown>;
+    };
+    return {
+      ...blank,
+      level: 1,
+      attributes: {
+        ...blank.attributes,
+        constitution: { score: 14, modifier: 2 },
+      },
+      hp: {
+        ...blank.hp,
+        ancestryHp: 10,
+        classHpPerLevel: 10,
+        maximum: 1,
+        current: 7,
+      },
+    };
+  }
+
+  beforeAll(async () => {
+    const stamp = Date.now();
+    const dm = await createTestUser({ isApproved: true });
+    const player = await createTestUser({ isApproved: true });
+    dmId = dm.id;
+    playerId = player.id;
+
+    const campaign = await createTestCampaign(dmId, {
+      name: `PF2e HP Broadcast ${stamp}`,
+      gameSystem: 'PATHFINDER_2E',
+    });
+    campaignId = campaign.id;
+
+    const created = await prisma.character.create({
+      data: {
+        userId: playerId,
+        campaignId,
+        name: 'Seelah',
+        gameSystem: 'PATHFINDER_2E',
+        data: getBlankCharacterTemplate(GameSystem.PATHFINDER_2E) as Prisma.InputJsonValue,
+      },
+    });
+    characterId = created.id;
+
+    await prisma.campaignMembership.createMany({
+      data: [
+        { campaignId, userId: dmId, role: 'DM', characterIds: [] },
+        { campaignId, userId: playerId, role: 'PLAYER', characterIds: [characterId] },
+      ],
+    });
+
+    playerAgent = request.agent(app);
+    const login = await playerAgent
+      .post('/api/auth/login')
+      .send({ email: player.email, password: TEST_PASSWORD });
+    expect(login.status).toBe(200);
+  });
+
+  afterAll(async () => {
+    await prisma.character.deleteMany({ where: { id: characterId } });
+    await cleanupCampaigns([campaignId]);
+    await cleanupUsers([dmId, playerId]);
+    await prisma.$disconnect();
+  });
+
+  it('broadcasts projected max HP when CON inputs change and stored cache stays 1', async () => {
+    mockBroadcasts.length = 0;
+    const res = await playerAgent.put(`/api/characters/${characterId}`).send({ data: pf2eConSheet() });
+    expect(res.status).toBe(200);
+    expect(res.body.character.data.hp.maximum).toBe(22);
+    expect(res.body.character.data.hp.current).toBe(7);
+
+    const stored = await prisma.character.findUniqueOrThrow({ where: { id: characterId } });
+    expect((stored.data as { hp: { maximum: number } }).hp.maximum).toBe(1);
+
+    expect(hpBroadcasts()).toEqual([{ characterId, hp: { current: 7, max: 22, temp: 0 } }]);
   });
 });

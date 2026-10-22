@@ -31,6 +31,7 @@ import { withAdvantage, withDisadvantage } from '../../../utils/characterRolls';
 import { readFeatureEntries } from '../../../utils/featureEntries';
 import { pf2eInitiativeBonus } from '../../../utils/rules/initiative';
 import { pf2eArmorClass, pf2eClassDC } from '../../../utils/rules/pathfinder2e';
+import { projectCharacterData } from '../../../utils/sheetProjection';
 import type { Character } from '../../../types';
 import type {
   PF2eCharacterData,
@@ -97,7 +98,7 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
   onEdit,
   onRoll,
 }) => {
-  const data = character.data as PF2eCharacterData & SheetChrome;
+  const data = projectCharacterData(character.gameSystem, character.data) as PF2eCharacterData & SheetChrome;
   const [selectedColor, setSelectedColor] = useState(COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');

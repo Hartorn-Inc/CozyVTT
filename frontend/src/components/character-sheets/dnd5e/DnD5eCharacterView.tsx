@@ -44,6 +44,7 @@ import {
   dnd5eSaveBonus,
 } from '../../../utils/rules/dnd5e';
 import { dnd5eInitiativeModifier } from '../../../utils/rules/initiative';
+import { projectCharacterData } from '../../../utils/sheetProjection';
 import { collectSheetFeatures } from '../../../utils/featureEntries';
 import { readProficiencyGroups } from '../../../utils/proficiencies';
 import { isHexColor } from '@/utils/styleAllowlists';
@@ -105,7 +106,7 @@ const COLOR_PRESETS = [
  */
 export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ character, onEdit, onRoll, onSpendHitDie }) => {
   const [activeTab, setActiveTab] = useState<TabId>('stats');
-  const data = character.data as DnD5eCharacterData & SheetChrome;
+  const data = projectCharacterData(character.gameSystem, character.data) as DnD5eCharacterData & SheetChrome;
   const [themeColor, setThemeColor] = useState(COLOR_PRESETS[0]);
   const [isCustomColor, setIsCustomColor] = useState(false);
   const [customColorHex, setCustomColorHex] = useState('');
