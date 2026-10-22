@@ -759,7 +759,7 @@ the most one account can. Delete one you no longer need to make room."
 
 For a character with a game system, `name` is written into the sheet's `characterName` (`investigatorName` in Call of Cthulhu), and your display name into `playerName`, before the sheet is checked; a Flexible sheet (no game system) gets neither. A D&D 5e sheet needs at least the fields above; a sheet that does not pass answers `400` with `validationErrors`, as on `PUT`.
 
-If `campaignId` is sent, the caller must already be a member of that Campaign. When `gameSystem` is omitted or null, the Character inherits the Campaign's game system. After that inherit, the resolved Character game system must be compatible with the Campaign: a typed Campaign requires the same system (a Flexible sheet is a mismatch); a Campaign with no game system accepts any Character. Otherwise the request answers `400` with `error` `Game System Mismatch` and nothing is created.
+If `campaignId` is sent, the caller must already be a member of that Campaign. When `gameSystem` is omitted or null, the Character inherits the Campaign `gameSystem` committed at write. After that inherit, the resolved Character game system must be compatible with the Campaign: a typed Campaign requires the same system (a Flexible sheet is a mismatch); a Campaign with no game system accepts any Character. Otherwise the request answers `400` with `error` `Game System Mismatch` and nothing is created.
 
 ---
 

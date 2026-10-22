@@ -4656,11 +4656,12 @@ paths:
         Create a new character.
         - `name` is trimmed and must be 1 to 200 characters.
         - If `campaignId` is provided and `gameSystem` is omitted or null, the
-          Character inherits the Campaign's `gameSystem` (so create-in into a
-          typed Campaign without specifying a system still creates a matching
-          Character, not a Flexible sheet). After that inherit, the resolved
-          Character game system must be compatible with the Campaign or the
-          request answers 400 `Game System Mismatch` and nothing is created.
+          Character inherits the Campaign `gameSystem` committed at write (so
+          create-in into a typed Campaign without specifying a system still
+          creates a matching Character, not a Flexible sheet). After that
+          inherit, the resolved Character game system must be compatible with
+          the Campaign or the request answers 400 `Game System Mismatch` and
+          nothing is created.
           A typed Campaign requires the same system; a Campaign with no game
           system accepts any Character; a Flexible sheet into a typed Campaign
           is a mismatch. The same rule as `POST /api/characters/{id}/assign`.
@@ -4719,7 +4720,7 @@ paths:
                   type: string
                   enum: [DND_5E, PATHFINDER_2E, SHADOWRUN_6E, CALL_OF_CTHULHU_7E]
                   nullable: true
-                  description: Optional game system (auto-inherited from campaign if campaignId provided)
+                  description: Omitted or null inherits the Campaign system committed at write; an explicit sent system is not overwritten.
                 campaignId:
                   type: string
                   format: uuid

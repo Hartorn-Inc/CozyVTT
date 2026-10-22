@@ -28,10 +28,13 @@ const app = createTestApp();
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Hold the Campaign row, then commit a change of gameSystem to D&D 5e.
+ * Hold the Campaign row, then commit a change of gameSystem.
  * Models a concurrent PUT /api/campaigns/:id while a join is in flight.
  */
-async function holdCampaignThenSetDnd(campaignId: string): Promise<{ release: () => Promise<void> }> {
+async function holdCampaignThenSetSystem(
+  campaignId: string,
+  gameSystem: GameSystem | null,
+): Promise<{ release: () => Promise<void> }> {
   let release!: () => void;
   const released = new Promise<void>((resolve) => {
     release = resolve;
@@ -48,7 +51,7 @@ async function holdCampaignThenSetDnd(campaignId: string): Promise<{ release: ()
       await released;
       await tx.campaign.update({
         where: { id: campaignId },
-        data: { gameSystem: GameSystem.DND_5E },
+        data: { gameSystem },
       });
     },
     { timeout: 15000 },
@@ -126,8 +129,8 @@ describe('Character assign and create-in match Campaign game system', () => {
     await prisma.$disconnect();
   });
 
-  const untypedCampaignForRace = async (name: string) => {
-    const campaign = await createTestCampaign(dmId, { name, gameSystem: null });
+  const campaignForRace = async (name: string, gameSystem: GameSystem | null) => {
+    const campaign = await createTestCampaign(dmId, { name, gameSystem });
     extraCampaignIds.push(campaign.id);
     await prisma.campaignMembership.createMany({
       data: [
@@ -137,6 +140,9 @@ describe('Character assign and create-in match Campaign game system', () => {
     });
     return campaign.id;
   };
+
+  const untypedCampaignForRace = (name: string) => campaignForRace(name, null);
+  const dndCampaignForRace = (name: string) => campaignForRace(name, GameSystem.DND_5E);
 
   it('refuses assigning a Pathfinder Character into a D&D Campaign', async () => {
     const created = await createCharacter({
@@ -340,7 +346,7 @@ describe('Character assign and create-in match Campaign game system', () => {
     }).expect(201);
     const characterId: string = created.body.character.id;
 
-    const holder = await holdCampaignThenSetDnd(campaignId);
+    const holder = await holdCampaignThenSetSystem(campaignId, GameSystem.DND_5E);
     const join = assign(characterId, campaignId);
     await sleep(500);
     await holder.release();
@@ -357,7 +363,7 @@ describe('Character assign and create-in match Campaign game system', () => {
     const before = await prisma.character.count({ where: { userId: playerId } });
     const beforeMembership = (await membershipFor(playerId, campaignId))?.characterIds.length ?? 0;
 
-    const holder = await holdCampaignThenSetDnd(campaignId);
+    const holder = await holdCampaignThenSetSystem(campaignId, GameSystem.DND_5E);
     const join = createCharacter({
       name: 'PF race create-in',
       campaignId,
@@ -373,6 +379,96 @@ describe('Character assign and create-in match Campaign game system', () => {
     expect(await prisma.character.count({ where: { userId: playerId } })).toBe(before);
     expect(await prisma.character.findFirst({ where: { userId: playerId, name: 'PF race create-in' } })).toBeNull();
     expect((await membershipFor(playerId, campaignId))?.characterIds.length ?? 0).toBe(beforeMembership);
+  });
+
+  it('inherits the locked Campaign system when omitted create-in races untyped to D&D', async () => {
+    const campaignId = await untypedCampaignForRace(`Race inherit omitted ${Date.now()}`);
+
+    const holder = await holdCampaignThenSetSystem(campaignId, GameSystem.DND_5E);
+    const join = createCharacter({
+      name: 'Omitted inherit race to D&D',
+      campaignId,
+      data: dndSheet(),
+    });
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(201);
+    expect(res.body.character.gameSystem).toBe(GameSystem.DND_5E);
+    expect(res.body.character.campaignId).toBe(campaignId);
+    expect((await prisma.character.findUnique({ where: { id: res.body.character.id } }))?.gameSystem).toBe(
+      GameSystem.DND_5E,
+    );
+    expect((await membershipFor(playerId, campaignId))?.characterIds).toContain(res.body.character.id);
+  });
+
+  it('inherits the locked Campaign system when null create-in races D&D to untyped', async () => {
+    const campaignId = await dndCampaignForRace(`Race inherit null ${Date.now()}`);
+
+    const holder = await holdCampaignThenSetSystem(campaignId, null);
+    const join = createCharacter({
+      name: 'Null inherit race to untyped',
+      campaignId,
+      gameSystem: null,
+      data: dndSheet(),
+    });
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(201);
+    expect(res.body.character.gameSystem).toBeNull();
+    expect(res.body.character.campaignId).toBe(campaignId);
+    expect((await prisma.character.findUnique({ where: { id: res.body.character.id } }))?.gameSystem).toBeNull();
+    expect((await membershipFor(playerId, campaignId))?.characterIds).toContain(res.body.character.id);
+  });
+
+  it('answers 400 when omitted inherit re-preps a Flexible sheet against a newly typed Campaign', async () => {
+    const campaignId = await untypedCampaignForRace(`Race inherit Flexible re-prep ${Date.now()}`);
+    const before = await prisma.character.count({ where: { userId: playerId } });
+    const beforeMembership = (await membershipFor(playerId, campaignId))?.characterIds.length ?? 0;
+
+    const holder = await holdCampaignThenSetSystem(campaignId, GameSystem.DND_5E);
+    const join = createCharacter({
+      name: 'Omitted inherit Flexible re-prep',
+      campaignId,
+      data: { sections: [] },
+    });
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Validation Error');
+    expect(await prisma.character.count({ where: { userId: playerId } })).toBe(before);
+    expect(
+      await prisma.character.findFirst({ where: { userId: playerId, name: 'Omitted inherit Flexible re-prep' } }),
+    ).toBeNull();
+    expect((await membershipFor(playerId, campaignId))?.characterIds.length ?? 0).toBe(beforeMembership);
+  });
+
+  it('does not re-inherit an explicit sent system when a concurrent PUT untypes the Campaign', async () => {
+    const campaignId = await dndCampaignForRace(`Race explicit D&D stays ${Date.now()}`);
+
+    const holder = await holdCampaignThenSetSystem(campaignId, null);
+    const join = createCharacter({
+      name: 'Explicit D&D not re-inherited',
+      campaignId,
+      gameSystem: GameSystem.DND_5E,
+      data: dndSheet(),
+    });
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(201);
+    expect(res.body.character.gameSystem).toBe(GameSystem.DND_5E);
+    expect(res.body.character.campaignId).toBe(campaignId);
+    expect((await prisma.character.findUnique({ where: { id: res.body.character.id } }))?.gameSystem).toBe(
+      GameSystem.DND_5E,
+    );
+    expect((await membershipFor(playerId, campaignId))?.characterIds).toContain(res.body.character.id);
   });
 
   it('refuses re-assigning a mismatched Character to the Campaign it is already in', async () => {
