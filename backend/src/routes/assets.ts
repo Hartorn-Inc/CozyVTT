@@ -110,6 +110,7 @@ const ASSET_PUBLIC_SELECT = {
 
 /**
  * Whether this request may read an asset's bytes.
+ * Metadata GET uses the same check, so an unreadable id is 404 for both.
  *
  * The map and token routes asked this in identical, separately-written blocks,
  * and neither allowed for an asset being *used* by a campaign rather than
@@ -541,11 +542,14 @@ router.post(
  * Get asset metadata by ID
  * Requires: Authentication
  * Returns: Asset metadata (without file data)
+ *
+ * Who may read it is `canReadAsset`, the same rule as the bytes routes.
+ * An unreadable asset answers 404, not 403, so metadata and file cannot
+ * disagree and the reply does not confirm the id exists.
  */
 router.get('/:id', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { id } = req.params;
-    const userId = req.session.userId!;
 
     const asset = await prisma.asset.findUnique({
       where: { id },
@@ -559,44 +563,11 @@ router.get('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       });
     }
 
-    const isAdmin = req.session.platformRole === 'ADMIN';
-
-    // USER-scoped assets: only owner or admin can access
-    if (asset.scope === 'USER' && asset.uploadedById !== userId && !isAdmin) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'You do not have access to this asset',
+    if (!(await canReadAssetFile(asset, req))) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'Asset not found',
       });
-    }
-
-    // TODO(assets): a CAMPAIGN asset whose campaign is gone passes this check, so
-    // anyone signed in reads its details; decide with canReadAsset, as the file
-    // routes do.
-    // CAMPAIGN-scoped assets: only campaign members can access
-    if (asset.scope === 'CAMPAIGN' && asset.campaignId && !isAdmin) {
-      const membership = await prisma.campaignMembership.findUnique({
-        where: {
-          userId_campaignId: {
-            userId,
-            campaignId: asset.campaignId,
-          },
-        },
-      });
-
-      if (!membership) {
-        return res.status(403).json({
-          error: 'Forbidden',
-          message: 'You do not have access to this asset',
-        });
-      }
-      // A map's spirit layer is shown to a player only once they have crossed
-      // over; the library entry follows the map.
-      if (membership.role !== 'DM' && (await spiritLayerAssetIdsHiddenFrom(userId, [asset.campaignId])).includes(asset.id)) {
-        return res.status(403).json({
-          error: 'Forbidden',
-          message: 'You do not have access to this asset',
-        });
-      }
     }
 
     return res.json({ asset });
@@ -720,7 +691,8 @@ router.delete('/:id', authenticated, async (req: AuthenticatedRequest, res: Resp
 /**
  * GET /api/assets/:id/download
  * Download an asset file
- * Requires: Authentication + access to asset
+ * Requires: Authentication + canReadAsset
+ * An unreadable asset answers 404, not 403, matching metadata for the same id.
  */
 router.get('/:id/download', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -742,7 +714,9 @@ router.get('/:id/download', authenticated, async (req: AuthenticatedRequest, res
     // uses it or because a document was shared, so a member who could read a
     // file inline was refused when downloading the same bytes.
     if (!(await canReadAssetFile(asset, req))) {
-      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this asset' });
+      // 404 rather than 403, matching the other read routes: the answer must
+      // not confirm the id exists.
+      return res.status(404).json({ error: 'Not Found', message: 'Asset not found' });
     }
 
     // Check if file exists (normalize path for cross-platform compatibility)
@@ -1076,7 +1050,8 @@ router.get('/documents/:id', authenticated, async (req: AuthenticatedRequest, re
 /**
  * GET /api/assets/maps/:id
  * Serve a map image
- * Requires: Authentication + access to asset
+ * Requires: Authentication + canReadAsset
+ * An unreadable asset answers 404, not 403, matching metadata for the same id.
  */
 router.get('/maps/:id', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -1093,9 +1068,10 @@ router.get('/maps/:id', authenticated, async (req: AuthenticatedRequest, res: Re
       });
     }
 
-    // Check access permissions
     if (!(await canReadAssetFile(asset, req))) {
-      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this asset' });
+      // 404 rather than 403, matching the read routes for private things: the
+      // answer must not confirm the id exists.
+      return res.status(404).json({ error: 'Not Found', message: 'Map asset not found' });
     }
 
     // Check if file exists (normalize path for cross-platform compatibility)
@@ -1122,7 +1098,8 @@ router.get('/maps/:id', authenticated, async (req: AuthenticatedRequest, res: Re
 /**
  * GET /api/assets/tokens/:id
  * Serve a token image
- * Requires: Authentication + access to asset
+ * Requires: Authentication + canReadAsset
+ * An unreadable asset answers 404, not 403, matching metadata for the same id.
  */
 router.get('/tokens/:id', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
@@ -1139,9 +1116,10 @@ router.get('/tokens/:id', authenticated, async (req: AuthenticatedRequest, res: 
       });
     }
 
-    // Check access permissions
     if (!(await canReadAssetFile(asset, req))) {
-      return res.status(403).json({ error: 'Forbidden', message: 'You do not have access to this asset' });
+      // 404 rather than 403, matching the read routes for private things: the
+      // answer must not confirm the id exists.
+      return res.status(404).json({ error: 'Not Found', message: 'Token asset not found' });
     }
 
     // Check if file exists (normalize path for cross-platform compatibility)

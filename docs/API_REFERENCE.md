@@ -1211,6 +1211,13 @@ A request may carry at most 100 text fields. A field name is at most 100 bytes, 
 
 Get a single asset's metadata.
 
+Who may read it is `canReadAsset`, the same rule as the file-serving routes
+(maps, tokens, audio, documents, and download). An unreadable asset answers
+`404`, not `403`, with `{ "error": "Not Found", "message": "Asset not found" }`,
+so metadata and bytes cannot disagree and the reply never confirms a private
+id exists. A caller who can read still gets `200` on both this route and the
+bytes route for the same id.
+
 ---
 
 ### `GET /api/assets/audio/:id`

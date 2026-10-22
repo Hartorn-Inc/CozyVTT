@@ -3475,7 +3475,7 @@ paths:
         Every member can list. Two kinds appear: documents shared into the
         campaign by the DM, and the campaign's own, created or uploaded at
         CAMPAIGN scope. Either way, appearing here means members may read it
-        through `GET /api/assets/documents/{id}`. Each says in `canEdit`
+        through `GET /api/assets/documents/{assetId}`. Each says in `canEdit`
         whether the caller may rewrite its text.
       operationId: listCampaignDocuments
       security:
@@ -5253,8 +5253,8 @@ paths:
         gives the default of 50.
 
         Each asset says in `canChange` whether the caller may change it where
-        it is: delete it (`DELETE /api/assets/{id}`), move it out of its
-        scope (`PATCH /api/assets/{id}/scope`), or, for a text or Markdown
+        it is: delete it (`DELETE /api/assets/{assetId}`), move it out of its
+        scope (`PATCH /api/assets/{assetId}/scope`), or, for a text or Markdown
         document, rewrite it (`PUT /api/assets/documents/{id}/content`).
       operationId: listAssets
       security:
@@ -5418,9 +5418,9 @@ paths:
         with no NUL, DEL or other ASCII control character besides tab, line
         feed, form feed and carriage return. "Ogg audio" is any Ogg track,
         whatever it was recorded in (Vorbis, Opus, FLAC or Speex); each is
-        stored as `.ogg` and played by `GET /api/assets/audio/{id}`. MPEG
+        stored as `.ogg` and played by `GET /api/assets/audio/{assetId}`. MPEG
         audio includes layers I and II, stored as `.mp1` and `.mp2`; these
-        upload successfully but `GET /api/assets/audio/{id}` answers 404 for
+        upload successfully but `GET /api/assets/audio/{assetId}` answers 404 for
         them.
 
         The stored row's `mimeType` is the detected type, whatever the client
@@ -5556,31 +5556,22 @@ paths:
         '429':
           $ref: '#/components/responses/RateLimited'
 
-  /api/assets/{id}:
+  /api/assets/{assetId}:
+    parameters:
+      - $ref: '#/components/parameters/AssetId'
     get:
       tags:
         - Assets
       summary: Get asset metadata
       description: >-
-        This route checks access on its own terms, not the shared read rule
-        the file-serving routes below use: a USER-scoped asset only to its
-        uploader or an admin, a CAMPAIGN-scoped one only to a member of that
-        campaign (with the spirit-layer check for a non-DM member), GLOBAL to
-        anyone signed in. It does not extend access to a caller whose
-        campaign merely *uses* the asset (a DM's personal map shown to the
-        table, a document shared with the campaign, the atmosphere track), so
-        the metadata can answer 403 for an asset whose file the same caller
-        may read.
+        Asset metadata (without file bytes). Who may read it is `canReadAsset`,
+        the same rule the file-serving routes use (see `GET /api/assets/maps/{assetId}`).
+        Metadata and bytes cannot disagree. An unreadable asset answers 404,
+        not 403, with the same envelope as a missing id, so the reply never
+        confirms a private id exists.
       operationId: getAssetById
       security:
         - cookieAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
       responses:
         '200':
           description: Asset metadata
@@ -5591,15 +5582,6 @@ paths:
                 properties:
                   asset:
                     $ref: '#/components/schemas/Asset'
-        '403':
-          description: The caller may not read this asset.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              example:
-                error: Forbidden
-                message: You do not have access to this asset
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -5638,12 +5620,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
         - name: force
           in: query
           required: false
@@ -5739,7 +5715,7 @@ paths:
                     type: integer
                     description: Uses past the 100 listed.
 
-  /api/assets/{id}/scope:
+  /api/assets/{assetId}/scope:
     parameters:
       - $ref: '#/components/parameters/AssetId'
     patch:
@@ -5867,31 +5843,26 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
 
-  /api/assets/{id}/download:
+  /api/assets/{assetId}/download:
+    parameters:
+      - $ref: '#/components/parameters/AssetId'
     get:
       tags:
         - Assets
       summary: Download asset file
       description: >-
-        Any asset type. Uses the same read rule as the map, token, audio and
-        document routes below (see `GET /api/assets/maps/{id}`), including
-        the grants for an asset used in a campaign the caller shares with its
-        uploader and for a document shared with the caller's campaign, so it
-        can serve a file whose metadata `GET /api/assets/{id}` refuses.
-        Served with `Content-Disposition: attachment` and the asset's
+        Any asset type. Uses the same `canReadAsset` rule as the map, token,
+        audio, document and metadata routes (see `GET /api/assets/maps/{assetId}`),
+        including the grants for an asset used in a campaign the caller shares
+        with its uploader and for a document shared with the caller's campaign.
+        An unreadable asset answers 404, not 403, matching metadata for the
+        same id. Served with `Content-Disposition: attachment` and the asset's
         original filename. The content type is chosen from the stored file's
         extension, which the upload forced to match the content. 404 also
         when the row exists but the file is missing from disk.
       operationId: downloadAsset
       security:
         - cookieAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
       responses:
         '200':
           description: File download
@@ -5900,15 +5871,6 @@ paths:
               schema:
                 type: string
                 format: binary
-        '403':
-          description: The caller may not read this asset.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              example:
-                error: Forbidden
-                message: You do not have access to this asset
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -6093,17 +6055,19 @@ paths:
                 error: Not Found
                 message: Document not found
 
-  /api/assets/documents/{id}:
+  /api/assets/documents/{assetId}:
+    parameters:
+      - $ref: '#/components/parameters/AssetId'
     get:
       tags:
         - Documents
       summary: Serve a document for reading inline
       description: >-
-        A PDF, plain text or Markdown file. Who may read it follows the
-        asset's scope: a GLOBAL document anyone signed in, a CAMPAIGN one
-        that campaign's members, a USER (personal) one its uploader. Beyond
-        that, a document shared with a campaign is readable by that
-        campaign's members, and a platform admin may read any. Anyone else
+        A PDF, plain text or Markdown file. Who may read it is `canReadAsset`,
+        the same rule as the other asset reads: a GLOBAL document anyone signed
+        in, a CAMPAIGN one that campaign's members, a USER (personal) one its
+        uploader. Beyond that, a document shared with a campaign is readable by
+        that campaign's members, and a platform admin may read any. Anyone else
         gets 404, not 403, so the reply never confirms a private id exists;
         404 also when the file is missing from disk. The content type is
         decided from the file's validated extension, never from what was
@@ -6122,13 +6086,6 @@ paths:
       operationId: serveDocument
       security:
         - cookieAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
       responses:
         '200':
           description: 'The document, inline (`Content-Disposition: inline`)'
@@ -6147,14 +6104,16 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /api/assets/maps/{id}:
+  /api/assets/maps/{assetId}:
+    parameters:
+      - $ref: '#/components/parameters/AssetId'
     get:
       tags:
         - Assets
       summary: Serve map image
       description: |
-        Serves a MAP asset's file. This is the read rule the token, audio,
-        document and download routes share:
+        Serves a MAP asset's file. This is the `canReadAsset` rule the metadata,
+        token, audio, document and download routes share:
 
         - a platform admin may read any asset;
         - GLOBAL: anyone signed in;
@@ -6172,7 +6131,9 @@ paths:
         member counts only the one the campaign is currently showing. A document
         shared with one of the caller's campaigns is also readable.
 
-        A refused read answers 403 here and on the token route. The file is
+        A refused read answers 404, not 403, here and on the token, audio,
+        document, download and metadata routes, so the reply never confirms a
+        private id exists. The file is
         served with its content type chosen from its stored extension
         (`image/png`, `image/jpeg`, `image/webp`, `image/gif`, or
         `application/pdf`, for a map stored as a PDF before PDFs were refused
@@ -6183,13 +6144,6 @@ paths:
       operationId: serveMap
       security:
         - cookieAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
       responses:
         '200':
           description: Map image
@@ -6204,40 +6158,22 @@ paths:
                 format: binary
         '304':
           description: Unchanged since the ETag in `If-None-Match`. No body.
-        '403':
-          description: The caller may not read this asset.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              example:
-                error: Forbidden
-                message: You do not have access to this asset
         '404':
-          description: No MAP asset with this id, or its file is missing from disk.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/NotFound'
 
-  /api/assets/tokens/{id}:
+  /api/assets/tokens/{assetId}:
+    parameters:
+      - $ref: '#/components/parameters/AssetId'
     get:
       tags:
         - Assets
       summary: Serve token image
       description: >-
-        Serves a TOKEN asset's file, with the same read rule, 403, content
-        types, caching and 304 as `GET /api/assets/maps/{id}`.
+        Serves a TOKEN asset's file, with the same `canReadAsset` rule, 404,
+        content types, caching and 304 as `GET /api/assets/maps/{assetId}`.
       operationId: serveToken
       security:
         - cookieAuth: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
       responses:
         '200':
           description: Token image
@@ -6248,30 +6184,19 @@ paths:
                 format: binary
         '304':
           description: Unchanged since the ETag in `If-None-Match`. No body.
-        '403':
-          description: The caller may not read this asset.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-              example:
-                error: Forbidden
-                message: You do not have access to this asset
         '404':
-          description: No TOKEN asset with this id, or its file is missing from disk.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/NotFound'
 
-  /api/assets/audio/{id}:
+  /api/assets/audio/{assetId}:
+    parameters:
+      - $ref: '#/components/parameters/AssetId'
     get:
       tags:
         - Assets
       summary: Stream audio file
       description: |
         Stream audio with HTTP range request support. Read access is the
-        shared asset rule described under `GET /api/assets/maps/{id}`: a
+        shared `canReadAsset` rule described under `GET /api/assets/maps/{assetId}`: a
         platform admin any track, GLOBAL anyone signed in, CAMPAIGN that
         campaign's members, USER its uploader. For audio the usual "in use"
         grant is a campaign's atmosphere track, since each player's browser
@@ -6301,12 +6226,6 @@ paths:
       security:
         - cookieAuth: []
       parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
         - name: Range
           in: header
           required: false
@@ -11356,7 +11275,7 @@ components:
         format: uuid
       description: Character UUID
     AssetId:
-      name: id
+      name: assetId
       in: path
       required: true
       schema:
@@ -11684,7 +11603,7 @@ components:
         id:
           type: string
           format: uuid
-          description: The asset id, used with GET /api/assets/documents/{id}
+          description: The asset id, used with GET /api/assets/documents/{assetId}
         name:
           type: string
         description:
