@@ -151,7 +151,10 @@ question, and getting it wrong invents numbers the designers never intended.
   — proficiency rank, item bonus, Dex cap, key attribute — so Armor Class, Class
   DC and initiative *are* derivable, and `rules/pathfinder2e.ts` derives them.
   The distinction is where the number comes from: a creature's is printed by
-  Paizo, a character's is built from their own sheet.
+  Paizo, a character's is built from their own sheet. Character derived values
+  are compatibility caches on disk and are projected at read (view, REST,
+  character.updated, initiative) when inputs exist; current resources are never
+  overwritten; out-of-bounds projections are clamped (Mythos 100 → sanity max 0).
 - **Call of Cthulhu 7e and Shadowrun 6e have no equivalent.** Percentile and
   dice-pool systems have neither ability modifiers nor a proficiency bonus, so
   there is nothing to derive and nothing sensible to offer from this data.

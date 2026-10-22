@@ -840,6 +840,37 @@ describe('initiative', () => {
       dm.disconnect();
     });
 
+    it('projects a stale stored Perception bonus rather than rolling the cache', async () => {
+      // Level 1, Wisdom +4, expert Perception, itemBonus 0 → 4 + (1+4) + 0 = 9.
+      // Stored bonus is 0, as if the cache lagged the inputs. The character is
+      // loaded from Prisma and rolled over the socket so this is the live-table
+      // path, not the unit helper. A player sending 1d20+0 (the stale cache)
+      // must not win: the server derives 1d20+9 from the sheet.
+      await linkCharacter('PATHFINDER_2E', {
+        level: 1,
+        attributes: { wisdom: { score: 18, modifier: 4 } },
+        perception: { proficiencyRank: 'expert', itemBonus: 0, bonus: 0, senses: [] },
+        initiative: { usedStat: 'perception', bonus: 0 },
+      });
+      const dm = await server.connectAndAuth(dmCookie, campaignId);
+      const player = await server.connectAndAuth(player1Cookie, campaignId);
+
+      const added = waitForEvent<InitiativeState>(player, 'initiative.state');
+      dm.emit('initiative.add', { tokenId: PLAYER_TOKEN_ID, mapId });
+      await added;
+
+      const logged = waitForEvent<{ expression: string }>(dm, 'dice.rolled');
+      const rolled = waitForEvent<InitiativeState>(player, 'initiative.state');
+      player.emit('initiative.roll', { tokenId: PLAYER_TOKEN_ID, mapId, expression: '1d20+0' });
+      expect((await logged).expression).toBe('1d20+9');
+      const entry = (await rolled).combatants.find((c) => c.tokenId === PLAYER_TOKEN_ID);
+      expect(entry?.initiative).toBeGreaterThanOrEqual(10);
+      expect(entry?.initiative).toBeLessThanOrEqual(29);
+
+      dm.disconnect();
+      player.disconnect();
+    });
+
     it('falls back to a plain d20 for a token with nothing to derive from', async () => {
       const dm = await server.connectAndAuth(dmCookie, campaignId);
 

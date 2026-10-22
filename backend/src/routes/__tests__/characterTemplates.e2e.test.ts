@@ -685,6 +685,51 @@ describe('Character template routes', () => {
       expect(res.body.data).not.toHaveProperty('notes');
     });
 
+    it('creates a Character from a published Call of Cthulhu template without Keeper\'s Notes', async () => {
+      const published = await createTemplate(authorAgent, {
+        name: 'Use From Template',
+        gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+        data: { ...cocSheet(), notes: KEEPER_SECRET },
+      });
+      expect(published.status).toBe(201);
+      expect(published.body.data).not.toHaveProperty('notes');
+
+      const one = await otherAgent.get(`/api/character-templates/${published.body.id}`);
+      expect(one.status).toBe(200);
+      expect(one.body.data).not.toHaveProperty('notes');
+
+      const res = await otherAgent.post('/api/characters').send({
+        name: 'From Template',
+        gameSystem: one.body.gameSystem,
+        data: one.body.data,
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.character.data).not.toHaveProperty('notes');
+      expect(JSON.stringify(res.body)).not.toContain(KEEPER_SECRET);
+
+      const stored = await prisma.character.findUniqueOrThrow({ where: { id: res.body.character.id } });
+      expect(stored.data).not.toHaveProperty('notes');
+      nestedNotesRemain(stored.data as Record<string, unknown>);
+
+      await prisma.character.delete({ where: { id: res.body.character.id } });
+    });
+
+    it('drops notes a non-Keeper sends when creating a Character from template data', async () => {
+      const res = await otherAgent.post('/api/characters').send({
+        name: 'Sneaky Notes',
+        gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+        data: { ...cocSheet(), notes: KEEPER_SECRET },
+      });
+      expect(res.status).toBe(201);
+      expect(res.body.character.data).not.toHaveProperty('notes');
+
+      const stored = await prisma.character.findUniqueOrThrow({ where: { id: res.body.character.id } });
+      expect(stored.data).not.toHaveProperty('notes');
+      nestedNotesRemain(stored.data as Record<string, unknown>);
+
+      await prisma.character.delete({ where: { id: res.body.character.id } });
+    });
+
     it('creates a Character from a leaked template without copying notes', async () => {
       const leaked = await prisma.characterTemplate.create({
         data: {
