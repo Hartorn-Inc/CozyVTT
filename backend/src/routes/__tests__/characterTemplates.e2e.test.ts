@@ -565,6 +565,32 @@ describe('Character template routes', () => {
       nestedNotesRemain(stored.data as Record<string, unknown>);
     });
 
+    it('strips stored notes on a metadata-only PUT', async () => {
+      const leaked = await prisma.characterTemplate.create({
+        data: {
+          name: 'Leaked Notes',
+          gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+          data: toJson({ ...cocSheet(), notes: KEEPER_SECRET }),
+          createdById: authorId,
+        },
+      });
+
+      const res = await authorAgent.put(`/api/character-templates/${leaked.id}`).send({
+        name: 'Renamed Only',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.name).toBe('Renamed Only');
+      expect(res.body.data).not.toHaveProperty('notes');
+      expect(JSON.stringify(res.body)).not.toContain(KEEPER_SECRET);
+      nestedNotesRemain(res.body.data);
+
+      const stored = await prisma.characterTemplate.findUniqueOrThrow({ where: { id: leaked.id } });
+      expect(stored.name).toBe('Renamed Only');
+      expect(stored.data).not.toHaveProperty('notes');
+      nestedNotesRemain(stored.data as Record<string, unknown>);
+    });
+
     it('omits stored notes from GET, even for the author', async () => {
       const leaked = await prisma.characterTemplate.create({
         data: {

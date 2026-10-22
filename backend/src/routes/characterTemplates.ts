@@ -364,6 +364,10 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       }
       // Same strip as publish: a present notes key is dropped, not refused.
       sheetData = sheetWithoutKeeperNotes(existing.gameSystem, sheet.data);
+    } else {
+      // A metadata-only update still strips stored Keeper's Notes so a legacy
+      // row cannot keep the key after any PUT.
+      sheetData = sheetWithoutKeeperNotes(existing.gameSystem, existing.data);
     }
 
     let imageUrl: string | null | undefined;
@@ -380,7 +384,7 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       data: {
         ...(data.name !== undefined && { name: data.name }),
         ...(data.description !== undefined && { description: data.description ?? null }),
-        ...(sheetData !== undefined && { data: toJson(sheetData) }),
+        data: toJson(sheetData),
         ...(imageUrl !== undefined && { tokenImageUrl: imageUrl }),
       },
       include: { createdBy: { select: AUTHOR_SELECT } },

@@ -912,7 +912,8 @@ Accepts `name`, `description`, `tokenImageUrl`, `data`. An empty body returns
 `400`. `gameSystem` is fixed at creation, as it is for a character — the sheet
 data is only meaningful against the system it was built for. On a Call of
 Cthulhu sheet, Keeper's Notes are stripped on update the same way as on
-publish.
+publish; a name-, description-, or image-only save also drops stored
+Keeper's Notes.
 
 ### `DELETE /api/character-templates/:id`
 
