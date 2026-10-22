@@ -366,7 +366,7 @@ graph LR
 
 ## Database Schema
 
-The full Prisma schema is at `backend/prisma/schema.prisma`, and the Prisma command-line tools (`generate`, `migrate deploy`, `db push`) take their settings from `backend/prisma.config.ts`. `prisma generate` writes the client (the `prisma-client-js` generator) into `node_modules/.prisma`: `npm run build` runs it before compiling, and the production image copies what it wrote. Since Prisma 7 the client has no connection engine of its own: it runs its queries through the `pg` driver, the one the session store uses through a pool of its own, by way of `@prisma/adapter-pg`. `backend/src/config/prismaClient.ts` makes every client the backend, its scripts and its tests use, and reads a `DATABASE_URL` written for Prisma into pg's terms: `?schema=` names the schema queries are qualified with and becomes the connection's `search_path` (raw queries name their tables unqualified), `?connection_limit=` becomes the pool size (pg's default otherwise, ten), and a new connection may take five seconds. Below is an entity relationship diagram of every model, with the fields that matter here. A test checks it against the schema, so a model, field or relation that does not exist cannot stay in it. The login sessions are `LoginSession`, the `session` table that `connect-pg-simple`, and `services/sessionStore.ts` with raw queries, read and write themselves (see Authentication below). It is in the schema so the migrations make it and `prisma db push` keeps it, and `@@ignore` leaves it out of the Prisma client. The `Session` below is a game session.
+The full Prisma schema is at `backend/prisma/schema.prisma`, and the Prisma command-line tools (`generate`, `migrate deploy`, `db push`) take their settings from `backend/prisma.config.ts`. `prisma generate` writes the client (the `prisma-client-js` generator) into `node_modules/.prisma`: `npm run build` runs it before compiling, and the production image copies what it wrote. Since Prisma 7 the client has no connection engine of its own: it runs its queries through the `pg` driver, the one the session store uses through a pool of its own, by way of `@prisma/adapter-pg`. `backend/src/config/prismaClient.ts` makes every client the backend, its scripts and its tests use, and reads a `DATABASE_URL` written for Prisma into pg's terms: `?schema=` names the schema queries are qualified with and becomes the connection's `search_path` (raw queries name their tables unqualified), `?connection_limit=` becomes the pool size (pg's default otherwise, ten), and a new connection may take five seconds. Below is an entity relationship diagram of every model, with the fields that matter here. A test checks it against the schema, so a model, field or relation that does not exist cannot stay in it. The login sessions are `LoginSession` and `RevokedLoginSession` (both `@@ignore`). `LoginSession` is the `session` table that `connect-pg-simple`, and `services/sessionStore.ts` with raw queries, read and write themselves (see Authentication below). It is in the schema so the migrations make it and `prisma db push` keeps it. Revoked rows are named in the same transaction as DELETE FROM session so a later store UPSERT cannot recreate that sid. The `Session` below is a game session.
 
 ```mermaid
 erDiagram
@@ -591,6 +591,11 @@ erDiagram
         datetime expire
     }
 
+    RevokedLoginSession {
+        string sid PK
+        datetime expiresAt
+    }
+
     User ||--o{ Campaign : "owns"
     User ||--o{ CampaignMembership : "belongs to"
     Campaign ||--o{ CampaignMembership : "has"
@@ -646,7 +651,7 @@ erDiagram
 
 ### Session Authentication
 
-CozyVTT uses **express-session** with **connect-pg-simple** to store sessions in PostgreSQL, through a `pg` pool of its own (`sessionPool` in `config/session.ts`), apart from the Prisma client's. The session pool is built from `databaseConnectionSettings` so login sessions live in the configured schema with Prisma's raw session SQL. This means sessions survive server restarts. Login-session revocation in this cycle supports one backend process.
+CozyVTT uses **express-session** with **connect-pg-simple** to store sessions in PostgreSQL, through a `pg` pool of its own (`sessionPool` in `config/session.ts`), apart from the Prisma client's. The session pool is built from `databaseConnectionSettings` so login sessions live in the configured schema with Prisma's raw session SQL. This means sessions survive server restarts. Login-session revocation in this cycle supports one backend process. Revocation writes `revoked_login_session` in the same transaction as DELETE, and a trigger skips store UPSERTs for those sids.
 
 ```mermaid
 sequenceDiagram

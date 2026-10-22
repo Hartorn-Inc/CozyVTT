@@ -13,6 +13,8 @@ const queryRaw = jest.fn();
 jest.mock('../../config/database', () => ({
   prisma: {
     $queryRaw: (...args: unknown[]) => queryRaw(...args),
+    $transaction: (work: (tx: { $queryRaw: (...args: unknown[]) => unknown }) => Promise<unknown>) =>
+      work({ $queryRaw: (...args: unknown[]) => queryRaw(...args) }),
   },
 }));
 jest.mock('../../utils/logger', () => ({ __esModule: true, default: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() } }));
@@ -61,12 +63,11 @@ it('blocks the deleted sids and not the session it is asked to keep', async () =
   expect(isLoginSessionBlocked('kept-sid')).toBe(false);
 });
 
-it('unblocks those sids when it fails after RETURNING', async () => {
-  queryRaw.mockResolvedValue([{ sid: 'gone-then-rolled-back' }]);
-  blockLoginSessions.mockImplementation((sids: readonly string[]) => {
-    revoked.blockLoginSessions(sids);
-    throw new Error('could not keep the block');
-  });
+it('does not leave the sid blocked when insert fails after DELETE', async () => {
+  queryRaw
+    .mockResolvedValueOnce([{ sid: 'gone-then-rolled-back' }])
+    .mockRejectedValueOnce(new Error('could not keep the revoked row'));
   await expect(destroyUserLoginSessions('u1')).rejects.toBeInstanceOf(LoginSessionStoreUnavailable);
   expect(isLoginSessionBlocked('gone-then-rolled-back')).toBe(false);
+  expect(blockLoginSessions).not.toHaveBeenCalled();
 });

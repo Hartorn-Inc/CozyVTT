@@ -73,7 +73,7 @@ describeOnPosix('restore.sh', () => {
     const text = await fs.readFile(loaded, 'utf8');
     expect(text).toMatch(/^u1$/m);
     expect(text.trimEnd().split('\n').pop()).toMatch(
-      /FOR r IN SELECT n\.nspname AS s FROM pg_class c JOIN pg_namespace n ON n\.oid = c\.relnamespace WHERE c\.relname = 'session' AND c\.relkind = 'r' LOOP EXECUTE format\('DELETE FROM %I\.session', r\.s\); END LOOP/
+      /to_regclass\('public\.session'\)/
     );
   });
 

@@ -9,8 +9,12 @@ import session from 'express-session';
 import request from 'supertest';
 import { createApp } from '../../app';
 import { sessionOptions } from '../sessionOptions';
-import { wrapPgSessionStore, sessionPool } from '../session';
+import { wrapPgSessionStore, sessionPool, loginSessionWriteBarrier } from '../session';
 import { blockLoginSessions, unblockLoginSessions } from '../../services/revokedLoginSessions';
+
+afterEach(() => {
+  delete loginSessionWriteBarrier.wait;
+});
 
 afterAll(() => sessionPool.end());
 
@@ -108,6 +112,27 @@ describe('wrapPgSessionStore blocked sids', () => {
     });
     expect(done).toBe(true);
     expect(inner.setCalls).toBe(0);
+  });
+
+  it('still calls inner set after the write barrier, even if the sid is blocked meanwhile', async () => {
+    const sid = `barrier-set-${Date.now()}`;
+    let release!: () => void;
+    loginSessionWriteBarrier.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inner = new FakeStore();
+    const store = wrapPgSessionStore(inner);
+    const done = new Promise<void>((resolve, reject) => {
+      store.set(sid, cookieOf({ userId: 'u1' }), (err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+    expect(inner.setCalls).toBe(0);
+    blockLoginSessions([sid]);
+    release();
+    await done;
+    expect(inner.setCalls).toBe(1);
   });
 
   it('lets set write again after unblockLoginSessions', () => {

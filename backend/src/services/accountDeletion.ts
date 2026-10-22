@@ -123,8 +123,9 @@ export async function deleteAccount(userId: string): Promise<AccountDeletion> {
     // Their sign-ins end with the row, in the same transaction: the guards
     // read the session, so a deleted admin's other device would otherwise
     // keep the role until the session expired. Destroy last so a later
-    // failure (the user delete) cannot roll the DELETE back while the
-    // in-memory block stays. Sessions are not FK-bound to User.
+    // failure cannot leave the account deleted while login sessions remain;
+    // sessions are not FK-bound to User. Durable revoke and the trigger skip
+    // a later store UPSERT.
     await tx.user.delete({ where: { id: userId } });
     await destroyUserLoginSessions(userId, undefined, tx);
     return { deleted: true, campaignIds, personal };

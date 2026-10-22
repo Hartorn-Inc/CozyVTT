@@ -15,7 +15,7 @@ import request from 'supertest';
 import { generateSync } from 'otplib';
 import type session from 'express-session';
 import { createApp } from '../../app';
-import { sessionConfig, sessionPool } from '../../config/session';
+import { loginSessionRevocationGuard, loginSessionWriteBarrier, sessionConfig, sessionPool } from '../../config/session';
 import { destroyUserLoginSessions } from '../../services/sessionStore';
 import {
   prisma,
@@ -88,6 +88,14 @@ async function signInWithBackup(email: string, backupCode: string) {
   expect(done.status).toBe(200);
   return agent;
 }
+
+beforeAll(async () => {
+  await loginSessionRevocationGuard;
+});
+
+afterEach(() => {
+  delete loginSessionWriteBarrier.wait;
+});
 
 afterAll(async () => {
   await cleanupUsers(created);
@@ -234,6 +242,31 @@ describe('an in-flight store.set after destroy', () => {
     await storeSet(sid, sess);
 
     expect((await agent.get('/api/auth/me')).status).toBe(401);
+  });
+
+  it('does not recreate the row when set passed the in-memory check before destroy committed', async () => {
+    const user = await createTestUser({ email: `pg-store-race-${stamp}@test.cozyvtt.local` });
+    created.push(user.id);
+    const agent = request.agent(app);
+    const login = await agent.post('/api/auth/login').send({ email: user.email, password: TEST_PASSWORD });
+    expect(login.status).toBe(200);
+    const sid = sidOf(login);
+    const sess = await storeGet(sid);
+    expect(sess?.userId).toBe(user.id);
+    if (!sess) throw new Error('expected a stored session');
+
+    let release!: () => void;
+    loginSessionWriteBarrier.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const pending = storeSet(sid, sess);
+    expect(await destroyUserLoginSessions(user.id)).toBe(1);
+    release();
+    await pending;
+
+    expect((await agent.get('/api/auth/me')).status).toBe(401);
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${sid}`;
+    expect(rows).toEqual([]);
   });
 });
 

@@ -32,23 +32,54 @@ import { once } from 'events';
 export const RESTORE_PREAMBLE = ['DROP SCHEMA public CASCADE;', 'CREATE SCHEMA public;'];
 
 /**
- * Statements run after the dump, in the same transaction.
- *
- * Login sessions live in `session` in whichever schema `DATABASE_URL`
- * `?schema=` names (`public` unless it says otherwise), beside the app's
- * tables. New backups leave those rows out in every schema (see
- * buildDumpArgs), but every backup made before that carries them — old
- * ones in `public.session`, newer ones in the configured schema — and a
- * restore would bring back each sign-in that had not yet expired, ones
- * ended since by a password change or an account removal included. So a
- * restore ends by emptying every schema's `session` table; a very old
- * backup may have none. The restore script (backend/scripts/restore.sh)
- * appends the same statement, and keepInStep.test.ts fails if the two
- * differ.
+ * Schema names backup.sh / restore.sh will act on. Anything else (pg_dump
+ * wildcards, hyphens, quotes) is treated as public so dump excludes and the
+ * trailer never name another schema, and never scan pg_namespace.
  */
-export const RESTORE_TRAILER = [
-  "DO $$ DECLARE r record; BEGIN FOR r IN SELECT n.nspname AS s FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'session' AND c.relkind = 'r' LOOP EXECUTE format('DELETE FROM %I.session', r.s); END LOOP; END $$;",
-];
+const APP_SCHEMA = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * Schema Prisma (and the session pool) use, from `?schema=` on DATABASE_URL.
+ * Parse failure, a missing parameter, and a name the scripts would refuse
+ * are `public`. Kept here so restore code does not load prismaClient.ts
+ * (and a database pool) to dump or restore.
+ */
+export function schemaFromDatabaseUrl(dbUrl: string): string {
+  try {
+    const schema = new URL(dbUrl).searchParams.get('schema') || 'public';
+    return APP_SCHEMA.test(schema) ? schema : 'public';
+  } catch {
+    return 'public';
+  }
+}
+
+const PUBLIC_LOGIN_SESSION_TRAILER =
+  "DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; IF to_regclass('public.revoked_login_session') IS NOT NULL THEN DELETE FROM public.revoked_login_session; END IF; END $$;";
+
+/**
+ * SQL that empties login-session tables after a dump, in the same transaction.
+ *
+ * Login sessions live in the configured app schema (with Prisma), plus leftover
+ * `public.session` on instances that used to write there. Restore empties those
+ * two places only — never a catalog scan of other schemas. The schema name is
+ * interpolated as a SQL string literal into `format('%I', …)`, never as a raw
+ * identifier. keepInStep.test.ts holds restore.sh to the public default.
+ */
+export function loginSessionRestoreTrailer(schema: string): string[] {
+  if (schema === 'public' || !APP_SCHEMA.test(schema)) return [PUBLIC_LOGIN_SESSION_TRAILER];
+  const literal = "'" + schema.replace(/'/g, "''") + "'";
+  return [
+    PUBLIC_LOGIN_SESSION_TRAILER,
+    `DO $$ BEGIN IF to_regclass(format('%I.session', ${literal})) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.session', ${literal}); END IF; IF to_regclass(format('%I.revoked_login_session', ${literal})) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.revoked_login_session', ${literal}); END IF; END $$;`,
+  ];
+}
+
+/**
+ * Default trailer when DATABASE_URL has no `?schema=`. restore.sh's heredoc
+ * matches this so a command-line restore empties the same public tables as
+ * the dashboard when the instance is on public.
+ */
+export const RESTORE_TRAILER = loginSessionRestoreTrailer('public');
 
 /**
  * Settings a newer pg_dump writes that an older server rejects.
@@ -260,7 +291,11 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
       }
     }
     if (!endedWithNewline) await write('\n');
-    for (const line of RESTORE_TRAILER) await write(line + '\n');
+    // Dashboard restore uses the instance DATABASE_URL, so a custom ?schema=
+    // is emptied as well as leftover public.session.
+    for (const line of loginSessionRestoreTrailer(schemaFromDatabaseUrl(process.env.DATABASE_URL ?? ''))) {
+      await write(line + '\n');
+    }
     if (failure.error) throw failure.error;
     out.end();
     // Until the file is closed, not only written: some filesystems (NFS over
@@ -327,7 +362,8 @@ export function pgConnection(dbUrl: string): { dbname: string; env: Record<strin
 }
 
 export function buildDumpArgs(dbUrl: string, sqlPath: string): string[] {
-  return [
+  const schema = schemaFromDatabaseUrl(dbUrl);
+  const args = [
     '--dbname',
     pgConnection(dbUrl).dbname,
     '--file',
@@ -336,11 +372,19 @@ export function buildDumpArgs(dbUrl: string, sqlPath: string): string[] {
     '--if-exists',
     '--no-owner',
     '--no-privileges',
-    // The login sessions in every schema: a backup that carried them
-    // would sign every sign-in of the day back in when restored (see
-    // RESTORE_TRAILER). `*.session` covers `public` and `?schema=`.
-    '--exclude-table-data=*.session',
+    // The login sessions: a backup that carried them would sign every
+    // sign-in of the day back in when restored (see RESTORE_TRAILER).
+    '--exclude-table-data=public.session',
+    '--exclude-table-data=public.revoked_login_session',
   ];
+  // Configured-schema tables as well, when the instance is not on public.
+  // Schema names in tests and production are ^[A-Za-z_][A-Za-z0-9_]*$; this
+  // does not look up pg_namespace.
+  if (schema !== 'public') {
+    args.push(`--exclude-table-data=${schema}.session`);
+    args.push(`--exclude-table-data=${schema}.revoked_login_session`);
+  }
+  return args;
 }
 
 /** Arguments for restoring `sqlPath` into the database at `dbUrl`. */

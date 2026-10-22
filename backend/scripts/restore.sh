@@ -56,10 +56,12 @@ fi
 # database user of the instance the backup came from (SET transaction_timeout,
 # ALTER ... OWNER TO, GRANT, REVOKE) and without the dump's own \restrict
 # lines. Table rows (COPY blocks) are copied through untouched. The file ends
-# by emptying the login sessions, in the same transaction as the load: every
-# backup made before sessions were left out of backups carries them, and
-# restoring one would sign back in whoever had not yet expired, including
-# sign-ins ended since by a password change or a removed account.
+# by emptying public.session and public.revoked_login_session (and the same
+# tables in DATABASE_URL's ?schema= when that is not public), in the same
+# transaction as the load: every backup made before those rows were left out
+# of backups carries them, and restoring one would sign back in whoever had
+# not yet expired, including sign-ins ended since by a password change or a
+# removed account. Only those schemas; never every schema.
 #
 # Outside its rows, the dump must end with pg_dump's closing line, create the
 # User and _prisma_migrations tables, and hold nothing but SQL: a psql
@@ -77,12 +79,49 @@ if ! PREPARED=$(mktemp "$SCRATCH/cozyvtt-restore.XXXXXX"); then
 fi
 trap 'rm -f "$PREPARED"' EXIT
 RESTRICT_KEY=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
-# The same statement as RESTORE_TRAILER in backend/src/utils/pgRestore.ts;
-# keepInStep.test.ts fails if they differ. A very old backup has no session table.
+# Login-session tables follow DATABASE_URL's ?schema=, with public as the
+# default and as the legacy location. Missing or empty is public. Only a
+# simple identifier is used as a SQL literal; anything else is treated as
+# public so a tenant or extension table named session is never touched.
+# Never FROM pg_namespace, never every schema.
+APP_SCHEMA=public
+if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
+  _QS="${DATABASE_URL#*\?}"
+  _QS="${_QS%%#*}"
+  while [[ -n "$_QS" ]]; do
+    _PAIR="${_QS%%&*}"
+    if [[ "$_QS" == *"&"* ]]; then
+      _QS="${_QS#*&}"
+    else
+      _QS=""
+    fi
+    if [[ "${_PAIR%%=*}" == "schema" ]]; then
+      _VAL=""
+      [[ "$_PAIR" == *=* ]] && _VAL="${_PAIR#*=}"
+      if [[ -n "$_VAL" && "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        APP_SCHEMA="$_VAL"
+      fi
+      break
+    fi
+  done
+  unset _QS _PAIR _VAL
+fi
+# The public-schema statement matches RESTORE_TRAILER in
+# backend/src/utils/pgRestore.ts (loginSessionRestoreTrailer('public'));
+# keepInStep.test.ts fails if the heredoc differs. A very old backup has no
+# session table. A DATABASE_URL ?schema= other than public adds a second
+# statement for that schema only, with the name as a SQL string literal
+# passed to format('%I') — never concatenated as a raw identifier.
 RESTORE_TRAILER=$(cat <<'SQL'
-DO $$ DECLARE r record; BEGIN FOR r IN SELECT n.nspname AS s FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'session' AND c.relkind = 'r' LOOP EXECUTE format('DELETE FROM %I.session', r.s); END LOOP; END $$;
+DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; IF to_regclass('public.revoked_login_session') IS NOT NULL THEN DELETE FROM public.revoked_login_session; END IF; END $$;
 SQL
 )
+if [[ "$APP_SCHEMA" != "public" ]]; then
+  _SCHEMA_SQL="${APP_SCHEMA//\'/\'\'}"
+  RESTORE_TRAILER="${RESTORE_TRAILER}
+DO \$\$ BEGIN IF to_regclass(format('%I.session', '${_SCHEMA_SQL}')) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.session', '${_SCHEMA_SQL}'); END IF; IF to_regclass(format('%I.revoked_login_session', '${_SCHEMA_SQL}')) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.revoked_login_session', '${_SCHEMA_SQL}'); END IF; END \$\$;"
+  unset _SCHEMA_SQL
+fi
 
 echo "🔍 Checking $BACKUP_FILE..."
 set +e

@@ -15,7 +15,10 @@
 
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
+import { Pool } from 'pg';
 import { prisma } from '../../config/database';
+import { ensureLoginSessionRevocationGuard } from '../../config/loginSessionRevocationGuard';
+import { databaseConnectionSettings } from '../../config/prismaClient';
 import { destroyUserLoginSessions } from '../sessionStore';
 import { isLoginSessionBlocked } from '../revokedLoginSessions';
 
@@ -36,8 +39,29 @@ async function exists(sid: string): Promise<boolean> {
   return rows.length === 1;
 }
 
+async function revokedExists(sid: string): Promise<boolean> {
+  const rows = await prisma.$queryRaw<{ sid: string }[]>`
+    SELECT sid FROM revoked_login_session WHERE sid = ${sid}
+  `;
+  return rows.length === 1;
+}
+
+beforeAll(async () => {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error('This test needs DATABASE_URL');
+  const pool = new Pool(databaseConnectionSettings(url).pool);
+  try {
+    await ensureLoginSessionRevocationGuard(pool);
+  } finally {
+    await pool.end();
+  }
+});
+
 afterAll(async () => {
-  await prisma.$executeRaw`DELETE FROM session WHERE sid IN (${Prisma.join(mine)})`;
+  if (mine.length > 0) {
+    await prisma.$executeRaw`DELETE FROM session WHERE sid IN (${Prisma.join(mine)})`;
+    await prisma.$executeRaw`DELETE FROM revoked_login_session WHERE sid IN (${Prisma.join(mine)})`;
+  }
   await prisma.$disconnect();
 });
 
@@ -75,4 +99,58 @@ it('keeps the one session it is asked to keep, and still ends the pending ones',
   expect(isLoginSessionBlocked(keep)).toBe(false);
   expect(isLoginSessionBlocked(another)).toBe(true);
   expect(isLoginSessionBlocked(pending)).toBe(true);
+});
+
+it('does not leave a deleted sid in session, and names it in revoked_login_session', async () => {
+  const user = randomUUID();
+  const sid = await session({ userId: user });
+
+  expect(await destroyUserLoginSessions(user)).toBe(1);
+
+  expect(await exists(sid)).toBe(false);
+  expect(await revokedExists(sid)).toBe(true);
+  await prisma.$executeRaw`
+    INSERT INTO session (sid, sess, expire)
+    VALUES (${sid}, ${JSON.stringify({ userId: user })}::json, NOW() + interval '1 hour')
+  `;
+  expect(await exists(sid)).toBe(false);
+});
+
+it('still writes the session it is asked to keep', async () => {
+  const user = randomUUID();
+  const keep = await session({ userId: user });
+  await session({ userId: user });
+
+  expect(await destroyUserLoginSessions(user, keep)).toBe(1);
+  expect(await exists(keep)).toBe(true);
+  expect(await revokedExists(keep)).toBe(false);
+
+  await prisma.$executeRaw`
+    INSERT INTO session (sid, sess, expire)
+    VALUES (${keep}, ${JSON.stringify({ userId: user, kept: true })}::json, NOW() + interval '1 hour')
+    ON CONFLICT (sid) DO UPDATE SET sess = EXCLUDED.sess
+  `;
+  expect(await exists(keep)).toBe(true);
+});
+
+it('does not block in memory when the caller rolls the transaction back, and the sid still writes', async () => {
+  const user = randomUUID();
+  const sid = await session({ userId: user });
+
+  await expect(
+    prisma.$transaction(async (tx) => {
+      await destroyUserLoginSessions(user, undefined, tx);
+      throw new Error('rollback');
+    }),
+  ).rejects.toThrow('rollback');
+
+  expect(isLoginSessionBlocked(sid)).toBe(false);
+  expect(await exists(sid)).toBe(true);
+  expect(await revokedExists(sid)).toBe(false);
+  await prisma.$executeRaw`
+    INSERT INTO session (sid, sess, expire)
+    VALUES (${sid}, ${JSON.stringify({ userId: user, afterRollback: true })}::json, NOW() + interval '1 hour')
+    ON CONFLICT (sid) DO UPDATE SET sess = EXCLUDED.sess
+  `;
+  expect(await exists(sid)).toBe(true);
 });

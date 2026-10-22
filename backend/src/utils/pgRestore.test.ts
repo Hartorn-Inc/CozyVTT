@@ -31,7 +31,13 @@ import {
   prepareDumpForRestore,
   RESTORE_PREAMBLE,
   RESTORE_TRAILER,
+  loginSessionRestoreTrailer,
+  schemaFromDatabaseUrl,
 } from './pgRestore';
+
+/** Trailer prepareDumpForRestore appends for this process's DATABASE_URL. */
+const preparedTrailer = () =>
+  loginSessionRestoreTrailer(schemaFromDatabaseUrl(process.env.DATABASE_URL ?? ''));
 
 describe('buildRestoreArgs', () => {
   const args = buildRestoreArgs('postgresql://u:p@h:5432/db', '/tmp/backup/database.sql');
@@ -119,7 +125,70 @@ describe('buildDumpArgs', () => {
   });
 
   it('leaves the login sessions out, so a restore cannot bring back a sign-in that was ended since', () => {
-    expect(buildDumpArgs('postgresql://x', '/tmp/db.sql')).toContain('--exclude-table-data=*.session');
+    const args = buildDumpArgs('postgresql://x', '/tmp/db.sql');
+    expect(args).toContain('--exclude-table-data=public.session');
+    expect(args).toContain('--exclude-table-data=public.revoked_login_session');
+  });
+
+  it('excludes public and tenant login-session tables when DATABASE_URL names a schema, without scanning pg_namespace', () => {
+    const args = buildDumpArgs('postgresql://u:p@h:5432/db?schema=tenant', '/tmp/db.sql');
+    expect(args).toEqual(expect.arrayContaining([
+      '--exclude-table-data=public.session',
+      '--exclude-table-data=public.revoked_login_session',
+      '--exclude-table-data=tenant.session',
+      '--exclude-table-data=tenant.revoked_login_session',
+    ]));
+    expect(args.join(' ')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it.each(['*', 'foo-bar'])(
+    'excludes only the public login-session tables when ?schema=%s, without scanning pg_namespace',
+    (schema) => {
+      const args = buildDumpArgs(`postgresql://u:p@h:5432/db?schema=${schema}`, '/tmp/db.sql');
+      expect(args.filter((arg) => arg.startsWith('--exclude-table-data='))).toEqual([
+        '--exclude-table-data=public.session',
+        '--exclude-table-data=public.revoked_login_session',
+      ]);
+      expect(args.join(' ')).not.toMatch(/pg_namespace|nspname/);
+    },
+  );
+});
+
+describe('schemaFromDatabaseUrl', () => {
+  it('reads ?schema= and treats a missing parameter or an unreadable address as public', () => {
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=tenant')).toBe('tenant');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db')).toBe('public');
+    expect(schemaFromDatabaseUrl('not a url')).toBe('public');
+  });
+
+  it('treats a wildcard or hyphenated ?schema= as public, so dump excludes cannot carry pg_dump wildcards', () => {
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=*')).toBe('public');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=foo-bar')).toBe('public');
+  });
+});
+
+describe('loginSessionRestoreTrailer', () => {
+  it('empties only the public login-session tables when the schema is public', () => {
+    expect(loginSessionRestoreTrailer('public')).toEqual(RESTORE_TRAILER);
+    expect(loginSessionRestoreTrailer('public')).toHaveLength(1);
+    expect(loginSessionRestoreTrailer('public')[0]).toMatch(/to_regclass\('public\.session'\)/);
+    expect(loginSessionRestoreTrailer('public')[0]).toMatch(/to_regclass\('public\.revoked_login_session'\)/);
+    expect(loginSessionRestoreTrailer('public').join('\n')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it('adds a format(%I) statement for a non-public schema, naming it as a string literal', () => {
+    const lines = loginSessionRestoreTrailer('tenant');
+    expect(lines[0]).toBe(RESTORE_TRAILER[0]);
+    expect(lines[1]).toContain("format('%I.session'");
+    expect(lines[1]).toContain("format('%I.revoked_login_session'");
+    expect(lines[1]).toContain("'tenant'");
+    expect(lines.join('\n')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it.each(['*', 'foo-bar'])('keeps the public-only trailer for schema name %s', (schema) => {
+    expect(loginSessionRestoreTrailer(schema)).toEqual(RESTORE_TRAILER);
+    expect(loginSessionRestoreTrailer(schema)).toHaveLength(1);
+    expect(loginSessionRestoreTrailer(schema).join('\n')).not.toMatch(/pg_namespace|nspname/);
   });
 });
 
@@ -290,7 +359,8 @@ describe('prepareDumpForRestore', () => {
 
     const [restrict, ...rest] = (await fs.readFile(dest, 'utf8')).split('\n');
     expect(restrict).toMatch(RESTRICT_LINE);
-    expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...expectedBody(NEWER_CLIENT_DUMP), ...RESTORE_TRAILER].join('\n') + '\n');
+    expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...expectedBody(NEWER_CLIENT_DUMP), ...preparedTrailer()].join('\n') + '\n');
+    expect(rest.join('\n')).toContain("to_regclass('public.session')");
     expect(result.skipped).toEqual({ settings: ['SET transaction_timeout = 0;'], ownership: 3, privileges: 1 });
     expect(result.refused).toBeNull();
   });
@@ -331,7 +401,8 @@ describe('prepareDumpForRestore', () => {
 
     const [restrict, ...rest] = (await fs.readFile(dest, 'utf8')).split('\n');
     expect(restrict).toMatch(RESTRICT_LINE);
-    expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...clean, ...RESTORE_TRAILER].join('\n') + '\n');
+    expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...clean, ...preparedTrailer()].join('\n') + '\n');
+    expect(rest.join('\n')).toContain("to_regclass('public.session')");
     expect(result.skipped).toEqual({ settings: [], ownership: 0, privileges: 0 });
     expect(result.refused).toBeNull();
   });
@@ -506,7 +577,7 @@ describe('prepareDumpForRestore', () => {
 
     expect(refused).toBeNull();
     const out = await fs.readFile(dest);
-    const trailer = Buffer.from(RESTORE_TRAILER.join('\n') + '\n');
+    const trailer = Buffer.from(preparedTrailer().join('\n') + '\n');
     const afterPreamble = out.subarray(out.indexOf(RESTORE_PREAMBLE[1]) + RESTORE_PREAMBLE[1].length + 1, out.length - trailer.length);
     expect(afterPreamble.equals(body)).toBe(true);
     expect(out.subarray(out.length - trailer.length).equals(trailer)).toBe(true);
@@ -554,13 +625,15 @@ describe('prepareDumpForRestore', () => {
 
   it('ends by emptying the login sessions an older backup carried, inside the same transaction', () => {
     // Every backup made before sessions were left out holds the session
-    // table's rows (public, or the schema `?schema=` names), and a restore
-    // would revive each one that had not yet expired, sign-ins ended since
-    // included. The table may be missing from a very old backup, so the
-    // purge walks every schema that has a `session` table.
-    expect(RESTORE_TRAILER).toEqual([
-      "DO $$ DECLARE r record; BEGIN FOR r IN SELECT n.nspname AS s FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE c.relname = 'session' AND c.relkind = 'r' LOOP EXECUTE format('DELETE FROM %I.session', r.s); END LOOP; END $$;",
-    ]);
+    // table's rows, and a restore would revive each one that had not yet
+    // expired, sign-ins ended since included. The table may be missing from
+    // a very old backup, so the purge checks for it first.
+    expect(RESTORE_TRAILER.join('\n')).toMatch(/to_regclass\('public\.session'\)/);
+    expect(RESTORE_TRAILER.join('\n')).toMatch(/DELETE FROM public\.session/);
+    expect(preparedTrailer()[0]).toBe(RESTORE_TRAILER[0]);
+    if (!process.env.DATABASE_URL?.includes('schema=')) {
+      expect(preparedTrailer()).toEqual(RESTORE_TRAILER);
+    }
   });
 
   it('runs the schema replacement inside the same transaction as the dump', () => {

@@ -108,7 +108,7 @@
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { RESTORE_TRAILER } from '../utils/pgRestore';
+import { RESTORE_TRAILER, loginSessionRestoreTrailer } from '../utils/pgRestore';
 import { sessionSecretProblem } from '../config/sessionSecret';
 import { SOCKET_CEILINGS, type CeilingWindow } from '../websocket/shared';
 import { THEME_IDS, FONT_IDS } from '../validators/appearance';
@@ -236,10 +236,13 @@ describe('backend/scripts/restore.sh', () => {
   const script = read('backend/scripts/restore.sh').replace(/\r\n/g, '\n');
 
   it('ends the load with the statements the dashboard restore ends it with, emptying the login sessions', () => {
-    // The statements, as the script holds them.
+    // The public statements, as the script holds them. The script may then
+    // append a second line for DATABASE_URL ?schema=; with no custom schema
+    // the trailer it sends must equal loginSessionRestoreTrailer('public').
     const held = /^RESTORE_TRAILER=\$\(cat <<'SQL'\n([\s\S]*?)\nSQL\n\)$/m.exec(script);
     if (!held) throw new Error('restore.sh no longer holds RESTORE_TRAILER in a heredoc; update this test with the script');
-    expect(held[1].split('\n')).toEqual(RESTORE_TRAILER);
+    expect(held[1].split('\n')).toEqual(loginSessionRestoreTrailer('public'));
+    expect(loginSessionRestoreTrailer('public')).toEqual(RESTORE_TRAILER);
 
     // Handed to the awk step that writes the file psql loads.
     const awk = /awk -v key="\$RESTRICT_KEY" -v trailer="\$RESTORE_TRAILER" '\n([\s\S]*?)\n' > "\$PREPARED"/.exec(script);

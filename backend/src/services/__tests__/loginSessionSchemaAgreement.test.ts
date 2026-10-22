@@ -27,6 +27,7 @@ let isolated: IsolatedSchema;
 let destroyUserLoginSessions: typeof import('../sessionStore').destroyUserLoginSessions;
 let sessionPool: Pool;
 let sessionConfig: session.SessionOptions;
+let loginSessionRevocationGuard: Promise<void>;
 let db: import('@prisma/client').PrismaClient;
 
 function setSession(sid: string, sess: session.SessionData): Promise<void> {
@@ -40,11 +41,12 @@ function setSession(sid: string, sess: session.SessionData): Promise<void> {
   });
 }
 
-beforeAll(() => {
+beforeAll(async () => {
   isolated = createIsolatedSchema(SCHEMA);
   process.env.DATABASE_URL = isolated.url;
   ({ destroyUserLoginSessions } = require('../sessionStore') as typeof import('../sessionStore'));
-  ({ sessionPool, sessionConfig } = require('../../config/session') as typeof import('../../config/session'));
+  ({ sessionPool, sessionConfig, loginSessionRevocationGuard } = require('../../config/session') as typeof import('../../config/session'));
+  await loginSessionRevocationGuard;
   const { createPrismaClient } = require('../../config/prismaClient') as typeof import('../../config/prismaClient');
   db = createPrismaClient(isolated.url);
 });
@@ -98,6 +100,21 @@ it('deletes the row connect-pg-simple wrote in the isolated schema, not a public
       [sid]
     );
     expect(after.rows).toEqual([]);
+
+    await setSession(sid, {
+      cookie: {
+        originalMaxAge: 3_600_000,
+        expires: new Date(Date.now() + 3_600_000),
+        httpOnly: true,
+        path: '/',
+      },
+      userId,
+    });
+    const afterSet = await client.query<{ sid: string }>(
+      `SELECT sid FROM "${SCHEMA}".session WHERE sid = $1`,
+      [sid]
+    );
+    expect(afterSet.rows).toEqual([]);
   } finally {
     await client.end();
   }

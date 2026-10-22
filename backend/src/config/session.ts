@@ -7,6 +7,7 @@ import { sessionOptions } from './sessionOptions';
 import { sessionSecretProblem, INSECURE_SESSION_SECRETS } from './sessionSecret';
 import { databaseConnectionSettings } from './prismaClient';
 import { isLoginSessionBlocked } from '../services/revokedLoginSessions';
+import { ensureLoginSessionRevocationGuard } from './loginSessionRevocationGuard';
 
 export { rememberMeMaxAge };
 
@@ -44,11 +45,19 @@ type PgStoreTouch = (
 ) => void;
 
 /**
+ * Tests pause a store write after the in-memory check and before the inner
+ * UPSERT, so a concurrent destroy can land first. Production never sets this.
+ */
+export const loginSessionWriteBarrier: { wait?: Promise<void> } = {};
+
+/**
  * A store callback error becomes LoginSessionStoreUnavailable so a discrete
  * HTTP action that cannot load the store is 503, not 500. A missing session
  * still calls back with no error, and requireAuth answers 401. A `set` for a
  * sid destroyUserLoginSessions just deleted is a successful no-op, so an
- * in-flight request cannot UPSERT the row back.
+ * in-flight request cannot UPSERT the row back. The in-memory block is the
+ * fast path; after it has already passed, the revoked row and trigger skip
+ * the write.
  */
 export function wrapPgSessionStore<T extends session.Store>(store: T): T {
   const get = store.get.bind(store);
@@ -69,11 +78,21 @@ export function wrapPgSessionStore<T extends session.Store>(store: T): T {
       if (callback) callback();
       return;
     }
-    set(sid, sess, (err) => {
-      if (!callback) return;
-      if (err) callback(loginSessionStoreUnavailable(err));
-      else callback(err);
-    });
+    const write = () => {
+      set(sid, sess, (err) => {
+        if (!callback) return;
+        if (err) callback(loginSessionStoreUnavailable(err));
+        else callback(err);
+      });
+    };
+    const gate = loginSessionWriteBarrier.wait;
+    if (gate) {
+      void gate.then(write, (err: unknown) => {
+        if (callback) callback(loginSessionStoreUnavailable(err));
+      });
+      return;
+    }
+    write();
   };
   store.destroy = (sid, callback) => {
     destroy(sid, (err) => {
@@ -89,13 +108,25 @@ export function wrapPgSessionStore<T extends session.Store>(store: T): T {
         if (callback) callback();
         return;
       }
-      touchWithErr(sid, sess, (err) => {
-        if (!callback) return;
-        // Published touch types omit the error argument the store passes.
-        const done = callback as unknown as (error?: Error) => void;
-        if (err) done(loginSessionStoreUnavailable(err));
-        else done();
-      });
+      const write = () => {
+        touchWithErr(sid, sess, (err) => {
+          if (!callback) return;
+          // Published touch types omit the error argument the store passes.
+          const done = callback as unknown as (error?: Error) => void;
+          if (err) done(loginSessionStoreUnavailable(err));
+          else done();
+        });
+      };
+      const gate = loginSessionWriteBarrier.wait;
+      if (gate) {
+        void gate.then(write, (err: unknown) => {
+          if (!callback) return;
+          const done = callback as unknown as (error?: Error) => void;
+          done(loginSessionStoreUnavailable(err));
+        });
+        return;
+      }
+      write();
     };
   }
 
@@ -154,14 +185,27 @@ if (secretProblem) {
 
 // Session configuration: the behaviour and cookie in config/sessionOptions.ts,
 // kept in PostgreSQL and signed with SESSION_SECRET.
+const pgSessionStore = wrapPgSessionStore(new PgSession({
+  pool: sessionPool,
+  tableName: 'session',
+  createTableIfMissing: true,
+  ...(sessionDatabase ? { schemaName: sessionDatabase.schema } : {}),
+}));
+
+// After PgSession so createTableIfMissing has been requested. The guard also
+// creates session if missing, because that flag only creates the table on a
+// later store query and CREATE TRIGGER needs the table on first boot. The
+// promise is exported so tests wait until the guard exists; a failure is
+// logged so isolateModules loads with a fake address do not surface as
+// unhandled rejections.
+export const loginSessionRevocationGuard = ensureLoginSessionRevocationGuard(sessionPool);
+void loginSessionRevocationGuard.catch((err) => {
+  logger.error('Login session revocation guard could not be applied', { err });
+});
+
 export const sessionConfig: session.SessionOptions = {
   ...sessionOptions,
-  store: wrapPgSessionStore(new PgSession({
-    pool: sessionPool,
-    tableName: 'session',
-    createTableIfMissing: true,
-    ...(sessionDatabase ? { schemaName: sessionDatabase.schema } : {}),
-  })),
+  store: pgSessionStore,
   secret: SESSION_SECRET && !INSECURE_SESSION_SECRETS.includes(SESSION_SECRET)
     ? SESSION_SECRET
     : 'dev-only-insecure-secret-do-not-use-in-production',

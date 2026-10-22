@@ -106,7 +106,8 @@ describeOnPosix('backup.sh', () => {
         'cozy+admin',
         '-d',
         'cozyvtt',
-        '--exclude-table-data=*.session',
+        '--exclude-table-data=public.session',
+        '--exclude-table-data=public.revoked_login_session',
       ])
     );
   });

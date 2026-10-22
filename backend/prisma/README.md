@@ -7,12 +7,13 @@ through the `pg` driver (`src/config/prismaClient.ts`).
 
 ## Models
 
-The schema is in [`schema.prisma`](./schema.prisma) — 22 models grouped by domain:
+The schema is in [`schema.prisma`](./schema.prisma) — 23 models grouped by domain:
 
 **User & auth**
 - `User` — accounts with optional MFA, which an administrator must turn on within 7 days
 - `PasswordResetToken` — password reset links (1 hour) and admin invitation links (7 days), stored as the SHA-256 of the token (`services/passwordResetTokens.ts`)
 - `LoginSession` — the `session` table where `connect-pg-simple` keeps sign-ins. `@@ignore` leaves it out of the Prisma client; the session store and `services/sessionStore.ts` read and write it with SQL of their own, in the schema `DATABASE_URL`'s `?schema=` names (public if unset). Its migration, `20261015032229_add_login_session_table`, uses `IF NOT EXISTS`, so on an instance whose backend already made the table it changes nothing
+- `RevokedLoginSession` — sids `destroyUserLoginSessions` names in the same transaction as DELETE FROM session; `@@ignore`; trigger skips a later store UPSERT until `expiresAt`
 
 **Campaigns & membership**
 - `Campaign` — game-system, vibe settings, spirit-layer config, status

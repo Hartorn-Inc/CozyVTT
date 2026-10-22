@@ -1,5 +1,6 @@
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../config/database';
+import { rememberMeMaxAge } from '../config/sessionDurations';
 import logger from '../utils/logger';
 import { blockLoginSessions, unblockLoginSessions } from './revokedLoginSessions';
 
@@ -43,6 +44,35 @@ export function rethrowIfLoginSessionStoreUnavailable(error: unknown): void {
   throw error instanceof LoginSessionStoreUnavailable ? error : new LoginSessionStoreUnavailable();
 }
 
+async function deleteAndRevokeLoginSessions(
+  userId: string,
+  exceptSessionId: string | undefined,
+  db: Prisma.TransactionClient,
+): Promise<string[]> {
+  const rows = exceptSessionId
+    ? await db.$queryRaw<{ sid: string }[]>`
+        DELETE FROM session
+        WHERE (sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId})
+          AND sid <> ${exceptSessionId}
+        RETURNING sid
+      `
+    : await db.$queryRaw<{ sid: string }[]>`
+        DELETE FROM session
+        WHERE sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId}
+        RETURNING sid
+      `;
+  const sids = rows.map((row) => row.sid);
+  if (sids.length === 0) return sids;
+  const expiresAt = new Date(Date.now() + rememberMeMaxAge);
+  await db.$queryRaw<{ sid: string }[]>`
+    INSERT INTO revoked_login_session (sid, expires_at)
+    VALUES ${Prisma.join(sids.map((sid) => Prisma.sql`(${sid}, ${expiresAt})`))}
+    ON CONFLICT (sid) DO UPDATE SET expires_at = EXCLUDED.expires_at
+    RETURNING sid
+  `;
+  return sids;
+}
+
 /**
  * End every login session belonging to a user, the sign-ins waiting at the
  * two-factor step included.
@@ -72,27 +102,21 @@ export async function destroyUserLoginSessions(
   // so the person is told, instead of reporting success while the old
   // sessions keep their role until they expire. Store or SQL failures become
   // LoginSessionStoreUnavailable (503), not a swallowed zero.
-  // One DELETE … RETURNING so a row inserted between a SELECT and a DELETE
-  // cannot be removed without being blocked. exceptSessionId stays in the
-  // WHERE, so it is not returned and not blocked. If this helper fails after
-  // blocking, those sids are unblocked so a rolled-back DELETE can be written
-  // again.
+  // DELETE and the revoked_login_session INSERT share one transaction so a
+  // later store UPSERT cannot recreate a deleted sid. exceptSessionId stays
+  // in the WHERE, so it is not returned and not revoked. In-memory blocking
+  // waits until this helper's own transaction commits: a caller-supplied
+  // client is already in a transaction, and a rollback must not leave a
+  // block that would refuse a later write of a sid that is still in the
+  // table. If this helper fails after blocking, those sids are unblocked.
   let sids: string[] = [];
   try {
-    const rows = exceptSessionId
-      ? await db.$queryRaw<{ sid: string }[]>`
-          DELETE FROM session
-          WHERE (sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId})
-            AND sid <> ${exceptSessionId}
-          RETURNING sid
-        `
-      : await db.$queryRaw<{ sid: string }[]>`
-          DELETE FROM session
-          WHERE sess->>'userId' = ${userId} OR sess->>'mfaPendingUserId' = ${userId}
-          RETURNING sid
-        `;
-    sids = rows.map((row) => row.sid);
-    blockLoginSessions(sids);
+    if (db === prisma) {
+      sids = await prisma.$transaction((tx) => deleteAndRevokeLoginSessions(userId, exceptSessionId, tx));
+      blockLoginSessions(sids);
+    } else {
+      sids = await deleteAndRevokeLoginSessions(userId, exceptSessionId, db);
+    }
     return sids.length;
   } catch (err) {
     unblockLoginSessions(sids);

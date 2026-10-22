@@ -61,9 +61,12 @@ if [[ -z "${DATABASE_URL:-}" ]] && command -v docker >/dev/null 2>&1; then
     echo "  Output: $BACKUP_FILE"
     echo ""
 
+    # Docker Compose has no DATABASE_URL ?schema=; login-session rows live in
+    # public.session and public.revoked_login_session only.
     if docker compose exec -T "$DB_SERVICE" \
         pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges \
-          '--exclude-table-data=*.session' \
+          --exclude-table-data=public.session \
+          --exclude-table-data=public.revoked_login_session \
         | gzip > "$BACKUP_FILE"; then
       SIZE=$(du -sh "$BACKUP_FILE" | cut -f1)
       echo "✅ Backup complete: $BACKUP_FILE ($SIZE)"
@@ -115,6 +118,34 @@ else
   DB_NAME="${DB_NAME:-cozyvtt}"
 fi
 
+# Login-session tables follow DATABASE_URL's ?schema=, with public as the
+# default and as the legacy location. Missing or empty is public. Only a
+# simple identifier is used as a dump exclude; anything else is treated as
+# public so a tenant or extension table named session is never touched.
+# Never FROM pg_namespace, never every schema.
+APP_SCHEMA=public
+if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
+  _QS="${DATABASE_URL#*\?}"
+  _QS="${_QS%%#*}"
+  while [[ -n "$_QS" ]]; do
+    _PAIR="${_QS%%&*}"
+    if [[ "$_QS" == *"&"* ]]; then
+      _QS="${_QS#*&}"
+    else
+      _QS=""
+    fi
+    if [[ "${_PAIR%%=*}" == "schema" ]]; then
+      _VAL=""
+      [[ "$_PAIR" == *=* ]] && _VAL="${_PAIR#*=}"
+      if [[ -n "$_VAL" && "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+        APP_SCHEMA="$_VAL"
+      fi
+      break
+    fi
+  done
+  unset _QS _PAIR _VAL
+fi
+
 echo "================================================"
 echo "CozyVTT Database Backup"
 echo "================================================"
@@ -127,12 +158,24 @@ echo ""
 # Run pg_dump
 # --no-owner --no-privileges: the dump then restores under whatever database
 # user the instance it lands on has, instead of insisting on the name used here.
-# --exclude-table-data=*.session: login-session rows in every schema stay
-# out (the store follows ?schema=), so a restore cannot sign back in a
-# device that was signed out since the backup was made.
+# --exclude-table-data for public.session and public.revoked_login_session
+# (and the same tables in DATABASE_URL's ?schema= when that is not public):
+# login-session rows stay out, so a restore cannot sign back in a device that
+# was signed out since the backup was made. Only those schemas; never every
+# schema. Same contract as buildDumpArgs in backend/src/utils/pgRestore.ts.
+EXCLUDE_SESSION_DATA=(
+  --exclude-table-data=public.session
+  --exclude-table-data=public.revoked_login_session
+)
+if [[ "$APP_SCHEMA" != "public" ]]; then
+  EXCLUDE_SESSION_DATA+=(
+    --exclude-table-data="${APP_SCHEMA}.session"
+    --exclude-table-data="${APP_SCHEMA}.revoked_login_session"
+  )
+fi
 if PGPASSWORD="$DB_PASS" pg_dump \
     --no-owner --no-privileges \
-    '--exclude-table-data=*.session' \
+    "${EXCLUDE_SESSION_DATA[@]}" \
     -h "$DB_HOST" \
     -p "$DB_PORT" \
     -U "$DB_USER" \

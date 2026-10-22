@@ -161,6 +161,18 @@ model LoginSession {
   @@ignore
 }
 
+// Rows named by destroyUserLoginSessions in the same transaction as DELETE
+// FROM session so a later store UPSERT cannot recreate that sid until
+// expires_at.
+model RevokedLoginSession {
+  sid       String   @id @db.VarChar
+  expiresAt DateTime @map("expires_at") @db.Timestamp(6)
+
+  @@index([expiresAt], map: "IDX_revoked_login_session_expires")
+  @@map("revoked_login_session")
+  @@ignore
+}
+
 // ============================================
 // PASSWORD RESET TOKENS
 // ============================================
