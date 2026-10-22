@@ -1,7 +1,8 @@
 /**
  * The write-side parse seam for a character sheet: migrate, stamp identity,
  * validate. Projection is read-side (`projectCharacterData`) and does not run
- * here. Keeper's Notes policy belongs to the routes that call this helper.
+ * here. `sheetRecord` is the backend-only narrowing helper for a projected
+ * blob. Keeper's Notes policy belongs to the routes that call this helper.
  */
 
 import { GameSystem } from '../game-systems';
@@ -21,6 +22,11 @@ export const TYPED_SHEET_REFUSED = 'Character data does not match game system sc
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** A projected sheet blob as an indexable record, or null. */
+export function sheetRecord(data: unknown): Record<string, unknown> | null {
+  return isPlainObject(data) ? data : null;
 }
 
 function isTypedGameSystem(gameSystem: GameSystem | null | undefined): gameSystem is GameSystem {

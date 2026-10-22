@@ -17,7 +17,7 @@ import logger from '../utils/logger';
 import { cutText } from '../utils/cutText';
 import { readTokens, toJson } from '../utils/prisma-json';
 import { extractCharacterHp, sameCharacterHp } from '../utils/characterHp';
-import { prepareSheetForStorage } from '../utils/prepareSheet';
+import { prepareSheetForStorage, sheetRecord } from '../utils/prepareSheet';
 import { projectCharacterData } from '../utils/sheetProjection';
 import { withMapsLocked } from '../utils/mapTokens';
 import { systemsCompatible } from '../utils/gameSystemCompatibility';
@@ -26,13 +26,6 @@ import { getCharacterTemplate } from '../utils/character-templates';
 import { FLEXIBLE_TEMPLATES } from '../utils/character-templates/flexible-templates';
 
 const router = Router();
-
-/** A projected sheet blob as an indexable record, or null. */
-function sheetRecord(data: unknown): Record<string, unknown> | null {
-  return typeof data === 'object' && data !== null && !Array.isArray(data)
-    ? (data as Record<string, unknown>)
-    : null;
-}
 
 /**
  * The most characters one account may own, copies included. Each one can be

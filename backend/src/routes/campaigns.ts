@@ -28,6 +28,7 @@ import { inSerializableTransaction } from '../utils/serializable';
 import { toJson, readJsonObject } from '../utils/prisma-json';
 import { extractCharacterHp } from '../utils/characterHp';
 import { projectCharacterData } from '../utils/sheetProjection';
+import { sheetRecord } from '../utils/prepareSheet';
 import logger from '../utils/logger';
 import { encodeMessageCursor, decodeMessageCursor } from '../utils/messageCursor';
 import { MULTIPART_FIELD_LIMITS } from '../utils/multipartLimits';
@@ -45,13 +46,6 @@ import {
 import { randomUUID } from 'crypto';
 import path from 'path';
 import fsp from 'fs/promises';
-
-/** A projected sheet blob as an indexable record, or null. */
-function sheetRecord(data: unknown): Record<string, unknown> | null {
-  return typeof data === 'object' && data !== null && !Array.isArray(data)
-    ? (data as Record<string, unknown>)
-    : null;
-}
 
 const router = Router();
 
