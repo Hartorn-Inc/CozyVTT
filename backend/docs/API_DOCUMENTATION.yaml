@@ -10064,6 +10064,14 @@ paths:
                   createdAt:
                     type: string
                     format: date-time
+        '400':
+          description: >-
+            `Bad Request` when DATABASE_URL `?schema=` is not a simple identifier
+            (letters, digits, underscore). Nothing was changed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -11229,11 +11237,14 @@ paths:
         trust. A refused archive answers 400 with the reason and changes
         nothing. A database-only backup of the current
         database is then written to the backup list, named in the response as
-        safetyBackup, so the restore can be undone. The public schema is
-        dropped and recreated from the archive in a single transaction that
+        safetyBackup, so the restore can be undone. The instance schema from
+        DATABASE_URL (`public`, or a simple-identifier `?schema=`) is dropped
+        and the archive recreates it, in a single transaction that
         stops at the first failed statement, in psql's restricted mode, so an
         archive that cannot be applied in full leaves the existing database
-        unchanged and answers 500. The transaction_timeout setting a newer
+        unchanged and answers 500. A `?schema=` that is not a simple identifier
+        (letters, digits, underscore) answers 400 `Bad Request` and changes
+        nothing. The transaction_timeout setting a newer
         pg_dump writes is skipped, as are the archive's ownership and privilege
         statements, so it restores under this instance's database user whatever
         user the archive came from. The login sessions are not restored: new
@@ -11278,7 +11289,9 @@ paths:
         '400':
           description: >-
             `Bad Request` `No backup file provided` when the request holds no
-            file. Every other refusal is `Invalid Backup`: a filename not
+            file. `Bad Request` when DATABASE_URL `?schema=` is not a simple
+            identifier (letters, digits, underscore); nothing was changed.
+            Other refusals are `Invalid Backup`: a filename not
             ending in `.zip`; a multipart body over the field limits every
             upload route shares (more than 100 text fields, a field name over
             100 bytes, a field value over 16 KB, 16,384 bytes), a file sent

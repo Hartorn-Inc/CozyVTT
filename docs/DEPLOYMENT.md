@@ -1408,14 +1408,21 @@ the file cannot sign back in someone who was signed out after it was made. An
 instance whose `DATABASE_URL` has `?schema=` other than `public` also leaves
 that schema's `session` and `revoked_login_session` rows out of a script
 backup, and empties those same tables on restore — not every schema, and never
-a tenant or extension table that happens to be named `session`.
+a tenant or extension table that happens to be named `session`. Dump and
+restore only accept a simple identifier as the schema name (letters, digits,
+underscore). A name with a hyphen, space, quote, or wildcard is refused, not
+treated as `public`. A restore on `?schema=` other than `public` drops that
+schema, not `public`; the dump creates it again. Leftover `public.session`
+is still emptied by the trailer.
 
 To restore it, use `restore.sh` from the section above, which accepts this file
 too. Piping this file straight into `psql` does not replace anything on an
 instance that is already set up: its tables already exist, so the load fails,
 and depending on the options it either changes nothing or leaves a mix of old
-and new rows. `restore.sh` replaces the tables first, loads the backup in one
-step that is undone if any part fails, and empties the login sessions.
+and new rows. `restore.sh` replaces the app schema first (`public`, or the
+`?schema=` name when that is a simple identifier other than `public`), loads
+the backup in one step that is undone if any part fails, and empties the
+login sessions.
 
 ### Automated Daily Backups (cron)
 

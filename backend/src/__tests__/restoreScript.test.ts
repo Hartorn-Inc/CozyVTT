@@ -54,13 +54,13 @@ describeOnPosix('restore.sh', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  const run = () =>
+  const run = (databaseUrl = 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt') =>
     spawnSync('bash', [SCRIPT, backup], {
       cwd: root,
       encoding: 'utf8',
       env: {
         PATH: `${bin}:${process.env.PATH ?? ''}`,
-        DATABASE_URL: 'postgresql://cozyvtt:secret@localhost:5432/cozyvtt',
+        DATABASE_URL: databaseUrl,
         RESTORE_ASSUME_YES: 'yes',
         TMPDIR: root,
       },
@@ -72,9 +72,47 @@ describeOnPosix('restore.sh', () => {
     expect(result.status).toBe(0);
     const text = await fs.readFile(loaded, 'utf8');
     expect(text).toMatch(/^u1$/m);
+    expect(text).toContain('DROP SCHEMA public CASCADE;');
+    expect(text).toContain('CREATE SCHEMA public;');
     expect(text.trimEnd().split('\n').pop()).toMatch(
       /to_regclass\('public\.session'\)/
     );
+  });
+
+  it('treats an empty ?schema= as public', async () => {
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=');
+
+    expect(result.status).toBe(0);
+    const text = await fs.readFile(loaded, 'utf8');
+    expect(text).toContain('DROP SCHEMA public CASCADE;');
+    expect(text).toContain('CREATE SCHEMA public;');
+    expect(text).not.toContain("format('DROP SCHEMA IF EXISTS %I CASCADE'");
+  });
+
+  it('refuses a non-simple ?schema= without invoking psql', async () => {
+    const sentinel = '-- not loaded --\n';
+    await fs.writeFile(loaded, sentinel);
+    for (const schema of ['*', 'foo-bar', '1nope', "foo'bar"]) {
+      await fs.writeFile(loaded, sentinel);
+      const result = run(`postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=${schema}`);
+      expect([schema, result.status]).not.toEqual([schema, 0]);
+      expect(result.stdout + result.stderr).toMatch(/simple identifier/);
+      expect(await fs.readFile(loaded, 'utf8')).toBe(sentinel);
+    }
+  });
+
+  it('replaces a custom ?schema= with format(%I), not public, and still empties login sessions', async () => {
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data');
+
+    expect(result.status).toBe(0);
+    const text = await fs.readFile(loaded, 'utf8');
+    expect(text).toContain(
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;"
+    );
+    expect(text).not.toContain("format('CREATE SCHEMA %I'");
+    expect(text).not.toContain('DROP SCHEMA public CASCADE;');
+    expect(text).toMatch(/to_regclass\('public\.session'\)/);
+    expect(text).toContain("to_regclass(format('%I.session', 'app_data'))");
   });
 
   it('loads nothing when the working file comes out cut short, even if awk says it succeeded', async () => {

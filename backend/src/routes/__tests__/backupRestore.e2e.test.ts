@@ -52,6 +52,7 @@ import {
 } from '../../websocket/initiativeState';
 import logger from '../../utils/logger';
 import * as setupGate from '../../middleware/setup';
+import { restorePreamble } from '../../utils/pgRestore';
 
 /**
  * The migration run: the project's own Prisma, from the folder the backend
@@ -273,6 +274,29 @@ describe('POST /api/admin/backups/restore', () => {
     expect(migrate.args).toEqual(['migrate', 'deploy']);
   });
 
+  it('replaces the configured schema, not public, when DATABASE_URL names one other than public', async () => {
+    const previous = process.env.DATABASE_URL;
+    const base = (previous ?? 'postgresql://u:p@h:5432/db').replace(/\?.*$/, '');
+    process.env.DATABASE_URL = `${base}?schema=app_data`;
+    try {
+      const calls = stubTools();
+      const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
+
+      const res = await restore(admin, zip);
+
+      expect(res.status).toBe(200);
+      const psql = calls.find((c) => c.cmd === 'psql');
+      const [restrict, firstSql] = (psql?.sqlLoaded ?? '').split('\n');
+      expect(restrict).toMatch(/^\\restrict [A-Za-z0-9]+$/);
+      expect(firstSql).toBe(restorePreamble('app_data')[0]);
+      expect(psql?.sqlLoaded).not.toContain('DROP SCHEMA public');
+      expect(psql?.sqlLoaded).not.toMatch(/pg_namespace|nspname/);
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  });
+
   it('writes a backup of the database as it is before loading anything, and names it', async () => {
     const calls = stubTools();
     const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
@@ -450,6 +474,28 @@ describe('POST /api/admin/backups/restore', () => {
       expect(calls).toEqual([]);
     } finally {
       refused.mockRestore();
+    }
+  });
+
+  it('refuses a DATABASE_URL whose ?schema= is not a simple identifier, and does not blame the temporary folder', async () => {
+    const previous = process.env.DATABASE_URL;
+    const base = (previous ?? 'postgresql://u:p@h:5432/db').replace(/\?.*$/, '');
+    process.env.DATABASE_URL = `${base}?schema=*`;
+    try {
+      const calls = stubTools();
+      const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
+
+      const res = await restore(admin, zip);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Bad Request');
+      expect(res.body.message).toMatch(/simple identifier/);
+      expect(res.body.message).toMatch(/Nothing was changed/);
+      expect(res.body.message).not.toMatch(/temporary folder/);
+      expect(calls).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
     }
   });
 
@@ -902,6 +948,26 @@ describe('POST /api/admin/backups', () => {
       expectModeBits(dumped!.dirMode, 0o077, 0);
       expect(await fs.readdir(tmp)).toEqual([]);
     });
+  });
+
+  it('refuses a DATABASE_URL whose ?schema= is not a simple identifier before pg_dump runs', async () => {
+    const previous = process.env.DATABASE_URL;
+    const base = (previous ?? 'postgresql://u:p@h:5432/db').replace(/\?.*$/, '');
+    process.env.DATABASE_URL = `${base}?schema=*`;
+    try {
+      const calls = stubTools();
+
+      const res = await admin.post('/api/admin/backups');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Bad Request');
+      expect(res.body.message).toMatch(/simple identifier/);
+      expect(res.body.message).toMatch(/Nothing was changed/);
+      expect(calls).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
   });
 
   it('removes the dump and its folder when pg_dump fails', async () => {

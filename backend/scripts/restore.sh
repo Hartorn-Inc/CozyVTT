@@ -51,7 +51,10 @@ fi
 #
 # The prepared file opens with psql's restricted mode under a key the backup
 # cannot know, so psql refuses every backslash command in it, then replaces
-# the public schema so a backup from an older CozyVTT applies cleanly. The
+# the app schema so a backup from an older CozyVTT applies cleanly. Public
+# is dropped and recreated when DATABASE_URL has no ?schema=, an empty one,
+# or ?schema=public. A simple non-public ?schema= is dropped and recreated
+# instead of public (format('%I'), never a concatenated identifier). The
 # dump follows, without the lines this server would reject or that name the
 # database user of the instance the backup came from (SET transaction_timeout,
 # ALTER ... OWNER TO, GRANT, REVOKE) and without the dump's own \restrict
@@ -81,9 +84,10 @@ trap 'rm -f "$PREPARED"' EXIT
 RESTRICT_KEY=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
 # Login-session tables follow DATABASE_URL's ?schema=, with public as the
 # default and as the legacy location. Missing or empty is public. Only a
-# simple identifier is used as a SQL literal; anything else is treated as
-# public so a tenant or extension table named session is never touched.
-# Never FROM pg_namespace, never every schema.
+# simple identifier is used as a SQL literal. A ?schema= that is present
+# and not a simple identifier (a wildcard, hyphen, quote, leading digit) is
+# refused, so a tenant or extension table named session is never touched
+# and psql is not run. Never FROM pg_namespace, never every schema.
 APP_SCHEMA=public
 if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
   _QS="${DATABASE_URL#*\?}"
@@ -98,8 +102,13 @@ if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
     if [[ "${_PAIR%%=*}" == "schema" ]]; then
       _VAL=""
       [[ "$_PAIR" == *=* ]] && _VAL="${_PAIR#*=}"
-      if [[ -n "$_VAL" && "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-        APP_SCHEMA="$_VAL"
+      if [[ -n "$_VAL" ]]; then
+        if [[ "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          APP_SCHEMA="$_VAL"
+        else
+          echo "❌ DATABASE_URL ?schema='${_VAL}' is not a simple identifier (use letters, digits and underscore). Dump and restore refuse it instead of treating it as public."
+          exit 1
+        fi
       fi
       break
     fi
@@ -116,8 +125,14 @@ RESTORE_TRAILER=$(cat <<'SQL'
 DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; IF to_regclass('public.revoked_login_session') IS NOT NULL THEN DELETE FROM public.revoked_login_session; END IF; END $$;
 SQL
 )
+# CUSTOM_PREAMBLE is empty on public so awk prints the two DROP/CREATE
+# public lines keepInStep and backupRestore.e2e match. A custom schema
+# gets one format('%I') DROP line instead; the dump creates the schema.
+# Never DROP SCHEMA public.
+CUSTOM_PREAMBLE=""
 if [[ "$APP_SCHEMA" != "public" ]]; then
   _SCHEMA_SQL="${APP_SCHEMA//\'/\'\'}"
+  CUSTOM_PREAMBLE="DO \$\$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', '${_SCHEMA_SQL}'); END \$\$;"
   RESTORE_TRAILER="${RESTORE_TRAILER}
 DO \$\$ BEGIN IF to_regclass(format('%I.session', '${_SCHEMA_SQL}')) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.session', '${_SCHEMA_SQL}'); END IF; IF to_regclass(format('%I.revoked_login_session', '${_SCHEMA_SQL}')) IS NOT NULL THEN EXECUTE format('DELETE FROM %I.revoked_login_session', '${_SCHEMA_SQL}'); END IF; END \$\$;"
   unset _SCHEMA_SQL
@@ -125,12 +140,16 @@ fi
 
 echo "🔍 Checking $BACKUP_FILE..."
 set +e
-gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v trailer="$RESTORE_TRAILER" '
+gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preamble="$CUSTOM_PREAMBLE" -v trailer="$RESTORE_TRAILER" '
   BEGIN {
     print "\\restrict " key
     print "SET client_min_messages = warning;"
-    print "DROP SCHEMA public CASCADE;"
-    print "CREATE SCHEMA public;"
+    if (custom_preamble == "") {
+      print "DROP SCHEMA public CASCADE;"
+      print "CREATE SCHEMA public;"
+    } else {
+      print custom_preamble
+    }
     in_copy = 0; complete = 0; has_user = 0; has_migrations = 0; refused = ""
   }
   {

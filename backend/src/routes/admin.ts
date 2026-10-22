@@ -32,7 +32,7 @@ import { writeAdminLog } from '../services/systemLog';
 import { toJson } from '../utils/prisma-json';
 import { restartAdminMfaGrace } from '../services/adminMfaPolicy';
 import { destroyUserLoginSessions, rethrowIfLoginSessionStoreUnavailable } from '../services/sessionStore';
-import { buildDumpArgs, buildRestoreArgs, prepareDumpForRestore, pgConnection, type PreparedDump } from '../utils/pgRestore';
+import { buildDumpArgs, buildRestoreArgs, prepareDumpForRestore, pgConnection, UnsupportedBackupRestoreSchema, type PreparedDump } from '../utils/pgRestore';
 import { SERVER_BUILT_PATH, UPLOAD_LIMITS } from '../utils/fileUtils';
 import { sessionMaxAge, rememberMeMaxAge } from '../config/sessionDurations';
 import { extractArchiveSafely, openArchiveFile, ArchiveRefusedError, ArchiveLimitError } from '../utils/archive';
@@ -983,8 +983,9 @@ async function writeBackupZip(dbUrl: string, withUploads: boolean): Promise<{ fi
       throw new TempFolderUnusable(errorCode(mkdtempError));
     }
     const sqlPath = path.join(dumpDir, 'database.sql');
+    const dumpArgs = buildDumpArgs(dbUrl, sqlPath);
     try {
-      await execFileAsync('pg_dump', buildDumpArgs(dbUrl, sqlPath), { env: pgConnection(dbUrl).env });
+      await execFileAsync('pg_dump', dumpArgs, { env: pgConnection(dbUrl).env });
     } catch (execError: unknown) {
       if (errorCode(execError) === 'ENOENT') throw new ToolMissing('pg_dump');
       throw new DumpFailed(errorCode(execError), errorStderr(execError));
@@ -1069,6 +1070,9 @@ router.post('/backups', async (req, res) => {
     if (error instanceof BackupFolderUnusable) {
       logger.error('Backup could not be written to the backups folder', { code: error.code, dir: BACKUP_DIR });
       return res.status(500).json(backupFolderReply('The backup could not be written'));
+    }
+    if (error instanceof UnsupportedBackupRestoreSchema) {
+      return res.status(400).json({ error: 'Bad Request', message: `${error.message} Nothing was changed.` });
     }
     if (error instanceof DumpFailed) {
       logger.error('pg_dump error', { stderr: error.stderr, code: error.code });
@@ -1294,6 +1298,9 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
     try {
       prepared = await prepareDumpForRestore(sqlPath, restorePath);
     } catch (error) {
+      if (error instanceof UnsupportedBackupRestoreSchema) {
+        return res.status(400).json({ error: 'Bad Request', message: `${error.message} Nothing was changed.` });
+      }
       logger.error('Restore could not write the file psql loads', { code: errorCode(error), tmpdir: os.tmpdir() });
       return res.status(500).json({
         error: 'Restore Failed',
@@ -1328,6 +1335,9 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
         logger.error('Backup before restore could not be written to the backups folder', { code: error.code, dir: BACKUP_DIR });
         const reply = backupFolderReply('A backup of the current database could not be written');
         return res.status(500).json({ error: 'Restore Failed', message: `${reply.message} Nothing was restored.` });
+      }
+      if (error instanceof UnsupportedBackupRestoreSchema) {
+        return res.status(400).json({ error: 'Bad Request', message: `${error.message} Nothing was changed.` });
       }
       if (error instanceof DumpFailed) {
         logger.error('pg_dump error before restore', { stderr: error.stderr, code: error.code });

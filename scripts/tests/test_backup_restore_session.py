@@ -2,6 +2,9 @@
 
 Always public.session and public.revoked_login_session; a DATABASE_URL
 ?schema= other than public adds that schema only. Never every schema.
+A missing or empty ?schema= is public. A present non-simple identifier
+is refused; restore of a simple custom schema replaces that schema,
+not public.
 
     python3 -m unittest discover -s scripts/tests
 """
@@ -68,6 +71,22 @@ def custom_schema_trailer(schema):
     ).format(literal)
 
 
+def custom_schema_preamble(schema):
+    literal = schema.replace("'", "''")
+    return (
+        "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', '{0}'); "
+        "END $$;"
+    ).format(literal)
+
+
+INVALID_SCHEMA_URLS = (
+    'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=*',
+    'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=foo-bar',
+    "postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=foo'bar",
+    'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=1nope',
+)
+
+
 class ScriptSource(unittest.TestCase):
     def setUp(self):
         self.backup = read(BACKUP_SH).replace('\r\n', '\n')
@@ -97,6 +116,24 @@ class ScriptSource(unittest.TestCase):
         self.assertEqual(held.group(1), PUBLIC_TRAILER)
         self.assertFalse(held.group(1).endswith(' '))
 
+    def test_restore_custom_preamble_matches_helper(self):
+        held = re.search(
+            r'^  CUSTOM_PREAMBLE="(DO \\\$\\\$ BEGIN.*END \\\$\\\$;)"$',
+            self.restore,
+            re.MULTILINE,
+        )
+        self.assertIsNotNone(held, 'restore.sh no longer holds CUSTOM_PREAMBLE as one format(%I) line')
+        script_preamble = held.group(1).replace('\\$', '$').replace('${_SCHEMA_SQL}', 'app_data')
+        self.assertEqual(script_preamble, custom_schema_preamble('app_data'))
+        self.assertNotIn('\n', script_preamble)
+
+    def test_scripts_refuse_a_non_simple_schema_in_the_shared_parser(self):
+        for name, source in (('backup.sh', self.backup), ('restore.sh', self.restore)):
+            parser_start = source.find('APP_SCHEMA=public\n')
+            parser = source[parser_start:source.find('unset _QS _PAIR _VAL\n', parser_start)]
+            self.assertIn('exit 1', parser, name)
+            self.assertIn('simple identifier', parser, name)
+
     def test_scripts_never_scan_every_schema(self):
         for name, source in (('backup.sh', self.backup), ('restore.sh', self.restore)):
             code = '\n'.join(
@@ -105,6 +142,7 @@ class ScriptSource(unittest.TestCase):
             )
             self.assertNotIn('pg_namespace', code, name)
             self.assertNotRegex(code, r'\bFROM pg_catalog\b', name)
+            self.assertNotIn('*.session', code, name)
 
     def test_docker_compose_backup_path_excludes_public_login_tables_only(self):
         docker = re.search(
@@ -125,6 +163,7 @@ class ScriptSource(unittest.TestCase):
         self.assertIn('--exclude-table-data=public.revoked_login_session', guide)
         self.assertIn('?schema=', guide)
         self.assertIn('not every schema', guide)
+        self.assertIn('simple identifier', guide)
 
 
 class BackupRestoreScripts(unittest.TestCase):
@@ -222,25 +261,69 @@ class BackupRestoreScripts(unittest.TestCase):
             '--exclude-table-data=app_data.revoked_login_session',
         ])
 
-    def test_backup_empty_or_invalid_schema_stays_public(self):
-        for url in (
-            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=',
-            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=foo-bar',
-            "postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=foo'bar",
-            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=1nope',
-        ):
+    def test_backup_empty_schema_stays_public(self):
+        args = self._backup_args(
+            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema='
+        )
+        self.assertEqual(self._excludes(args), [
+            '--exclude-table-data=public.session',
+            '--exclude-table-data=public.revoked_login_session',
+        ])
+
+    def test_backup_invalid_schema_aborts_without_pg_dump(self):
+        for url in INVALID_SCHEMA_URLS:
             with self.subTest(url=url):
-                args = self._backup_args(url)
-                self.assertEqual(self._excludes(args), [
-                    '--exclude-table-data=public.session',
-                    '--exclude-table-data=public.revoked_login_session',
-                ])
+                if os.path.isfile(self.seen):
+                    os.remove(self.seen)
+                result = subprocess.run(
+                    ['bash', BACKUP_SH],
+                    cwd=self.root.name,
+                    env=self._env(url),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertIn('simple identifier', result.stderr + result.stdout)
+                self.assertFalse(os.path.isfile(self.seen))
 
     def test_restore_without_schema_ends_with_the_public_trailer(self):
         text = self._restore_sql('postgresql://cozyvtt:secret@localhost:5432/cozyvtt')
         self.assertEqual(text.rstrip('\n').split('\n')[-1], PUBLIC_TRAILER)
+        self.assertIn('DROP SCHEMA public CASCADE;', text)
+        self.assertIn('CREATE SCHEMA public;', text)
         self.assertNotIn("format('%I.session'", text)
         self.assertNotIn('pg_namespace', text)
+
+    def test_restore_empty_schema_stays_public(self):
+        text = self._restore_sql(
+            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema='
+        )
+        self.assertIn('DROP SCHEMA public CASCADE;', text)
+        self.assertIn('CREATE SCHEMA public;', text)
+        self.assertNotIn(custom_schema_preamble('app_data'), text)
+        self.assertEqual(text.rstrip('\n').split('\n')[-1], PUBLIC_TRAILER)
+
+    def test_restore_invalid_schema_aborts_without_psql(self):
+        sentinel = '-- not loaded --\n'
+        with open(self.loaded, 'w', encoding='utf-8') as handle:
+            handle.write(sentinel)
+        for url in INVALID_SCHEMA_URLS:
+            with self.subTest(url=url):
+                with open(self.loaded, 'w', encoding='utf-8') as handle:
+                    handle.write(sentinel)
+                result = subprocess.run(
+                    ['bash', RESTORE_SH, self.backup_file],
+                    cwd=self.root.name,
+                    env=self._env(url),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stderr + result.stdout)
+                self.assertIn('simple identifier', result.stderr + result.stdout)
+                with open(self.loaded, encoding='utf-8') as handle:
+                    self.assertEqual(handle.read(), sentinel)
 
     def test_restore_custom_schema_appends_format_literal_statement(self):
         text = self._restore_sql(
@@ -249,6 +332,9 @@ class BackupRestoreScripts(unittest.TestCase):
         lines = text.rstrip('\n').split('\n')
         self.assertEqual(lines[-2], PUBLIC_TRAILER)
         self.assertEqual(lines[-1], custom_schema_trailer('app_data'))
+        self.assertIn(custom_schema_preamble('app_data'), text)
+        self.assertNotIn("format('CREATE SCHEMA %I'", text)
+        self.assertNotIn('DROP SCHEMA public CASCADE;', text)
         self.assertNotIn('DELETE FROM app_data.session', text)
         self.assertNotIn('to_regclass(\'app_data.session\')', text)
         self.assertNotIn('pg_namespace', text)

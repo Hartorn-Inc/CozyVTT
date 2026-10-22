@@ -1619,7 +1619,9 @@ List the instance backups in the backups folder, newest first.
 
 Create a new backup: a ZIP holding a `pg_dump` of the database and every uploaded file.
 Refused with `409` while a restore takes its upload or writes its safety backup, and with
-`503` while the restore replaces the database. Backups are never deleted automatically.
+`503` while the restore replaces the database. A `DATABASE_URL ?schema=` that is not a
+simple identifier (letters, digits, underscore) answers `400` `Bad Request` and changes
+nothing. Backups are never deleted automatically.
 
 ---
 
@@ -1631,14 +1633,18 @@ Delete a backup file.
 
 ### `POST /api/admin/backups/restore` *(Admin only)*
 
-Restore the instance from a backup archive. **Destructive: it replaces the whole database**
-and copies the archive's uploaded files over the existing ones. A backup of the database as
-it was is written to the backup list first, and the response names it as `safetyBackup`.
+Restore the instance from a backup archive. **Destructive: it drops the instance schema**
+(`public`, or a simple-identifier `DATABASE_URL ?schema=`) and loads the archive in its
+place, and copies the archive's uploaded files over the existing ones. A backup of the
+database as it was is written to the backup list first, and the response names it as
+`safetyBackup`.
 
 One restore runs at a time: a second sent while the first takes its upload or writes that
 backup answers `409`. A refused file answers `400` (not named `.zip`, not a ZIP archive,
 more than 100,000 entries, or not a complete CozyVTT backup) or `413` (over 4 GB, or
-unpacking to more than 10 GiB), with the reason. While the database is being replaced,
+unpacking to more than 10 GiB), with the reason. A `DATABASE_URL ?schema=` that is not a
+simple identifier (letters, digits, underscore) answers `400` `Bad Request` and changes
+nothing. While the database is being replaced,
 live connections are closed and every other API request, a second restore included,
 answers `503` with `Retry-After: 60` until the restore ends.
 

@@ -18,6 +18,47 @@ import { once } from 'events';
 import { PRISMA_ONLY_PARAMETERS } from '../config/prismaClient';
 
 /**
+ * Schema names dump excludes, the trailer, and the preamble will interpolate.
+ * Anything else (pg_dump wildcards, hyphens, quotes) is refused — never treated
+ * as public, never interpolated into --exclude-table-data or SQL identifiers,
+ * and never looked up in pg_namespace.
+ */
+const APP_SCHEMA = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * `DATABASE_URL ?schema=` is not a simple identifier, so dump and restore
+ * must not pretend the instance is on public.
+ */
+export class UnsupportedBackupRestoreSchema extends Error {
+  constructor() {
+    super(
+      'DATABASE_URL ?schema= for backup and restore must be a simple identifier (letters, digits, underscore), not treated as public.',
+    );
+    this.name = 'UnsupportedBackupRestoreSchema';
+  }
+}
+
+/** Throws UnsupportedBackupRestoreSchema when `schema` is not a simple identifier. */
+export function assertSimpleAppSchema(schema: string): void {
+  if (!APP_SCHEMA.test(schema)) throw new UnsupportedBackupRestoreSchema();
+}
+
+/**
+ * Schema Prisma (and the session pool) use, from `?schema=` on DATABASE_URL.
+ * Parse failure, a missing parameter, and an empty value are `public`. A name
+ * that is not a simple identifier is returned as it is; dump and restore
+ * callers assert before interpolating. Kept here so restore code does not call
+ * createPrismaClient (and a database pool) to dump or restore.
+ */
+export function schemaFromDatabaseUrl(dbUrl: string): string {
+  try {
+    return new URL(dbUrl).searchParams.get('schema') || 'public';
+  } catch {
+    return 'public';
+  }
+}
+
+/**
  * Statements run before the dump itself.
  *
  * The dump drops and recreates only the objects it contains. A backup taken on
@@ -29,30 +70,27 @@ import { PRISMA_ONLY_PARAMETERS } from '../config/prismaClient';
  * statements sit at the top of the file psql loads with --single-transaction,
  * so a dump that fails to apply rolls the schema back too. Migrations then run
  * to bring an older backup up to the running version.
+ *
+ * `public` keeps the two statements restore.sh's public path prints. Any other
+ * simple identifier is one DO block that drops that schema via format('%I') —
+ * never concatenated as a raw identifier, and never also dropping public
+ * (leftover public.session is emptied by the trailer). The dump then creates
+ * the schema: `backup.sh` dumps emit `CREATE SCHEMA` for a non-public schema
+ * and would fail if the preamble had already created it.
  */
-export const RESTORE_PREAMBLE = ['DROP SCHEMA public CASCADE;', 'CREATE SCHEMA public;'];
-
-/**
- * Schema names backup.sh / restore.sh will act on. Anything else (pg_dump
- * wildcards, hyphens, quotes) is treated as public so dump excludes and the
- * trailer never name another schema, and never scan pg_namespace.
- */
-const APP_SCHEMA = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-/**
- * Schema Prisma (and the session pool) use, from `?schema=` on DATABASE_URL.
- * Parse failure, a missing parameter, and a name the scripts would refuse
- * are `public`. Kept here so restore code does not call createPrismaClient
- * (and a database pool) to dump or restore.
- */
-export function schemaFromDatabaseUrl(dbUrl: string): string {
-  try {
-    const schema = new URL(dbUrl).searchParams.get('schema') || 'public';
-    return APP_SCHEMA.test(schema) ? schema : 'public';
-  } catch {
-    return 'public';
+export function restorePreamble(schema: string): string[] {
+  assertSimpleAppSchema(schema);
+  if (schema === 'public') {
+    return ['DROP SCHEMA public CASCADE;', 'CREATE SCHEMA public;'];
   }
+  const literal = "'" + schema.replace(/'/g, "''") + "'";
+  return [
+    `DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', ${literal}); END $$;`,
+  ];
 }
+
+/** The public-schema replacement; restore.sh's public awk path matches this. */
+export const RESTORE_PREAMBLE = restorePreamble('public');
 
 const PUBLIC_LOGIN_SESSION_TRAILER =
   "DO $$ BEGIN IF to_regclass('public.session') IS NOT NULL THEN DELETE FROM public.session; END IF; IF to_regclass('public.revoked_login_session') IS NOT NULL THEN DELETE FROM public.revoked_login_session; END IF; END $$;";
@@ -67,7 +105,8 @@ const PUBLIC_LOGIN_SESSION_TRAILER =
  * identifier. keepInStep.test.ts holds restore.sh to the public default.
  */
 export function loginSessionRestoreTrailer(schema: string): string[] {
-  if (schema === 'public' || !APP_SCHEMA.test(schema)) return [PUBLIC_LOGIN_SESSION_TRAILER];
+  assertSimpleAppSchema(schema);
+  if (schema === 'public') return [PUBLIC_LOGIN_SESSION_TRAILER];
   const literal = "'" + schema.replace(/'/g, "''") + "'";
   return [
     PUBLIC_LOGIN_SESSION_TRAILER,
@@ -239,6 +278,9 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
   let refused: string | null = null;
   let complete = false;
   const tables = new Set<string>();
+  const schema = schemaFromDatabaseUrl(process.env.DATABASE_URL ?? '');
+  const preamble = restorePreamble(schema);
+  const trailer = loginSessionRestoreTrailer(schema);
 
   // The whole database: readable by the backend's user alone.
   const out = createWriteStream(outPath, { encoding: 'latin1', mode: 0o600 });
@@ -255,7 +297,7 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
   let endedWithNewline = true;
   try {
     await write(`\\restrict ${randomBytes(32).toString('hex')}\n`);
-    for (const line of RESTORE_PREAMBLE) await write(line + '\n');
+    for (const line of preamble) await write(line + '\n');
 
     for await (const { raw, statement, newline } of linesOf(sqlPath)) {
       let keep = true;
@@ -297,7 +339,7 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
     if (!endedWithNewline) await write('\n');
     // Dashboard restore uses the instance DATABASE_URL, so a custom ?schema=
     // is emptied as well as leftover public.session.
-    for (const line of loginSessionRestoreTrailer(schemaFromDatabaseUrl(process.env.DATABASE_URL ?? ''))) {
+    for (const line of trailer) {
       await write(line + '\n');
     }
     if (failure.error) throw failure.error;
@@ -369,6 +411,7 @@ export function pgConnection(dbUrl: string): { dbname: string; env: Record<strin
 
 export function buildDumpArgs(dbUrl: string, sqlPath: string): string[] {
   const schema = schemaFromDatabaseUrl(dbUrl);
+  assertSimpleAppSchema(schema);
   const args = [
     '--dbname',
     pgConnection(dbUrl).dbname,

@@ -120,9 +120,10 @@ fi
 
 # Login-session tables follow DATABASE_URL's ?schema=, with public as the
 # default and as the legacy location. Missing or empty is public. Only a
-# simple identifier is used as a dump exclude; anything else is treated as
-# public so a tenant or extension table named session is never touched.
-# Never FROM pg_namespace, never every schema.
+# simple identifier is used as a dump exclude. A ?schema= that is present
+# and not a simple identifier (a wildcard, hyphen, quote, leading digit) is
+# refused, so a tenant or extension table named session is never touched
+# and pg_dump is not run. Never FROM pg_namespace, never every schema.
 APP_SCHEMA=public
 if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
   _QS="${DATABASE_URL#*\?}"
@@ -137,8 +138,13 @@ if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
     if [[ "${_PAIR%%=*}" == "schema" ]]; then
       _VAL=""
       [[ "$_PAIR" == *=* ]] && _VAL="${_PAIR#*=}"
-      if [[ -n "$_VAL" && "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
-        APP_SCHEMA="$_VAL"
+      if [[ -n "$_VAL" ]]; then
+        if [[ "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+          APP_SCHEMA="$_VAL"
+        else
+          echo "❌ DATABASE_URL ?schema='${_VAL}' is not a simple identifier (use letters, digits and underscore). Dump and restore refuse it instead of treating it as public."
+          exit 1
+        fi
       fi
       break
     fi

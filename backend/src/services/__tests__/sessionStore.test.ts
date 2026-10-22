@@ -133,6 +133,24 @@ it('still writes the session it is asked to keep', async () => {
   expect(await exists(keep)).toBe(true);
 });
 
+it('purges expired revoked_login_session rows and leaves unexpired ones, while naming the newly revoked sid', async () => {
+  const expiredSid = `sessionstore-test-${randomUUID()}`;
+  const unexpiredSid = `sessionstore-test-${randomUUID()}`;
+  mine.push(expiredSid, unexpiredSid);
+  await prisma.$executeRaw`
+    INSERT INTO revoked_login_session (sid, expires_at)
+    VALUES (${expiredSid}, NOW() - interval '1 day'), (${unexpiredSid}, NOW() + interval '1 hour')
+  `;
+  const user = randomUUID();
+  const live = await session({ userId: user });
+
+  expect(await destroyUserLoginSessions(user)).toBe(1);
+
+  expect(await revokedExists(expiredSid)).toBe(false);
+  expect(await revokedExists(unexpiredSid)).toBe(true);
+  expect(await revokedExists(live)).toBe(true);
+});
+
 it('does not block in memory when the caller rolls the transaction back, and the sid still writes', async () => {
   const user = randomUUID();
   const sid = await session({ userId: user });

@@ -78,6 +78,8 @@ async function deleteAndRevokeLoginSessions(
   exceptSessionId: string | undefined,
   db: Prisma.TransactionClient,
 ): Promise<string[]> {
+  // Expired markers first, even when this user has no session to revoke.
+  await db.$executeRaw`DELETE FROM revoked_login_session WHERE expires_at <= NOW()`;
   // Advisory lock first (same order as the store write), then FOR UPDATE, so a
   // writer waiting on the lock cannot INSERT while this transaction holds the
   // row and this transaction waits on the lock.

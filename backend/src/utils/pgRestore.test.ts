@@ -32,7 +32,9 @@ import {
   RESTORE_PREAMBLE,
   RESTORE_TRAILER,
   loginSessionRestoreTrailer,
+  restorePreamble,
   schemaFromDatabaseUrl,
+  UnsupportedBackupRestoreSchema,
 } from './pgRestore';
 
 /** Trailer prepareDumpForRestore appends for this process's DATABASE_URL. */
@@ -168,6 +170,14 @@ describe('buildDumpArgs', () => {
     expect(args).toContain('--exclude-table-data=public.revoked_login_session');
   });
 
+  it('excludes only the public login-session tables when ?schema= is empty', () => {
+    const args = buildDumpArgs('postgresql://u:p@h:5432/db?schema=', '/tmp/db.sql');
+    expect(args.filter((arg) => arg.startsWith('--exclude-table-data='))).toEqual([
+      '--exclude-table-data=public.session',
+      '--exclude-table-data=public.revoked_login_session',
+    ]);
+  });
+
   it('excludes public and tenant login-session tables when DATABASE_URL names a schema, without scanning pg_namespace', () => {
     const args = buildDumpArgs('postgresql://u:p@h:5432/db?schema=tenant', '/tmp/db.sql');
     expect(args).toEqual(expect.arrayContaining([
@@ -180,28 +190,31 @@ describe('buildDumpArgs', () => {
   });
 
   it.each(['*', 'foo-bar'])(
-    'excludes only the public login-session tables when ?schema=%s, without scanning pg_namespace',
+    'refuses ?schema=%s instead of treating it as public or interpolating a wildcard exclude',
     (schema) => {
-      const args = buildDumpArgs(`postgresql://u:p@h:5432/db?schema=${schema}`, '/tmp/db.sql');
-      expect(args.filter((arg) => arg.startsWith('--exclude-table-data='))).toEqual([
-        '--exclude-table-data=public.session',
-        '--exclude-table-data=public.revoked_login_session',
-      ]);
-      expect(args.join(' ')).not.toMatch(/pg_namespace|nspname/);
+      expect(() => buildDumpArgs(`postgresql://u:p@h:5432/db?schema=${schema}`, '/tmp/db.sql')).toThrow(
+        UnsupportedBackupRestoreSchema,
+      );
+      try {
+        buildDumpArgs(`postgresql://u:p@h:5432/db?schema=${schema}`, '/tmp/db.sql');
+      } catch (err) {
+        expect(String(err)).not.toMatch(/--exclude-table-data=\*\.session|pg_namespace|nspname/);
+      }
     },
   );
 });
 
 describe('schemaFromDatabaseUrl', () => {
-  it('reads ?schema= and treats a missing parameter or an unreadable address as public', () => {
+  it('reads ?schema= and treats a missing parameter, an empty value, or an unreadable address as public', () => {
     expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=tenant')).toBe('tenant');
     expect(schemaFromDatabaseUrl('postgresql://u@h/db')).toBe('public');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=')).toBe('public');
     expect(schemaFromDatabaseUrl('not a url')).toBe('public');
   });
 
-  it('treats a wildcard or hyphenated ?schema= as public, so dump excludes cannot carry pg_dump wildcards', () => {
-    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=*')).toBe('public');
-    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=foo-bar')).toBe('public');
+  it('returns a wildcard or hyphenated ?schema= as it is, so dump and restore can refuse it rather than pretend public', () => {
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=*')).toBe('*');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=foo-bar')).toBe('foo-bar');
   });
 });
 
@@ -223,10 +236,36 @@ describe('loginSessionRestoreTrailer', () => {
     expect(lines.join('\n')).not.toMatch(/pg_namespace|nspname/);
   });
 
-  it.each(['*', 'foo-bar'])('keeps the public-only trailer for schema name %s', (schema) => {
-    expect(loginSessionRestoreTrailer(schema)).toEqual(RESTORE_TRAILER);
-    expect(loginSessionRestoreTrailer(schema)).toHaveLength(1);
-    expect(loginSessionRestoreTrailer(schema).join('\n')).not.toMatch(/pg_namespace|nspname/);
+  it.each(['*', 'foo-bar'])('refuses schema name %s instead of using the public-only trailer', (schema) => {
+    expect(() => loginSessionRestoreTrailer(schema)).toThrow(UnsupportedBackupRestoreSchema);
+    expect(() => loginSessionRestoreTrailer(schema)).toThrow(/simple identifier/);
+    try {
+      loginSessionRestoreTrailer(schema);
+    } catch (err) {
+      expect(String(err)).not.toMatch(/pg_namespace|nspname/);
+    }
+  });
+});
+
+describe('restorePreamble', () => {
+  it('keeps the public DROP/CREATE statements for public', () => {
+    expect(restorePreamble('public')).toEqual(['DROP SCHEMA public CASCADE;', 'CREATE SCHEMA public;']);
+    expect(RESTORE_PREAMBLE).toEqual(restorePreamble('public'));
+  });
+
+  it('drops only the named schema via format(%I), not public, and leaves CREATE to the dump', () => {
+    const lines = restorePreamble('app_data');
+    expect(lines).toEqual([
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;",
+    ]);
+    expect(lines.join('\n')).toContain("format('DROP SCHEMA IF EXISTS %I CASCADE'");
+    expect(lines.join('\n')).not.toContain("format('CREATE SCHEMA %I'");
+    expect(lines.join('\n')).not.toContain('DROP SCHEMA public');
+    expect(lines.join('\n')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it.each(['*', 'foo-bar'])('refuses schema name %s instead of falling back to the public preamble', (schema) => {
+    expect(() => restorePreamble(schema)).toThrow(UnsupportedBackupRestoreSchema);
   });
 });
 
@@ -401,6 +440,41 @@ describe('prepareDumpForRestore', () => {
     expect(rest.join('\n')).toContain("to_regclass('public.session')");
     expect(result.skipped).toEqual({ settings: ['SET transaction_timeout = 0;'], ownership: 3, privileges: 1 });
     expect(result.refused).toBeNull();
+  });
+
+  it('writes a custom-schema preamble when DATABASE_URL names a schema other than public', async () => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=app_data';
+    try {
+      const src = await write('database.sql', NEWER_CLIENT_DUMP);
+      const dest = path.join(dir, 'restore.sql');
+
+      await prepareDumpForRestore(src, dest);
+
+      const [restrict, ...rest] = (await fs.readFile(dest, 'utf8')).split('\n');
+      expect(restrict).toMatch(RESTRICT_LINE);
+      const preamble = restorePreamble('app_data');
+      expect(rest.slice(0, preamble.length).join('\n')).toBe(preamble.join('\n'));
+      expect(rest.join('\n')).not.toContain('DROP SCHEMA public');
+      expect(rest.join('\n')).not.toMatch(/pg_namespace|nspname/);
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  });
+
+  it('refuses a DATABASE_URL whose ?schema= is not a simple identifier', async () => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=*';
+    try {
+      const src = await write('database.sql', NEWER_CLIENT_DUMP);
+      await expect(prepareDumpForRestore(src, path.join(dir, 'restore.sql'))).rejects.toThrow(
+        UnsupportedBackupRestoreSchema,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
   });
 
   it('drops every owner and privilege statement, so the backup restores under whatever database user the instance has', async () => {

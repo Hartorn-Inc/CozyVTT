@@ -10,11 +10,19 @@
  */
 
 const queryRaw = jest.fn();
+const executeRaw = jest.fn();
 jest.mock('../../config/database', () => ({
   prisma: {
     $queryRaw: (...args: unknown[]) => queryRaw(...args),
-    $transaction: (work: (tx: { $queryRaw: (...args: unknown[]) => unknown }) => Promise<unknown>) =>
-      work({ $queryRaw: (...args: unknown[]) => queryRaw(...args) }),
+    $executeRaw: (...args: unknown[]) => executeRaw(...args),
+    $transaction: (work: (tx: {
+      $queryRaw: (...args: unknown[]) => unknown;
+      $executeRaw: (...args: unknown[]) => unknown;
+    }) => Promise<unknown>) =>
+      work({
+        $queryRaw: (...args: unknown[]) => queryRaw(...args),
+        $executeRaw: (...args: unknown[]) => executeRaw(...args),
+      }),
   },
 }));
 jest.mock('../../utils/logger', () => ({ __esModule: true, default: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() } }));
@@ -36,6 +44,8 @@ import { isLoginSessionBlocked } from '../revokedLoginSessions';
 
 beforeEach(() => {
   queryRaw.mockReset();
+  executeRaw.mockReset();
+  executeRaw.mockResolvedValue(0);
   blockLoginSessions.mockReset();
   blockLoginSessions.mockImplementation((sids: readonly string[]) => {
     revoked.blockLoginSessions(sids);
