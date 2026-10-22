@@ -522,6 +522,17 @@ class AdvisoryPrReviewWorkflow(unittest.TestCase):
         self.assertNotIn('${{ secrets.CURSOR_API_KEY }}', text)
         self.assertNotIn('environment:', text)
 
+    def test_contributing_has_operator_cutover_checklist(self):
+        path = os.path.join(ROOT, 'docs', 'CONTRIBUTING.md')
+        with open(path, encoding='utf-8') as handle:
+            text = handle.read()
+        self.assertIn('Environment `advisory-review`', text)
+        self.assertIn('CURSOR_API_KEY', text)
+        self.assertIn('OPENROUTER_API_KEY', text)
+        self.assertIn('codex-review', text)
+        self.assertIn('refs/pull/*/merge', text)
+        self.assertIn('label `advisory-review`', text)
+
 
 if __name__ == '__main__':
     unittest.main()
