@@ -6,13 +6,7 @@ import type { Prisma } from '@prisma/client';
 import { normalizeAssetUrl } from '../utils/asset-urls';
 import { canReferenceAsset } from '../services/permissions';
 import { GameSystem } from '../game-systems';
-import {
-  validateCharacterData,
-  validateFlexibleSheet,
-  sheetIssues,
-  applyIdentityToSheet,
-  sheetNameFor,
-} from '../validators/game-systems';
+import { validateCharacterData, sheetNameFor } from '../validators/game-systems';
 import { CreateCharacterSchema, UpdateCharacterSchema } from '../validators/characters';
 import { broadcastToCampaign, emitCharacterUpdated } from '../websocket/utils';
 import {
@@ -21,9 +15,10 @@ import {
 import { resendInitiative } from '../websocket/handlers/initiative';
 import logger from '../utils/logger';
 import { cutText } from '../utils/cutText';
-import { readTokens, toJson, readJsonObject } from '../utils/prisma-json';
+import { readTokens, toJson } from '../utils/prisma-json';
 import { extractCharacterHp, sameCharacterHp } from '../utils/characterHp';
-import { migrateLegacySheetFields } from '../utils/sheetFieldMigrations';
+import { prepareSheetForStorage } from '../utils/prepareSheet';
+import { projectCharacterData } from '../utils/sheetProjection';
 import { withMapsLocked } from '../utils/mapTokens';
 import { systemsCompatible } from '../utils/gameSystemCompatibility';
 import { holdOwnerCreates } from '../utils/ownerLimit';
@@ -32,8 +27,12 @@ import { FLEXIBLE_TEMPLATES } from '../utils/character-templates/flexible-templa
 
 const router = Router();
 
-/** What a refused Flexible sheet answers, beside the list of its problems. */
-const FLEXIBLE_SHEET_REFUSED = 'Character data does not match the Flexible sheet layout';
+/** A projected sheet blob as an indexable record, or null. */
+function sheetRecord(data: unknown): Record<string, unknown> | null {
+  return typeof data === 'object' && data !== null && !Array.isArray(data)
+    ? (data as Record<string, unknown>)
+    : null;
+}
 
 /**
  * The most characters one account may own, copies included. Each one can be
@@ -175,65 +174,35 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
     // `name` column, and nothing joined the two — so a character created as
     // "Aldra" opened showing the factory placeholder "New Character" with an
     // empty player name. Done here rather than in the modal so it also covers
-    // copying a template and any API client.
+    // copying a template and any API client. A Flexible sheet is checked as
+    // sent: wrapping identity first would turn a string or a list into an
+    // object before it could be refused.
     const owner = await prisma.user.findUnique({
       where: { id: userId },
       select: { displayName: true },
     });
-    // A sheet in the shape of a version before 1.3.0 has its older fields
-    // moved where the sheet reads them first, since validation drops them.
-    const dataWithIdentity = applyIdentityToSheet(
-      finalGameSystem as GameSystem | null,
-      migrateLegacySheetFields(finalGameSystem, data) as Record<string, unknown> | undefined,
-      name,
-      owner?.displayName ?? ''
-    );
     // What gets stored: the schema's parsed output once validated, so a key
-    // the sheet does not declare never reaches the database.
-    let sheetData: unknown = dataWithIdentity;
-
-    // Validate gameSystem if provided
-    if (finalGameSystem !== undefined && finalGameSystem !== null) {
-      const validSystems: string[] = [
-        GameSystem.DND_5E,
-        GameSystem.PATHFINDER_2E,
-        GameSystem.SHADOWRUN_6E,
-        GameSystem.CALL_OF_CTHULHU_7E,
-      ];
-      if (!validSystems.includes(finalGameSystem as string)) {
-        return res.status(400).json({
-          error: 'Validation Error',
-          message: `Invalid game system. Must be one of: ${validSystems.join(', ')}`,
+    // the sheet does not declare never reaches the database. A sheet in the
+    // shape of a version before 1.3.0 has its older fields moved where the
+    // sheet reads them first, since validation drops them.
+    const prepared = finalGameSystem
+      ? prepareSheetForStorage({
+          gameSystem: finalGameSystem,
+          data,
+          identity: { name, playerDisplayName: owner?.displayName ?? '' },
+        })
+      : prepareSheetForStorage({
+          gameSystem: null,
+          data: data === undefined ? {} : data,
         });
-      }
-
-      // Validate character data against schema if gameSystem is specified
-      const validationResult = validateCharacterData(finalGameSystem as GameSystem, dataWithIdentity);
-      if (!validationResult.success) {
-        return res.status(400).json({
-          error: 'Validation Error',
-          message: 'Character data does not match game system schema',
-          validationErrors: validationResult.errors.issues.map((issue) => ({
-            path: issue.path.join('.'),
-            message: issue.message,
-            code: issue.code,
-          })),
-        });
-      }
-      sheetData = validationResult.data;
-    } else if (data !== undefined) {
-      // A Flexible sheet, checked as sent: the identity step above would turn
-      // a string or a list into an object before it could be refused.
-      const flexible = validateFlexibleSheet(data);
-      if (!flexible.success) {
-        return res.status(400).json({
-          error: 'Validation Error',
-          message: FLEXIBLE_SHEET_REFUSED,
-          validationErrors: sheetIssues(flexible.errors),
-        });
-      }
-      sheetData = flexible.data;
+    if (!prepared.ok) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: prepared.message,
+        validationErrors: prepared.validationErrors,
+      });
     }
+    let sheetData: unknown = prepared.data;
 
     // Normalize tokenImageUrl to full path if provided
     const normalizedTokenImageUrl = tokenImageUrl ? normalizeAssetUrl(tokenImageUrl, 'tokens') : null;
@@ -614,33 +583,19 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
     // reads them first, or that would drop their content before
     // `migrate:sheet-fields` could move it.
     let sheetData: unknown = data;
-    if (character.gameSystem && data !== undefined) {
-      const validationResult = validateCharacterData(
-        character.gameSystem as GameSystem,
-        migrateLegacySheetFields(character.gameSystem, data)
-      );
-      if (!validationResult.success) {
+    if (data !== undefined) {
+      const prepared = prepareSheetForStorage({
+        gameSystem: character.gameSystem as GameSystem | null,
+        data,
+      });
+      if (!prepared.ok) {
         return res.status(400).json({
           error: 'Validation Error',
-          message: 'Character data does not match game system schema',
-          validationErrors: validationResult.errors.issues.map((issue) => ({
-            path: issue.path.join('.'),
-            message: issue.message,
-            code: issue.code,
-          })),
+          message: prepared.message,
+          validationErrors: prepared.validationErrors,
         });
       }
-      sheetData = validationResult.data;
-    } else if (data !== undefined) {
-      const flexible = validateFlexibleSheet(data);
-      if (!flexible.success) {
-        return res.status(400).json({
-          error: 'Validation Error',
-          message: FLEXIBLE_SHEET_REFUSED,
-          validationErrors: sheetIssues(flexible.errors),
-        });
-      }
-      sheetData = flexible.data;
+      sheetData = prepared.data;
     }
 
     // Build update data
@@ -845,13 +800,18 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
         //
         // Sent only when the value really moved: every roster card and token bar
         // re-renders on this, and most sheet saves do not touch hit points.
+        const previousProjected = projectCharacterData(updatedCharacter.gameSystem, character.data);
+        const currentProjected = projectCharacterData(
+          updatedCharacter.gameSystem,
+          updatedCharacter.data
+        );
         const previousHp = extractCharacterHp(
           updatedCharacter.gameSystem,
-          readJsonObject(character.data)
+          sheetRecord(previousProjected)
         );
         const currentHp = extractCharacterHp(
           updatedCharacter.gameSystem,
-          readJsonObject(updatedCharacter.data)
+          sheetRecord(currentProjected)
         );
         if (currentHp && !sameCharacterHp(previousHp, currentHp)) {
           broadcastToCampaign(sheetCampaignId, 'character.hp.updated', {
@@ -1219,17 +1179,33 @@ router.post('/:id/copy', authenticated, async (req: AuthenticatedRequest, res: R
     }
 
     // Create a copy with modified name. Not the Keeper's Notes: they are the
-    // Keeper's, and the copy is in no campaign.
+    // Keeper's, and the copy is in no campaign. Identity stamps the copy's
+    // name into the sheet so a later save does not rename it back to the original.
+    const copiedName = copyName(originalCharacter.name);
+    const owner = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { displayName: true },
+    });
+    const prepared = prepareSheetForStorage({
+      gameSystem: originalCharacter.gameSystem as GameSystem | null,
+      data: originalCharacter.data,
+      identity: { name: copiedName, playerDisplayName: owner?.displayName ?? '' },
+    });
+    if (!prepared.ok) {
+      return res.status(400).json({
+        error: 'Validation Error',
+        message: prepared.message,
+        validationErrors: prepared.validationErrors,
+      });
+    }
+
     const copiedCharacter = await prisma.$transaction(async (tx) => {
       await roomForCharacter(tx, userId);
       return tx.character.create({
         data: {
           userId,
-          // TODO(sheets): the copied sheet keeps the original's name, and the name
-          // sync on save then renames the copy back, dropping " (Copy)"; write the
-          // copy's name into the sheet too.
-          name: copyName(originalCharacter.name),
-          data: toJson(sheetWithoutKeeperNotes(originalCharacter.gameSystem, originalCharacter.data)),
+          name: copiedName,
+          data: toJson(sheetWithoutKeeperNotes(originalCharacter.gameSystem, prepared.data)),
           tokenImageUrl: originalCharacter.tokenImageUrl,
           gameSystem: originalCharacter.gameSystem,
           campaignId: null, // Copies are unassigned by default
@@ -1239,7 +1215,7 @@ router.post('/:id/copy', authenticated, async (req: AuthenticatedRequest, res: R
 
     return res.status(201).json({
       message: 'Character copied successfully',
-      character: copiedCharacter,
+      character: characterForReader(copiedCharacter, false),
     });
   } catch (error) {
     if (error instanceof CharacterLimitReached) {

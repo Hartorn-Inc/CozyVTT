@@ -5186,10 +5186,15 @@ paths:
         and `tokenImageUrl`. The copy is unassigned
         (`campaignId: null`), its name is the original's followed by a space
         and `(Copy)`, the original cut short first so the whole is at most 200
-        characters, and the response carries no `campaign` object. Only the
-        character's owner may copy it. A copy counts towards the 1,000
-        characters one account may own; past that it answers 400 with the same
-        message as `POST /api/characters`.
+        characters, and that name is written into the sheet. The response is
+        the copy as `GET /api/characters/{id}` would send it (projected, and
+        with no `campaign` object). Only the character's owner may copy it.
+        A copy counts towards the 1,000 characters one account may own; past
+        that it answers 400 with the same message as `POST /api/characters`.
+        An original sheet that does not match its game-system schema (or the
+        Flexible layout) answers 400 with the same `validationErrors` envelope
+        as `PUT /api/characters/{id}`; the original is left as stored and no
+        truncated copy is created.
       operationId: copyCharacter
       security:
         - cookieAuth: []
@@ -5207,7 +5212,10 @@ paths:
                   character:
                     $ref: '#/components/schemas/Character'
         '400':
-          description: The owner already has 1,000 characters.
+          description: |
+            The owner already has 1,000 characters, or the original sheet is
+            invalid against its schema (the same `validationErrors` envelope
+            as `PUT /api/characters/{id}`).
           content:
             application/json:
               schema:
