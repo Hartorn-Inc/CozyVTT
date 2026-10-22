@@ -13,6 +13,7 @@ import tempfile
 import unittest
 
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(SCRIPTS)
 spec = importlib.util.spec_from_file_location(
     'codex_pr_review', os.path.join(SCRIPTS, 'ci', 'codex_pr_review.py')
 )
@@ -458,6 +459,30 @@ class PostReview(unittest.TestCase):
         self.assertEqual(payload['event'], 'COMMENT')
         self.assertNotEqual(payload['event'], 'APPROVE')
         self.assertNotEqual(payload['event'], 'REQUEST_CHANGES')
+
+
+class CodexPrReviewWorkflow(unittest.TestCase):
+    def test_reviewer_job_runs_codex_as_an_unprivileged_unix_user(self):
+        path = os.path.join(ROOT, '.github', 'workflows', 'codex-pr-review.yml')
+        with open(path, encoding='utf-8') as handle:
+            text = handle.read()
+        self.assertIn('safety-strategy: unprivileged-user', text)
+        self.assertNotIn('safety-strategy: drop-sudo', text)
+        self.assertNotIn('safety-strategy: unsafe', text)
+        self.assertNotIn('safety-strategy: read-only', text)
+        self.assertIn('codex-user:', text)
+        user = None
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('codex-user:'):
+                user = stripped.split(':', 1)[1].strip()
+                break
+        self.assertTrue(user)
+        self.assertIn('useradd --system --create-home ' + user, text)
+        self.assertNotIn('usermod', text)
+        self.assertNotIn('gpasswd', text)
+        self.assertNotIn('-G sudo', text)
+        self.assertNotIn('adduser', text)
 
 
 if __name__ == '__main__':
