@@ -10,7 +10,7 @@ import {
   sheetShortTextSchema as shortText,
   sheetLongTextSchema as longText,
 } from './sheetText';
-import { sheetList } from './sheetLists';
+import { sheetList, sheetNamedList } from './sheetLists';
 
 /**
  * Characteristic
@@ -188,7 +188,7 @@ const skillsSchema = z.object({
   intimidate: skillSchema,
   jump: skillSchema,
   languageOwn: skillSchema.extend({ language: shortText.min(1) }),
-  languageOther: sheetList(languageSkillSchema),
+  languageOther: sheetNamedList(languageSkillSchema, 'language'),
   law: skillSchema,
   libraryUse: skillSchema,
   listen: skillSchema,
@@ -204,7 +204,7 @@ const skillsSchema = z.object({
   psychoanalysis: skillSchema,
   psychology: skillSchema,
   ride: skillSchema,
-  science: sheetList(scienceSkillSchema),
+  science: sheetNamedList(scienceSkillSchema, 'specialization'),
   sleightOfHand: skillSchema,
   spotHidden: skillSchema,
   stealth: skillSchema,
@@ -238,7 +238,7 @@ const weaponSchema = z.object({
  * Combat
  */
 const combatSchema = z.object({
-  weapons: sheetList(weaponSchema),
+  weapons: sheetNamedList(weaponSchema, 'name'),
 });
 
 /**
@@ -352,10 +352,10 @@ export const callOfCthulhu7eCharacterDataSchema = z.object({
   conditions: conditionsSchema.optional(),
   pulpTalents: sheetList(shortText).optional(),
   spellsAndMythos: spellsAndMythosSchema.optional(),
-  possessions: sheetList(possessionSchema).optional(),
+  possessions: sheetNamedList(possessionSchema, 'name').optional(),
   wealth: wealthSchema.optional(),
   backstory: backstorySchema.optional(),
-  contacts: sheetList(contactSchema).optional(),
+  contacts: sheetNamedList(contactSchema, 'name').optional(),
   appearance: appearanceSchema.optional(),
   notes: longText.optional(),
 });

@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Blank required-name rows on a typed sheet are omitted on save**, instead of blocking the whole save until every new attack, item, spell, feature or hit-die (and the same kind of list on Pathfinder 2e and Call of Cthulhu) is named.
+- **Flexible add controls stop at the server limits** for sections, stats, list items, table rows and columns, using the same full-list note as the typed sheets.
+- **Custom header colours that fail 4.5:1 against the light header text are refused.** Presets are unchanged. An already-stored pale colour still loads; the next save is refused until it is a passing hex or a preset.
+
 ### Changed
 
 - **The stack runs PostgreSQL 18.** Compose, CI, the backend's `pg_dump`/`psql`, and the Ubuntu install steps use 18. The named volume is mounted at `/var/lib/postgresql` (18 stores the cluster under `18/docker`). The database container's filesystem is read-only, with `/tmp` and `/var/run/postgresql` in memory.

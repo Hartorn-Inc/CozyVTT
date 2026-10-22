@@ -120,12 +120,14 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
       ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
       : {};
 
-    // TODO(ui): the header text is always parchment, so a pale custom colour
-    // such as white makes the investigator's name unreadable. Choose the text
-    // colour from the background, with readableTextOn in utils/color.ts.
+    // Pale custom colours are refused on save (4.5:1 against #FFFFFF) rather
+    // than flipping the header. Custom hex keeps fixed white text so a pale
+    // pick looks unreadable; preset chrome stays parchment.
+    const headerTextColor = isCustomColor ? 'text-white' : 'text-parchment';
+    const headerMuted = isCustomColor ? 'text-white/80' : 'text-parchment-light';
     const headerClasses = isCustomColor
-      ? 'text-parchment p-6 rounded-t-lg relative border-b-4 border-amber-600'
-      : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} text-parchment p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
+      ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
+      : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
 
     return (
       <div className={headerClasses} style={headerStyle}>
@@ -243,10 +245,10 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
 
           {/* Character Info */}
           <div>
-            <h2 className="text-3xl font-bold mb-2 text-parchment drop-shadow-lg">
+            <h2 className={`text-3xl font-bold mb-2 ${headerTextColor} drop-shadow-lg`}>
               {data.investigatorName || 'Unnamed Investigator'}
             </h2>
-            <div className="space-y-1 text-parchment-light">
+            <div className={`space-y-1 ${headerMuted}`}>
               <div className="flex items-center space-x-4">
                 <span className="font-medium">{data.occupation || 'No Occupation'}</span>
                 {data.era && <span>• {data.era}</span>}
@@ -269,7 +271,7 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
         {data.playerName && (
           <div className="text-right">
             <div className="text-xs text-amber-300 uppercase tracking-wide">Player</div>
-            <div className="text-lg font-semibold text-parchment">{data.playerName}</div>
+            <div className={`text-lg font-semibold ${headerTextColor}`}>{data.playerName}</div>
           </div>
         )}
       </div>

@@ -7,7 +7,9 @@ import { Plus, Trash2, GripVertical, CheckSquare, Square } from 'lucide-react';
 import { Reorder } from 'motion/react';
 import type { ListSection } from '../../../../../types/flexible-character-sheet';
 import { generateId } from '../../utils/section-helpers';
-import { SHEET_SHORT_TEXT_MAX } from '@/constants/sheetLimits';
+import { FLEXIBLE_MAX_ROWS, SHEET_SHORT_TEXT_MAX } from '@/constants/sheetLimits';
+import ListLimitNote, { ADD_BUTTON_OFF, listChangeAllowed, listIsFull } from '../../../ListLimitNote';
+import { LIMIT_NOTE_CLASS } from '../../limitNoteClass';
 
 interface ListEditorProps {
   section: ListSection;
@@ -15,11 +17,10 @@ interface ListEditorProps {
 }
 
 export const ListEditor: React.FC<ListEditorProps> = ({ section, onUpdate }) => {
-  // TODO(sheets): the server keeps at most 1000 entries in a list section (FLEXIBLE_MAX_ROWS) and this
-  // has no limit, so one more makes a sheet that cannot be saved. Turn the
-  // add button off at the limit, as the typed sheets' lists do with listIsFull
-  // and ListLimitNote.
+  const itemsFull = listIsFull(section.items, FLEXIBLE_MAX_ROWS);
+
   const addItem = () => {
+    if (!listChangeAllowed(section.items.length + 1, section.items.length, FLEXIBLE_MAX_ROWS)) return;
     const newItem = {
       id: generateId(),
       text: '',
@@ -77,8 +78,11 @@ export const ListEditor: React.FC<ListEditorProps> = ({ section, onUpdate }) => 
 
                 <button
                   onClick={() => removeItem(item.id)}
-                  className="flex-shrink-0 p-1 rounded bg-red-50 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-100"
+                  className={`flex-shrink-0 p-1 rounded bg-red-50 text-red-600 transition-opacity hover:bg-red-100 ${
+                    itemsFull ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
                   title="Remove item"
+                  aria-label="Remove item"
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
@@ -94,11 +98,13 @@ export const ListEditor: React.FC<ListEditorProps> = ({ section, onUpdate }) => 
 
       <button
         onClick={addItem}
-        className="flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center"
+        disabled={itemsFull}
+        className={`flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center ${ADD_BUTTON_OFF}`}
       >
         <Plus className="w-4 h-4" />
         Add Item
       </button>
+      <ListLimitNote full={itemsFull} max={FLEXIBLE_MAX_ROWS} className={LIMIT_NOTE_CLASS} />
     </div>
   );
 };

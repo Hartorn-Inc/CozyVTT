@@ -1,10 +1,11 @@
 /**
  * The custom header colour on each editable sheet.
  *
- * The server accepts a preset name or a six-digit `#rrggbb` colour. The hex box
- * let anything from `#` to six digits through, so `#fff`, a colour any browser
- * understands, was sent as typed and the whole save was refused. A stored
- * three-digit colour also opened as the default preset and was saved over.
+ * The server accepts a preset name or a six-digit `#rrggbb` colour that meets
+ * 4.5:1 against white header text. The hex box let anything from `#` to six
+ * digits through, so a short colour was sent as typed and the whole save was
+ * refused. A stored three-digit colour also opened as the default preset and
+ * was saved over. Pale custom hex such as `#FFFF00` is refused, not auto-adjusted.
  */
 
 import React from 'react';
@@ -15,6 +16,7 @@ import { Pathfinder2eCharacterEditor } from '../pathfinder2e/Pathfinder2eCharact
 import { CallOfCthulhu7eCharacterEditor } from '../call-of-cthulhu-7e/CallOfCthulhu7eCharacterEditor';
 import { pf2eCharacter } from '../pathfinder2e/__tests__/pf2eFixture';
 import { cocCharacter } from '../call-of-cthulhu-7e/__tests__/cocFixture';
+import { PALE_HEADER_COLOUR_MESSAGE } from '@/utils/themeColor';
 import type { Character, CharacterData } from '../../../types';
 
 vi.mock('@/hooks/queries', () => ({
@@ -74,11 +76,11 @@ const savedColour = (onSave: ReturnType<typeof open>) =>
 describe.each(EDITORS)('$system custom colour', (entry) => {
   it('saves a three-digit colour as the six-digit form the server accepts', async () => {
     const onSave = open(entry);
-    fireEvent.change(hexBox(), { target: { value: '#fff' } });
+    fireEvent.change(hexBox(), { target: { value: '#123' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => expect(onSave).toHaveBeenCalled());
-    expect(savedColour(onSave)).toBe('#ffffff');
+    expect(savedColour(onSave)).toBe('#112233');
   });
 
   it('refuses an unfinished colour with a message, and does not save', async () => {
@@ -91,11 +93,40 @@ describe.each(EDITORS)('$system custom colour', (entry) => {
   });
 
   it('opens a stored three-digit colour as that colour', async () => {
-    const onSave = open(entry, { themeColor: '#abc' });
-    expect(hexBox().value).toBe('#aabbcc');
+    const onSave = open(entry, { themeColor: '#123' });
+    expect(hexBox().value).toBe('#112233');
 
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => expect(onSave).toHaveBeenCalled());
-    expect(savedColour(onSave)).toBe('#aabbcc');
+    expect(savedColour(onSave)).toBe('#112233');
+  });
+
+  it('does not save #FFFF00 and shows the pale-colour message', async () => {
+    const onSave = open(entry);
+    fireEvent.change(hexBox(), { target: { value: '#FFFF00' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(await screen.findByText(PALE_HEADER_COLOUR_MESSAGE)).toBeTruthy();
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('saves a preset colour', async () => {
+    const onSave = open(entry);
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    expect(savedColour(onSave)).toMatch(/^[A-Za-z]/);
+  });
+
+  it('opens a stored #FFFF00 in the hex box', () => {
+    open(entry, { themeColor: '#FFFF00' });
+    expect(hexBox().value).toBe('#FFFF00');
+  });
+
+  it('shows the pale-colour message for a stored #FFFF00 before the picker is opened', () => {
+    const { Editor, character } = entry;
+    render(<Editor character={character({ themeColor: '#FFFF00' })} onSave={vi.fn()} onCancel={vi.fn()} />);
+    expect(screen.getByText(PALE_HEADER_COLOUR_MESSAGE)).toBeTruthy();
+    expect(screen.queryByLabelText('Custom colour hex code')).toBeNull();
   });
 });

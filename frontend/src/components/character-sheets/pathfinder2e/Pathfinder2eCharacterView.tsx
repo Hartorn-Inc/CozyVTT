@@ -83,15 +83,6 @@ const COLOR_PRESETS = [
   { name: 'Slate', from: 'from-slate-700', to: 'to-slate-900', accent: 'slate-700', hex: '#334155' },
 ];
 
-const shouldUseWhiteText = (hexColor: string): boolean => {
-  const hex = hexColor.replace('#', '');
-  const r = parseInt(hex.substr(0, 2), 16);
-  const g = parseInt(hex.substr(2, 2), 16);
-  const b = parseInt(hex.substr(4, 2), 16);
-  const luminance = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
-  return luminance < 0.5;
-};
-
 export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps> = ({
   character,
   onEdit,
@@ -146,9 +137,9 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
       ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
       : {};
 
-    const headerTextColor = isCustomColor
-      ? (shouldUseWhiteText(customColorHex) ? 'text-white' : 'text-stone-900')
-      : 'text-white';
+    // Custom hex headers keep fixed light text so a pale pick looks unreadable,
+    // matching the save rule. Presets stay light as they always were.
+    const headerTextColor = 'text-white';
 
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative`

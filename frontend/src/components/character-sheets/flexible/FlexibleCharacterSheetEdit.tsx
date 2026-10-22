@@ -21,6 +21,9 @@ import { getUploadLimit, formatUploadLimit } from '@/utils/uploadLimits';
 import { apiErrorMessage } from '@/utils/errors';
 import type { CharacterData } from '@/types';
 import { assetNameFrom } from '@/utils/assetName';
+import { FLEXIBLE_MAX_SECTIONS } from '@/constants/sheetLimits';
+import ListLimitNote, { ADD_BUTTON_OFF, listChangeAllowed, listIsFull } from '../ListLimitNote';
+import { LIMIT_NOTE_CLASS } from './limitNoteClass';
 
 interface FlexibleCharacterSheetEditProps {
   character: Character;
@@ -62,6 +65,7 @@ export const FlexibleCharacterSheetEdit: React.FC<FlexibleCharacterSheetEditProp
   latestSectionsRef.current = sections;
   const [isSaving, setIsSaving] = useState(false);
   const [showAddMenu, setShowAddMenu] = useState(false);
+  const sectionsFull = listIsFull(sections, FLEXIBLE_MAX_SECTIONS);
   const [tokenImageFile, setTokenImageFile] = useState<File | null>(null);
   const [tokenImagePreview, setTokenImagePreview] = useState<string | null>(
     character.tokenImageUrl
@@ -88,6 +92,10 @@ export const FlexibleCharacterSheetEdit: React.FC<FlexibleCharacterSheetEditProp
   useEffect(() => () => {
     if (dirtyRef.current) onDirtyChangeRef.current?.(false);
   }, []);
+
+  useEffect(() => {
+    if (sectionsFull) setShowAddMenu(false);
+  }, [sectionsFull]);
 
   // Handle token image upload
   const handleTokenImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -165,11 +173,11 @@ export const FlexibleCharacterSheetEdit: React.FC<FlexibleCharacterSheetEditProp
     }
   };
 
-  // TODO(sheets): the server keeps at most 100 sections on a sheet (FLEXIBLE_MAX_SECTIONS) and this
-  // has no limit, so one more makes a sheet that cannot be saved. Turn the
-  // add button off at the limit, as the typed sheets' lists do with listIsFull
-  // and ListLimitNote.
   const addSection = (template: SectionTemplate) => {
+    if (!listChangeAllowed(sections.length + 1, sections.length, FLEXIBLE_MAX_SECTIONS)) {
+      setShowAddMenu(false);
+      return;
+    }
     const newSection = template.create();
     setSections([...sections, newSection]);
     setShowAddMenu(false);
@@ -209,6 +217,7 @@ export const FlexibleCharacterSheetEdit: React.FC<FlexibleCharacterSheetEditProp
         section={section}
         onUpdate={(updates) => updateSection(section.id, updates)}
         onRemove={() => removeSection(section.id)}
+        keepRemoveVisible={sectionsFull}
       >
         {editor}
       </SectionEditor>
@@ -307,13 +316,20 @@ export const FlexibleCharacterSheetEdit: React.FC<FlexibleCharacterSheetEditProp
       {/* Add Section Button */}
       <div className="relative">
         <button
-          onClick={() => setShowAddMenu(!showAddMenu)}
-          className="flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center"
+          onClick={() => {
+            if (sectionsFull) return;
+            setShowAddMenu(!showAddMenu);
+          }}
+          disabled={sectionsFull}
+          className={`flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center ${ADD_BUTTON_OFF}`}
         >
           <Plus className="w-4 h-4" />
           Add Section
         </button>
-        {showAddMenu && <AddSectionMenu onSelect={addSection} onClose={() => setShowAddMenu(false)} />}
+        {showAddMenu && !sectionsFull && (
+          <AddSectionMenu onSelect={addSection} onClose={() => setShowAddMenu(false)} />
+        )}
+        <ListLimitNote full={sectionsFull} max={FLEXIBLE_MAX_SECTIONS} className={LIMIT_NOTE_CLASS} />
       </div>
     </div>
   );

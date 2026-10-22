@@ -51,7 +51,12 @@ import ListLimitNote, { ADD_BUTTON_OFF, listIsFull } from '../ListLimitNote';
 import { pf2eInitiativeBonus } from '@/utils/rules/initiative';
 import { pf2eArmorClass, pf2eClassDC } from '@/utils/rules/pathfinder2e';
 import { readFeatureEntries, readFeatureEntriesForEditing } from '@/utils/featureEntries';
-import { toStoredHexColor, HEX_COLOUR_HINT } from '@/utils/themeColor';
+import { omitUnnamedRows } from '@/utils/sheetNamedRows';
+import {
+  toStoredHexColor,
+  customHeaderColourError,
+  THEME_COLOR_ERROR_ID,
+} from '@/utils/themeColor';
 import {
   readPf2eSpellSlots,
   readPf2eCantrips,
@@ -176,6 +181,8 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
   const [activeTab, setActiveTab] = useState<TabId>('stats');
   const [isSaving, setIsSaving] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const hexInputRef = useRef<HTMLInputElement>(null);
+  const [hexFocusNonce, setHexFocusNonce] = useState(0);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { data: serverConfig } = useServerConfigQuery();
 
@@ -360,10 +367,18 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
         if (hex) {
           setCustomColorHex(hex);
           setIsCustomColor(true);
+          const colourError = customHeaderColourError(true, hex);
+          if (colourError) setErrors((prev) => ({ ...prev, themeColor: colourError }));
         }
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (!showColorPicker || hexFocusNonce === 0) return;
+    hexInputRef.current?.focus();
+    hexInputRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [showColorPicker, hexFocusNonce]);
 
   const handleCustomColorChange = (hex: string) => {
     setCustomColorHex(hex);
@@ -375,6 +390,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     setSelectedColor(color);
     setIsCustomColor(false);
     setShowColorPicker(false);
+    setErrors((prev) => ({ ...prev, themeColor: '' }));
   };
 
   // Auto-calculate ability modifiers
@@ -705,10 +721,13 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     if (!formData.level || formData.level < 1 || formData.level > 20) {
       newErrors.level = 'Level must be between 1 and 20';
     }
-    // The server refuses a colour it cannot read, and the whole save with it.
-    if (isCustomColor && customColorHex !== '' && !toStoredHexColor(customColorHex)) {
-      newErrors.themeColor = HEX_COLOUR_HINT;
+    // The server refuses a colour it cannot read, and a custom hex too pale
+    // for the fixed light header text, and the whole save with it.
+    const colourError = customHeaderColourError(isCustomColor, customColorHex);
+    if (colourError) {
+      newErrors.themeColor = colourError;
       setShowColorPicker(true);
+      setHexFocusNonce((n) => n + 1);
     }
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
@@ -746,8 +765,36 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
       const updatedData = {
         ...formData,
         // Drop class-feature rows left blank. The editor keeps them while you
-        // type; storage should not.
+        // type; storage should not. Other required-name lists omit the same way
+        // on the payload only.
         classFeatures: readFeatureEntries(formData.classFeatures),
+        loreSkills: omitUnnamedRows(formData.loreSkills, 'name'),
+        strikes: omitUnnamedRows(formData.strikes, 'name'),
+        inventory: omitUnnamedRows(formData.inventory, 'name'),
+        feats: formData.feats
+          ? {
+              ancestryAndHeritage: omitUnnamedRows(formData.feats.ancestryAndHeritage, 'name') ?? [],
+              class: omitUnnamedRows(formData.feats.class, 'name') ?? [],
+              skill: omitUnnamedRows(formData.feats.skill, 'name') ?? [],
+              general: omitUnnamedRows(formData.feats.general, 'name') ?? [],
+              bonus: omitUnnamedRows(formData.feats.bonus, 'name') ?? [],
+            }
+          : formData.feats,
+        spellcasting: formData.spellcasting
+          ? {
+              ...formData.spellcasting,
+              cantrips: omitUnnamedRows(formData.spellcasting.cantrips, 'name'),
+              spells: omitUnnamedRows(formData.spellcasting.spells, 'name'),
+              innateSpells: omitUnnamedRows(formData.spellcasting.innateSpells, 'name'),
+              rituals: omitUnnamedRows(formData.spellcasting.rituals, 'name'),
+              focusSpells: formData.spellcasting.focusSpells
+                ? {
+                    ...formData.spellcasting.focusSpells,
+                    spells: omitUnnamedRows(formData.spellcasting.focusSpells.spells, 'name') ?? [],
+                  }
+                : formData.spellcasting.focusSpells,
+            }
+          : formData.spellcasting,
         themeColor: isCustomColor ? (toStoredHexColor(customColorHex) ?? '') : selectedColor.name,
       } as CharacterData;
 
@@ -807,7 +854,9 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
 
   const renderHeader = () => {
     const headerStyle = isCustomColor ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` } : {};
-    const headerTextColor = isCustomColor ? (shouldUseWhiteText(customColorHex) ? 'text-white' : 'text-stone-900') : (shouldUseWhiteText(selectedColor.hex) ? 'text-white' : 'text-stone-900');
+    // Custom hex headers keep fixed light text so a pale pick looks unreadable
+    // in the editor, matching the save rule. Presets still pick by luminance.
+    const headerTextColor = isCustomColor ? 'text-white' : (shouldUseWhiteText(selectedColor.hex) ? 'text-white' : 'text-stone-900');
     const headerClasses = isCustomColor ? `${headerTextColor} p-6 rounded-t-lg relative` : `bg-gradient-to-r ${selectedColor.from} ${selectedColor.to} ${headerTextColor} p-6 rounded-t-lg relative`;
 
     return (
@@ -831,9 +880,12 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
           </button>
         </div>
 
-        <button onClick={() => setShowColorPicker(!showColorPicker)} className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors" title="Change theme color">
+        <button onClick={() => setShowColorPicker(!showColorPicker)} className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors" title="Change theme color" aria-invalid={Boolean(errors.themeColor)} aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}>
           <Palette className="w-5 h-5" />
         </button>
+        {errors.themeColor && !showColorPicker && (
+          <p id={THEME_COLOR_ERROR_ID} role="alert" className="absolute top-14 right-4 z-10 max-w-xs rounded-lg bg-white px-3 py-2 text-xs text-red-600 shadow-lg">{errors.themeColor}</p>
+        )}
 
         {showColorPicker && (
           <div className="absolute top-16 right-4 bg-white text-stone-800 rounded-lg shadow-xl p-4 z-10 border-2 border-stone-200 max-w-md">
@@ -851,9 +903,9 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
               <div className="flex items-center space-x-2">
                 <input type="color" value={customColorHex || '#1d4ed8'} onChange={(e) => handleCustomColorChange(e.target.value)} className="w-12 h-12 rounded cursor-pointer border-2 border-stone-300" title="Pick a custom color" />
                 <div className="flex-1">
-                  <input type="text" value={customColorHex} onChange={(e) => { const hex = e.target.value; if (hex === '' || /^#[0-9A-Fa-f]{0,6}$/.test(hex)) handleCustomColorChange(hex); }} placeholder="#1d4ed8" aria-label="Custom colour hex code" className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  <input ref={hexInputRef} type="text" value={customColorHex} onChange={(e) => { const hex = e.target.value; if (hex === '' || /^#[0-9A-Fa-f]{0,6}$/.test(hex)) handleCustomColorChange(hex); }} placeholder="#1d4ed8" aria-label="Custom colour hex code" aria-invalid={Boolean(errors.themeColor)} aria-describedby={errors.themeColor ? THEME_COLOR_ERROR_ID : undefined} className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   <div className="text-xs text-stone-500 mt-1">Enter hex code</div>
-                  {errors.themeColor && <div className="text-xs text-red-600 mt-1">{errors.themeColor}</div>}
+                  {errors.themeColor && <p id={THEME_COLOR_ERROR_ID} role="alert" className="text-xs text-red-600 mt-1">{errors.themeColor}</p>}
                 </div>
               </div>
             </div>

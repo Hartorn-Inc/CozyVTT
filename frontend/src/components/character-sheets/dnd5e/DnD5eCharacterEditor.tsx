@@ -35,6 +35,7 @@ import type {
 import { apiErrorMessage } from '@/utils/errors';
 import { DND5E_CONDITIONS } from '@/utils/conditions';
 import { collectSheetFeatures, readFeatureEntriesForEditing } from '@/utils/featureEntries';
+import { omitUnnamedRows } from '@/utils/sheetNamedRows';
 import { api } from '../../../services/api';
 import { useServerConfigQuery } from '@/hooks/queries';
 import { getUploadLimit, formatUploadLimit } from '@/utils/uploadLimits';
@@ -69,7 +70,11 @@ import {
   customWeaponProperties,
   addCustomWeaponProperty,
 } from '@/utils/weaponProperties';
-import { toStoredHexColor, HEX_COLOUR_HINT } from '@/utils/themeColor';
+import {
+  toStoredHexColor,
+  customHeaderColourError,
+  THEME_COLOR_ERROR_ID,
+} from '@/utils/themeColor';
 import { SHEET_LIST_MAX, SHEET_NAME_MAX, SPELL_SLOTS_MAX } from '@/constants/sheetLimits';
 import { assetNameFrom } from '@/utils/assetName';
 
@@ -266,6 +271,8 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   const [activeTab, setActiveTab] = useState<TabId>('stats');
   const [isSaving, setIsSaving] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const hexInputRef = useRef<HTMLInputElement>(null);
+  const [hexFocusNonce, setHexFocusNonce] = useState(0);
   // Set when the last change to the cantrips box was turned away for adding one entry too many.
   const [cantripsTurnedAway, setCantripsTurnedAway] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -435,10 +442,18 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
         if (hex) {
           setCustomColorHex(hex);
           setIsCustomColor(true);
+          const colourError = customHeaderColourError(true, hex);
+          if (colourError) setErrors((prev) => ({ ...prev, themeColor: colourError }));
         }
       }
     }
   }, []);
+
+  useEffect(() => {
+    if (!showColorPicker || hexFocusNonce === 0) return;
+    hexInputRef.current?.focus();
+    hexInputRef.current?.scrollIntoView?.({ block: 'nearest' });
+  }, [showColorPicker, hexFocusNonce]);
 
   // Handle custom color change
   const handleCustomColorChange = (hex: string) => {
@@ -452,6 +467,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
     setSelectedColor(color);
     setIsCustomColor(false);
     setShowColorPicker(false);
+    setErrors((prev) => ({ ...prev, themeColor: '' }));
   };
 
   // The derived-number effects below each build their update from `prev`,
@@ -822,10 +838,13 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
       newErrors.characterName = 'Character name is required';
     }
 
-    // The server refuses a colour it cannot read, and the whole save with it.
-    if (isCustomColor && customColorHex !== '' && !toStoredHexColor(customColorHex)) {
-      newErrors.themeColor = HEX_COLOUR_HINT;
+    // The server refuses a colour it cannot read, and a custom hex too pale
+    // for the fixed light header text, and the whole save with it.
+    const colourError = customHeaderColourError(isCustomColor, customColorHex);
+    if (colourError) {
+      newErrors.themeColor = colourError;
       setShowColorPicker(true);
+      setHexFocusNonce((n) => n + 1);
     }
 
     setErrors(newErrors);
@@ -899,6 +918,12 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
       updatedData.featuresAndTraits = collectSheetFeatures(updatedData);
       delete (updatedData as Record<string, unknown>).features;
 
+      // Blank required-name rows stay visible in the editor until save; the
+      // payload drops them the same way the schema does.
+      updatedData.attacks = omitUnnamedRows(updatedData.attacks, 'name');
+      updatedData.inventory = omitUnnamedRows(updatedData.inventory, 'name');
+      updatedData.hitDice = omitUnnamedRows(updatedData.hitDice, 'class');
+
       // Cantrips, parsed into a new spellcasting block. Written into the one
       // the form holds, the array showed up in the form while the save was in
       // flight, so the sheet still counted as changed once it had gone through.
@@ -909,6 +934,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
           ...updatedData.spellcasting,
           cantrips: parseCommaSeparated(updatedData.spellcasting.cantrips),
           slots: withAllSlotLevels(updatedData.spellcasting.slots),
+          spells: omitUnnamedRows(updatedData.spellcasting.spells, 'name') ?? [],
         };
       }
 
@@ -1027,9 +1053,10 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
       ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
       : {};
 
-    // Determine text color based on background luminance
+    // Custom hex headers keep fixed light text so a pale pick looks unreadable
+    // in the editor, matching the save rule. Presets still pick by luminance.
     const headerTextColor = isCustomColor
-      ? (shouldUseWhiteText(customColorHex) ? 'text-white' : 'text-stone-900')
+      ? 'text-white'
       : (shouldUseWhiteText(selectedColor.hex) ? 'text-white' : 'text-stone-900');
 
     const headerClasses = isCustomColor
@@ -1062,9 +1089,20 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
           onClick={() => setShowColorPicker(!showColorPicker)}
           className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors"
           title="Change theme color"
+          aria-invalid={Boolean(errors.themeColor)}
+          aria-describedby={errors.themeColor && !showColorPicker ? THEME_COLOR_ERROR_ID : undefined}
         >
           <Palette className="w-5 h-5" />
         </button>
+        {errors.themeColor && !showColorPicker && (
+          <p
+            id={THEME_COLOR_ERROR_ID}
+            role="alert"
+            className="absolute top-14 right-4 z-10 max-w-xs rounded-lg bg-white px-3 py-2 text-xs text-red-600 shadow-lg"
+          >
+            {errors.themeColor}
+          </p>
+        )}
 
         {/* Color Picker Dropdown */}
         {showColorPicker && (
@@ -1107,6 +1145,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
                 <div className="flex-1">
                   <input
                     type="text"
+                    ref={hexInputRef}
                     value={customColorHex}
                     onChange={(e) => {
                       const hex = e.target.value;
@@ -1117,10 +1156,16 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
                     }}
                     placeholder="#b91c1c"
                     aria-label="Custom colour hex code"
+                    aria-invalid={Boolean(errors.themeColor)}
+                    aria-describedby={errors.themeColor ? THEME_COLOR_ERROR_ID : undefined}
                     className="w-full px-3 py-2 border border-stone-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
                   <div className="text-xs text-stone-500 mt-1">Enter hex code (e.g., #b91c1c)</div>
-                  {errors.themeColor && <div className="text-xs text-red-600 mt-1">{errors.themeColor}</div>}
+                  {errors.themeColor && (
+                    <p id={THEME_COLOR_ERROR_ID} role="alert" className="text-xs text-red-600 mt-1">
+                      {errors.themeColor}
+                    </p>
+                  )}
                 </div>
               </div>
 
