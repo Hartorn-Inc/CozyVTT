@@ -6,7 +6,7 @@
 import { GameSystem } from '../../game-systems';
 import { getBlankCharacterTemplate } from '../../validators/game-systems';
 import { SHEET_LIST_MAX } from '../../validators/game-systems/sheetLimits';
-import { prepareSheetForStorage } from '../prepareSheet';
+import { prepareSheetForStorage, sheetRecord } from '../prepareSheet';
 
 const rows = (count: number, row: unknown) => Array.from({ length: count }, () => row);
 
@@ -147,5 +147,18 @@ describe('prepareSheetForStorage', () => {
     if (result.ok) {
       expect(result.data).toEqual({ sections: [] });
     }
+  });
+});
+
+describe('sheetRecord', () => {
+  it('returns a plain object as an indexable record', () => {
+    const sheet = { hp: { maximum: 1 } };
+    expect(sheetRecord(sheet)).toBe(sheet);
+  });
+
+  it('returns null for a non-object, an array, or null', () => {
+    expect(sheetRecord(null)).toBeNull();
+    expect(sheetRecord(12)).toBeNull();
+    expect(sheetRecord([{ hp: 1 }])).toBeNull();
   });
 });
