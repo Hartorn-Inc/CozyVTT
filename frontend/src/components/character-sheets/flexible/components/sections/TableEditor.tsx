@@ -6,7 +6,17 @@ import React from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { TableSection } from '../../../../../types/flexible-character-sheet';
 import { generateId } from '../../utils/section-helpers';
-import { SHEET_NAME_MAX, SHEET_SHORT_TEXT_MAX } from '@/constants/sheetLimits';
+import {
+  FLEXIBLE_MAX_COLUMNS,
+  FLEXIBLE_MAX_ROWS,
+  SHEET_NAME_MAX,
+  SHEET_SHORT_TEXT_MAX,
+} from '@/constants/sheetLimits';
+import ListLimitNote, { ADD_BUTTON_OFF, listChangeAllowed, listIsFull } from '../../../ListLimitNote';
+import { LIMIT_NOTE_CLASS } from '../../limitNoteClass';
+
+const columnLimitNoteId = (sectionId: string) => `flexible-table-column-limit-${sectionId}`;
+const rowLimitNoteId = (sectionId: string) => `flexible-table-row-limit-${sectionId}`;
 
 interface TableEditorProps {
   section: TableSection;
@@ -14,11 +24,11 @@ interface TableEditorProps {
 }
 
 export const TableEditor: React.FC<TableEditorProps> = ({ section, onUpdate }) => {
-  // TODO(sheets): the server keeps at most 50 columns in a table (FLEXIBLE_MAX_COLUMNS) and this
-  // has no limit, so one more makes a sheet that cannot be saved. Turn the
-  // add button off at the limit, as the typed sheets' lists do with listIsFull
-  // and ListLimitNote.
+  const columnsFull = listIsFull(section.columns, FLEXIBLE_MAX_COLUMNS);
+  const rowsFull = listIsFull(section.rows, FLEXIBLE_MAX_ROWS);
+
   const addColumn = () => {
+    if (!listChangeAllowed(section.columns.length + 1, section.columns.length, FLEXIBLE_MAX_COLUMNS)) return;
     const newColumn = {
       id: generateId(),
       name: 'New Column',
@@ -50,11 +60,8 @@ export const TableEditor: React.FC<TableEditorProps> = ({ section, onUpdate }) =
     });
   };
 
-  // TODO(sheets): the server keeps at most 1000 rows in a table (FLEXIBLE_MAX_ROWS) and this
-  // has no limit, so one more makes a sheet that cannot be saved. Turn the
-  // add button off at the limit, as the typed sheets' lists do with listIsFull
-  // and ListLimitNote.
   const addRow = () => {
+    if (!listChangeAllowed(section.rows.length + 1, section.rows.length, FLEXIBLE_MAX_ROWS)) return;
     const newRow = {
       id: generateId(),
       cells: section.columns.reduce((acc, col) => ({ ...acc, [col.id]: '' }), {}),
@@ -93,8 +100,11 @@ export const TableEditor: React.FC<TableEditorProps> = ({ section, onUpdate }) =
                   {section.columns.length > 1 && (
                     <button
                       onClick={() => removeColumn(column.id)}
-                      className="p-1 rounded bg-red-50 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-100"
+                      className={`p-1 rounded bg-red-50 text-red-600 transition-opacity hover:bg-red-100 ${
+                        columnsFull ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                      }`}
                       title="Remove column"
+                      aria-label="Remove column"
                     >
                       <Trash2 className="w-3 h-3" />
                     </button>
@@ -105,8 +115,11 @@ export const TableEditor: React.FC<TableEditorProps> = ({ section, onUpdate }) =
             <th className="px-2 py-2 w-12">
               <button
                 onClick={addColumn}
-                className="p-1 rounded bg-moss-green/10 text-brand-ink hover:bg-moss-green/20"
+                disabled={columnsFull}
+                className={`p-1 rounded bg-moss-green/10 text-brand-ink hover:bg-moss-green/20 ${ADD_BUTTON_OFF}`}
                 title="Add column"
+                aria-label="Add column"
+                aria-describedby={columnsFull ? columnLimitNoteId(section.id) : undefined}
               >
                 <Plus className="w-4 h-4" />
               </button>
@@ -136,10 +149,13 @@ export const TableEditor: React.FC<TableEditorProps> = ({ section, onUpdate }) =
               <td className="px-2 py-2">
                 <button
                   onClick={() => removeRow(row.id)}
-                  className="p-1 rounded bg-red-50 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-100"
+                  className={`p-1 rounded bg-red-50 text-red-600 transition-opacity hover:bg-red-100 ${
+                    rowsFull ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                  }`}
                   title="Remove row"
+                  aria-label="Remove row"
                 >
-                  <Trash2 className="w-3 h-3" />
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </td>
             </tr>
@@ -149,11 +165,25 @@ export const TableEditor: React.FC<TableEditorProps> = ({ section, onUpdate }) =
 
       <button
         onClick={addRow}
-        className="flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center"
+        disabled={rowsFull}
+        aria-describedby={rowsFull ? rowLimitNoteId(section.id) : undefined}
+        className={`flex items-center gap-2 px-4 py-2 bg-moss-green/10 text-brand-ink rounded-lg hover:bg-moss-green/20 transition-colors w-full justify-center ${ADD_BUTTON_OFF}`}
       >
         <Plus className="w-4 h-4" />
         Add Row
       </button>
+      <ListLimitNote
+        id={rowLimitNoteId(section.id)}
+        full={rowsFull}
+        max={FLEXIBLE_MAX_ROWS}
+        className={LIMIT_NOTE_CLASS}
+      />
+      <ListLimitNote
+        id={columnLimitNoteId(section.id)}
+        full={columnsFull}
+        max={FLEXIBLE_MAX_COLUMNS}
+        className={LIMIT_NOTE_CLASS}
+      />
     </div>
   );
 };

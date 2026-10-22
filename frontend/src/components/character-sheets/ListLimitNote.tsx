@@ -31,15 +31,18 @@ export default function ListLimitNote({
   full,
   max = SHEET_LIST_MAX,
   className = 'mt-1 text-xs italic text-stone-600',
+  id,
 }: {
   full: boolean;
   max?: number;
   /** The note's classes, for a sheet with a palette of its own. */
   className?: string;
+  /** Optional id so an add button can point at the note with aria-describedby. */
+  id?: string;
 }) {
   if (!full) return null;
   return (
-    <p role="status" className={className}>
+    <p role="status" id={id} className={className}>
       {listFullMessage(max)}
     </p>
   );

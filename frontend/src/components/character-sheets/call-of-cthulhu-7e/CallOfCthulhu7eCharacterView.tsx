@@ -33,6 +33,7 @@ import { projectCharacterData } from '../../../utils/sheetProjection';
 import { WeaponsList } from './components/WeaponsList';
 import { BackstorySection } from './components/BackstorySection';
 import { isHexColor } from '@/utils/styleAllowlists';
+import { customHeaderFill, customHeaderTextClass, CUSTOM_HEADER_CONTROL_SURFACE } from '@/utils/themeColor';
 
 interface CallOfCthulhu7eCharacterViewProps {
   character: Character;
@@ -117,16 +118,16 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
   // Render character header with vintage styling
   const renderHeader = () => {
     // Determine the current background style
-    const headerStyle = isCustomColor
-      ? { background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }
-      : {};
+    const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
-    // TODO(ui): the header text is always parchment, so a pale custom colour
-    // such as white makes the investigator's name unreadable. Choose the text
-    // colour from the background, with readableTextOn in utils/color.ts.
+    // Passing custom hex keeps white name text. Stored pale hex uses dark
+    // text so the view is readable; the next save is still refused. Preset
+    // chrome stays parchment.
+    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-parchment';
+    const headerMuted = isCustomColor ? headerTextColor : 'text-parchment-light';
     const headerClasses = isCustomColor
-      ? 'text-parchment p-6 rounded-t-lg relative border-b-4 border-amber-600'
-      : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} text-parchment p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
+      ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
+      : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
 
     return (
       <div className={headerClasses} style={headerStyle}>
@@ -137,7 +138,7 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
         {/* Color Picker Button */}
         <button
           onClick={() => setShowColorPicker(!showColorPicker)}
-          className="absolute top-4 right-4 p-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors"
+          className={`absolute top-4 right-4 p-2 ${isCustomColor ? CUSTOM_HEADER_CONTROL_SURFACE : 'bg-white/20 hover:bg-white/30'} rounded-lg transition-colors`}
           title="Change theme color"
         >
           <Palette className="w-5 h-5" />
@@ -204,7 +205,7 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
                 <div className="flex items-center space-x-2 p-2 bg-stone-50 rounded">
                   <div
                     className="w-8 h-8 rounded"
-                    style={{ background: `linear-gradient(to right, ${customColorHex}, ${customColorHex}dd)` }}
+                    style={customHeaderFill(customColorHex)}
                   />
                   <span className="text-sm font-medium">Custom: {customColorHex}</span>
                 </div>
@@ -244,17 +245,17 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
 
           {/* Character Info */}
           <div>
-            <h2 className="text-3xl font-bold mb-2 text-parchment drop-shadow-lg">
+            <h2 className={`text-3xl font-bold mb-2 ${headerTextColor} drop-shadow-lg`}>
               {data.investigatorName || 'Unnamed Investigator'}
             </h2>
-            <div className="space-y-1 text-parchment-light">
+            <div className={`space-y-1 ${headerMuted}`}>
               <div className="flex items-center space-x-4">
                 <span className="font-medium">{data.occupation || 'No Occupation'}</span>
                 {data.era && <span>• {data.era}</span>}
               </div>
               {data.residence && (
                 <div className="text-sm">
-                  <span className="text-amber-300">Residence:</span> {data.residence}
+                  <span className={headerMuted}>Residence:</span> {data.residence}
                 </div>
               )}
               <div className="flex items-center space-x-4 text-sm">
@@ -269,8 +270,8 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
         {/* Player Name */}
         {data.playerName && (
           <div className="text-right">
-            <div className="text-xs text-amber-300 uppercase tracking-wide">Player</div>
-            <div className="text-lg font-semibold text-parchment">{data.playerName}</div>
+            <div className={`text-xs uppercase tracking-wide ${headerMuted}`}>Player</div>
+            <div className={`text-lg font-semibold ${headerTextColor}`}>{data.playerName}</div>
           </div>
         )}
       </div>

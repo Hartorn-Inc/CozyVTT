@@ -12,6 +12,8 @@ interface SectionEditorProps {
   onUpdate: (updates: Partial<FlexibleSection>) => void;
   onRemove: () => void;
   children: React.ReactNode;
+  /** Keep the remove control visible so a full sheet can still be edited down. */
+  keepRemoveVisible?: boolean;
 }
 
 export const SectionEditor: React.FC<SectionEditorProps> = ({
@@ -19,6 +21,7 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
   onUpdate,
   onRemove,
   children,
+  keepRemoveVisible = false,
 }) => {
   const updateTitle = (title: string) => {
     onUpdate({ title });
@@ -43,8 +46,11 @@ export const SectionEditor: React.FC<SectionEditorProps> = ({
 
         <button
           onClick={onRemove}
-          className="flex-shrink-0 p-2 rounded bg-red-50 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-100"
+          className={`flex-shrink-0 p-2 rounded bg-red-50 text-red-600 transition-opacity hover:bg-red-100 ${
+            keepRemoveVisible ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+          }`}
           title="Remove section"
+          aria-label="Remove section"
         >
           <Trash2 className="w-4 h-4" />
         </button>
