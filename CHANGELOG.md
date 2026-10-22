@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ### Fixed
 
+- **Gradient view-meta chips and white-text field wash.** Preset view meta sits on opaque stone-900 with white text; white-text gradient editor fields drop the 10% white wash.
 - **Gradient dark-stop XP and Edit contrast.** Trailing XP and hero-point copy on D&D and Pathfinder gradient presets is white against the dark `to-*` stop, Edit sits on opaque stone-900, and name-field placeholders are solid white or stone-900 rather than current/50.
 - **Sheet-header name, token, and Save/Edit contrast.** Vintage presets use white name text; header labels and the token file control are keyboard-reachable; Save and vintage Edit sit on darker green/amber with a current-color border.
 - **Blank required-name rows on a typed sheet are omitted on save**, instead of blocking the whole save until every new attack, item, spell, feature or hit-die (and the same kind of list on Pathfinder 2e and Call of Cthulhu) is named.

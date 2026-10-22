@@ -126,10 +126,10 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
   const renderHeader = () => {
     const chipClass = isCustomColor
       ? 'px-3 py-1 rounded-full text-sm border border-current'
-      : 'px-3 py-1 bg-white/10 rounded-full text-sm';
+      : 'px-3 py-1 rounded-full bg-stone-900 text-white text-sm';
     const chipStrongClass = isCustomColor
       ? 'px-3 py-1 rounded-full text-sm font-medium border border-current'
-      : 'px-3 py-1 bg-white/20 rounded-full text-sm font-medium';
+      : 'px-3 py-1 rounded-full bg-stone-900 text-white text-sm font-medium';
 
     return (
       <SheetHeader
@@ -159,7 +159,7 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
         onEdit={onEdit}
         meta={(paint) => (
           <>
-            <div className={`flex items-center flex-wrap gap-2 ${paint.text}`}>
+            <div className={`flex items-center flex-wrap gap-2${isCustomColor ? ` ${paint.text}` : ''}`}>
               <span className={chipStrongClass}>
                 Level {data.level} {data.class}
               </span>
@@ -183,9 +183,15 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
               )}
             </div>
             {data.playerName && (
-              <div className={`mt-2 text-sm ${paint.text}`}>
-                Player: {data.playerName}
-              </div>
+              isCustomColor ? (
+                <div className={`mt-2 text-sm ${paint.text}`}>
+                  Player: {data.playerName}
+                </div>
+              ) : (
+                <div className="inline-flex w-fit max-w-full mt-2 px-3 py-1 rounded-full bg-stone-900 text-white text-sm">
+                  Player: {data.playerName}
+                </div>
+              )
             )}
           </>
         )}

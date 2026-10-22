@@ -339,7 +339,12 @@ describe('sheet header contrast and labels', () => {
   it('paints D&D Amber Gold view name stone-900, not white, without pale-red meta', () => {
     render(
       <DnD5eCharacterView
-        character={dndCharacter({ themeColor: 'Amber Gold', experiencePoints: 0 })}
+        character={dndCharacter({
+          themeColor: 'Amber Gold',
+          experiencePoints: 0,
+          alignment: 'Lawful Good',
+          background: 'Acolyte',
+        })}
       />,
     );
     const heading = screen.getByRole('heading', { name: 'Aldra' });
@@ -349,6 +354,13 @@ describe('sheet header contrast and labels', () => {
     expect(header?.className).toContain('text-stone-900');
     expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
     expect(header?.innerHTML).not.toMatch(/text-red-100|text-red-200/);
+    const meta = screen.getByText('Level 1 Human Fighter');
+    const chip = meta.closest('.bg-stone-900');
+    expect(chip?.className).toContain('bg-stone-900');
+    expect(chip?.className).toContain('text-white');
+    expect(chip?.className).not.toMatch(/(?:^|\s)text-stone-900(?:\s|$)/);
+    expect(chip).toHaveTextContent('Lawful Good');
+    expect(chip).toHaveTextContent('Acolyte');
     const experience = screen.getByText('Experience');
     expect(experience.className).toContain('text-white');
     expect(experience.className).not.toContain('text-stone-900');
@@ -357,7 +369,11 @@ describe('sheet header contrast and labels', () => {
   it('paints Pathfinder Golden view name stone-900, not white', () => {
     render(
       <Pathfinder2eCharacterView
-        character={pf2eCharacter({ themeColor: 'Golden', heroPoints: 0 })}
+        character={pf2eCharacter({
+          themeColor: 'Golden',
+          heroPoints: 0,
+          playerName: 'Ada',
+        })}
       />,
     );
     const heading = screen.getByRole('heading', { name: 'New Character' });
@@ -366,12 +382,39 @@ describe('sheet header contrast and labels', () => {
     const header = headerRoot(heading);
     expect(header?.className).toContain('text-stone-900');
     expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+    const levelChip = screen.getByText('Level 1 Fighter');
+    expect(levelChip.className).toContain('bg-stone-900');
+    expect(levelChip.className).toContain('text-white');
+    const playerLine = screen.getByText('Player: Ada');
+    expect(playerLine.className).toContain('bg-stone-900');
+    expect(playerLine.className).toContain('text-white');
     const experience = screen.getByText('Experience Points');
     expect(experience.className).toContain('text-white');
     expect(experience.className).not.toContain('text-stone-900');
     const heroPoints = screen.getByText('Hero Points');
     expect(heroPoints.className).toContain('text-white');
     expect(heroPoints.className).not.toContain('text-stone-900');
+  });
+
+  it('paints Forest Green D&D editor fields on a transparent surface, not a 10% wash', () => {
+    render(
+      <DnD5eCharacterEditor
+        character={dndCharacter({ themeColor: 'Forest Green' })}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const header = headerRoot(nameBox())!;
+    const race = within(header).getByLabelText('Race');
+    const classField = within(header).getByLabelText('Class');
+    const level = within(header).getByLabelText('Level');
+    expect(race.className).toContain('bg-transparent');
+    expect(race.className).not.toContain('bg-white/10');
+    expect(classField.className).toContain('bg-transparent');
+    expect(classField.className).not.toContain('bg-white/10');
+    expect(level.className).toContain('bg-transparent');
+    expect(level.className).not.toContain('bg-white/10');
+    expect(nameBox().className).toContain('placeholder:text-white');
   });
 
   it.each(NAME_EDITORS)(

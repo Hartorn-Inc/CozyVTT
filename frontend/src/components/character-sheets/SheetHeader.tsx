@@ -74,7 +74,8 @@ export const shouldUseWhiteText = (hexColor: string): boolean => {
 
 /**
  * Field-surface classes for a custom vs preset header. Name and system meta
- * fields both use these so custom-header paint stays consistent.
+ * fields both use these so custom-header paint stays consistent. White-text
+ * gradient fields sit on the preset fill; stone-900 text keeps a 10% wash.
  */
 export function headerPaint(args: {
   variant: 'gradient' | 'vintage';
@@ -109,14 +110,17 @@ export function headerPaint(args: {
   // text so the header is readable; save still refuses until it is a
   // passing hex or a preset. Gradient presets pick by luminance in both
   // editors and views. Vintage CoC presets always use white text.
+  // White-text gradient fields sit on the preset fill (no 10% wash);
+  // stone-900 text keeps the wash so fields are not on a raw dark stop.
   const text = shouldUseWhiteText(presetHex) ? 'text-white' : 'text-stone-900';
+  const whiteText = text === 'text-white';
   return {
     text,
     trailingText: 'text-white',
-    placeholder: text === 'text-white' ? 'placeholder:text-white' : 'placeholder:text-stone-900',
-    fieldBg: 'bg-white/10',
-    fieldBorder: 'border-white/20',
-    fieldFocus: 'focus:border-white/40',
+    placeholder: whiteText ? 'placeholder:text-white' : 'placeholder:text-stone-900',
+    fieldBg: whiteText ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10',
+    fieldBorder: whiteText ? CUSTOM_HEADER_FIELD_BORDER : 'border-white/20',
+    fieldFocus: whiteText ? CUSTOM_HEADER_FIELD_FOCUS : 'focus:border-white/40',
   };
 }
 

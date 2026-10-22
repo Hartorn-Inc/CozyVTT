@@ -166,15 +166,24 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
         emptyDisplay: 'Unnamed Character',
       }}
       onEdit={onEdit}
-      meta={(paint) => (
-        <div className={`flex items-center space-x-4 ${paint.text}`}>
-          <span>
-            Level {data.level} {data.race} {data.class}
-          </span>
-          {data.alignment && <span>• {data.alignment}</span>}
-          {data.background && <span>• {data.background}</span>}
-        </div>
-      )}
+      meta={(paint) => {
+        const metaRow = (
+          <>
+            <span>
+              Level {data.level} {data.race} {data.class}
+            </span>
+            {data.alignment && <span>• {data.alignment}</span>}
+            {data.background && <span>• {data.background}</span>}
+          </>
+        );
+        return isCustomColor ? (
+          <div className={`flex items-center space-x-4 ${paint.text}`}>{metaRow}</div>
+        ) : (
+          <div className="inline-flex w-fit max-w-full flex-wrap items-center gap-x-4 px-3 py-1 rounded-full bg-stone-900 text-white">
+            {metaRow}
+          </div>
+        );
+      }}
       trailing={(paint) =>
         data.experiencePoints !== undefined ? (
           <div className={`text-right ${paint.trailingText}`}>
