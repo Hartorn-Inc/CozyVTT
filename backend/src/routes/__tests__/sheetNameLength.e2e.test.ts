@@ -36,7 +36,6 @@ const systems: Array<[GameSystem, string]> = [
   [GameSystem.DND_5E, 'characterName'],
   [GameSystem.PATHFINDER_2E, 'characterName'],
   [GameSystem.CALL_OF_CTHULHU_7E, 'investigatorName'],
-  [GameSystem.SHADOWRUN_6E, 'characterName'],
 ];
 
 describe.each(systems)('a %s sheet', (gameSystem, field) => {

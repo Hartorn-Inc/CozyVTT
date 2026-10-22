@@ -242,7 +242,7 @@ export const dnd5eFighterTemplate: CharacterTemplate = {
         name: 'Chain Mail',
         quantity: 1,
         weight: 55,
-        notes: 'AC 16, Heavy Armor',
+        notes: '',
         equippable: true,
         equipped: true,
         requiresAttunement: false,
@@ -253,7 +253,7 @@ export const dnd5eFighterTemplate: CharacterTemplate = {
         name: 'Shield',
         quantity: 1,
         weight: 6,
-        notes: '+2 AC',
+        notes: '',
         equippable: true,
         equipped: true,
         requiresAttunement: false,
@@ -264,7 +264,7 @@ export const dnd5eFighterTemplate: CharacterTemplate = {
         name: 'Longsword',
         quantity: 1,
         weight: 3,
-        notes: 'Versatile (1d8/1d10)',
+        notes: '',
         equippable: true,
         equipped: true,
         requiresAttunement: false,
@@ -316,11 +316,11 @@ export const dnd5eFighterTemplate: CharacterTemplate = {
     featuresAndTraits: [
       {
         name: 'Second Wind',
-        description: 'You have a limited well of stamina that you can draw on to protect yourself from harm. On your turn, you can use a bonus action to regain hit points equal to 1d10 + your fighter level. Once you use this feature, you must finish a short or long rest before you can use it again.',
+        description: '',
       },
       {
         name: 'Fighting Style: Defense',
-        description: 'While you are wearing armor, you gain a +1 bonus to AC.',
+        description: '',
       },
     ],
     personality: {

@@ -2,7 +2,7 @@
 
 This guide explains how to add a new tabletop game system to CozyVTT end to end. It reflects the code as it actually ships — file names, the exact functions you extend, and the reference systems to copy from.
 
-CozyVTT currently ships three systems you can choose: **D&D 5e**, **Pathfinder 2e** and **Call of Cthulhu 7e**. A fourth, **Shadowrun 6e**, is in the code as groundwork: its backend is complete and its sheet is a placeholder, so it is left out of the lists a game system is chosen from (see [Reference systems](#reference-systems)). Adding another system means touching a fixed set of registration points, all of which are plain `switch` statements and enums — no dynamic plugin loader, no config file. If you add your system to every switch the compiler and tests point you at, it works.
+CozyVTT currently ships three systems you can choose: **D&D 5e**, **Pathfinder 2e** and **Call of Cthulhu 7e**. A fourth, **Shadowrun 6e**, is in the code as groundwork: its backend is complete and its sheet is a placeholder, so it is left out of the lists a game system is chosen from (see [Reference systems](#reference-systems)). Existing Shadowrun Characters remain readable, assignable, and deletable; create and edit stay closed until the sheet UI exists (ADR 0013). Adding another system means touching a fixed set of registration points, all of which are plain `switch` statements and enums — no dynamic plugin loader, no config file. If you add your system to every switch the compiler and tests point you at, it works.
 
 ---
 
@@ -40,7 +40,7 @@ So a "game system" in CozyVTT is really six coordinated pieces:
 | 1 | Enum value | `backend/prisma/schema.prisma` + both `GameSystem` TS enums |
 | 2 | Character **type** (the data shape) | `backend/src/game-systems/` + `frontend/src/types/game-systems/` |
 | 3 | **Zod schema** (validation on save) | `backend/src/validators/game-systems/` |
-| 4 | **Templates** (blank + example starting data) | `backend/src/utils/character-templates/` and a blank factory in the validator index |
+| 4 | **Templates** (blank + example starting data) | `backend/src/utils/character-templates/` — the named `blank` starter is the only blank JSON; `getBlankCharacterTemplate` aliases a clone of that data |
 | 5 | **Sheet component** (the UI) | `frontend/src/components/character-sheets/{system}/` |
 | 6 | **Display metadata + registration** (labels, the creation dropdown, the router) | `frontend/src/constants/game-systems.ts` + `CharacterSheetRouter.tsx` |
 
@@ -275,7 +275,7 @@ Copy from a system that's shaped like the one you're adding:
 - **Backend (all of steps 2–6): copy Shadowrun 6e.** It is fully wired through every backend registration point, so it shows the whole backend side of a system from start to finish. Files: `game-systems/shadowrun6e.ts`, `validators/game-systems/shadowrun6e.schema.ts`, `utils/character-templates/shadowrun6e-templates.ts`, plus its entries in all three backend `index.ts` files.
 - **Frontend sheet (step 9): copy D&D 5e or Call of Cthulhu 7e.** These are the complete sheet implementations, split into `…CharacterSheet.tsx` (mode switcher) + `…CharacterView.tsx` + `…CharacterEditor.tsx` + a `components/` folder. (Shadowrun 6e's sheet is intentionally a single "not yet implemented" placeholder, so don't copy it for the UI — but it *is* the reference for the minimal single-file sheet shape.)
 
-> **Note on Shadowrun 6e:** it is deliberately **not listed in the character-creation dropdown** — its entry in `GAME_SYSTEM_OPTIONS` (`frontend/src/constants/game-systems.ts`) is commented out because its sheet isn't finished. That commented block is a perfect illustration of [Step 8](#step-8--frontend-display-metadata): a system is only selectable once it's in `GAME_SYSTEM_OPTIONS`.
+> **Note on Shadowrun 6e:** it is deliberately **not listed in the character-creation dropdown** — its entry in `GAME_SYSTEM_OPTIONS` (`frontend/src/constants/game-systems.ts`) is commented out because create and edit stay closed until the sheet UI exists (ADR 0013). Existing Characters remain readable, assignable, and deletable. That commented block is a perfect illustration of [Step 8](#step-8--frontend-display-metadata): a system is only selectable once it's in `GAME_SYSTEM_OPTIONS`.
 
 ---
 
@@ -495,20 +495,7 @@ case GameSystem.MY_SYSTEM: {
 }
 ```
 
-Second, provide a **blank-character factory** and wire it into `getBlankCharacterTemplate`. This returns the minimal valid data object used to seed a brand-new character:
-
-```typescript
-case GameSystem.MY_SYSTEM:
-  return createBlankMySystemCharacter();
-
-// …lower in the file, next to the other createBlank* functions:
-function createBlankMySystemCharacter(): MySystemCharacterData {
-  return {
-    characterName: 'New Character',
-    // …minimal valid defaults…
-  };
-}
-```
+Second, `getBlankCharacterTemplate` aliases the named `blank` starter. Do **not** add a second object literal in this file. The only blank JSON lives in `backend/src/utils/character-templates/` (Step 6). `getBlankCharacterTemplate(gameSystem)` returns a deep clone of `getBlankTemplate(gameSystem).data`, typed as today's character-data union, so tests cannot mutate the shipped template.
 
 ---
 
@@ -522,10 +509,10 @@ function createBlankMySystemCharacter(): MySystemCharacterData {
 >
 > Your system gets the user-published kind for free — that feature stores the
 > same `data` blob a character does and edits it through `CharacterSheetRouter`,
-> so once Steps 7–10 are done it works with no extra wiring. The one thing it
-> needs from you is the blank factory in Step 5: publishing a template starts
-> from `GET /api/characters/templates/<system>/blank`, so a system whose blank
-> is missing or invalid cannot have templates created for it.
+> so once Steps 7–10 are done it works with no extra wiring. Publishing still
+> starts from `GET /api/characters/templates/<system>/blank`, so a system whose
+> named `blank` starter is missing or invalid cannot have templates created for
+> it. That starter GET and `/api/character-templates` remain different APIs.
 
 > **A template may only write fields the schema declares.** Every one of the
 > original four had drifted: they seeded fields no reader knew about, so the
@@ -668,6 +655,8 @@ frontend/src/components/character-sheets/mySystem/
   MySystemCharacterEditor.tsx   ← the form; props: { character, onSave, onCancel, onDirtyChange, onDone }
   components/                   ← reusable sub-sections (stat block, skills, etc.)
 ```
+
+**Shared header chrome.** D&D 5e, Pathfinder 2e, and Call of Cthulhu 7e views and editors use `SheetHeader` in `frontend/src/components/character-sheets/SheetHeader.tsx` for presets, custom hex, the 4.5:1 contrast rule, name, token picture, and Save/Cancel/Edit. Pass that system's preset list (keep it in `{system}/colorPresets.ts`, not a shared rainbow), a `gradient` or `vintage` variant, Tailwind token size classes, and an unconstrained `meta` slot for system fields. Flexible stays off this primitive. Colour changes belong in the editor; views paint the stored colour only. Vintage (CoC) presets use fixed white name text, not parchment. Gradient presets pick white or stone-900 by luminance for the name; trailing copy (XP, hero points) is always white because every D&D/PF `to-*` stop is 800/900; gradient Edit is opaque stone-900 with white text. Gradient view meta on presets is an opaque stone-900 chip; white-text gradient fields are transparent (no 10% wash).
 
 The `…CharacterSheet.tsx` mode-switcher looks like this (copied from D&D 5e):
 
@@ -873,7 +862,7 @@ The exhaustive `switch`/`Record` types mean a missed backend registration point 
 - [ ] `game-systems/mySystem.ts` — character-data interface(s)
 - [ ] `game-systems/index.ts` — `export *`, type import, enum value, `CharacterDataBySystem`, `GameSystemCharacterData`, `isMySystemData` guard, cases in `getTypedCharacterData` + structural `validateCharacterData`
 - [ ] `validators/game-systems/mySystem.schema.ts` — Zod schema + inferred type
-- [ ] `validators/game-systems/index.ts` — import/re-export, case in Zod `validateCharacterData`, `createBlankMySystemCharacter()` + case in `getBlankCharacterTemplate`
+- [ ] `validators/game-systems/index.ts` — import/re-export, case in Zod `validateCharacterData`; `getBlankCharacterTemplate` clones the named `blank` starter (no second blank JSON)
 - [ ] `utils/character-templates/mySystem-templates.ts` — templates + `getMySystemTemplates` / `getMySystemTemplate`
 - [ ] `utils/character-templates/index.ts` — cases in `getTemplatesForGameSystem`, `getCharacterTemplate`, and `getAllTemplates`
 - [ ] Schema (and template) tests written and passing
@@ -902,6 +891,8 @@ The exhaustive `switch`/`Record` types mean a missed backend registration point 
 
 ## Legal / content note
 
-CozyVTT ships **rules-reference scaffolding** (attribute names, skill lists, sheet structure), not publisher rulebooks. When you add a system, keep it that way: include the mechanical framework a player needs to fill in their own character, not copyrighted prose, adventures, stat blocks, or artwork.
+CozyVTT ships **sheet structure** (attribute names, skill lists, feature-name slots a player fills), not publisher rulebooks. Shipped starter templates keep feature, feat, and skill **names** and drop rules **prose** (ADR 0013). D&D SRD 5.1 creature seeding is the attributed CC-BY-4.0 exception; see [SRD_ATTRIBUTION.md](../SRD_ATTRIBUTION.md). Pathfinder 2e, Call of Cthulhu 7e, and Shadowrun 6e are structure-only: CozyVTT does not ship their publishers' rulebook prose. Shadowrun 6e remains unchoosable until the sheet UI and an attribution section exist — the structure-only notice in `SRD_ATTRIBUTION.md` is that section, not a completed sheet.
 
-If the system you're adding is published under an open license (OGL, ORC, Creative Commons, a fan-content policy, etc.), add the required attribution to `SRD_ATTRIBUTION.md` (or a sibling attribution file) and note the source in your PR. If it isn't openly licensed, restrict your contribution to the generic sheet structure and user-entered data. When in doubt, open an issue before writing code — it's easier to sort licensing up front than to unwind it later.
+When you add a system, keep it that way: include the mechanical framework a player needs to fill in their own character, not copyrighted prose, adventures, stat blocks, or artwork.
+
+If the system you're adding is published under an open license (OGL, ORC, Creative Commons, a fan-content policy, etc.), add the required attribution to `SRD_ATTRIBUTION.md` (or a sibling attribution file) and note the source in your PR. If it isn't openly licensed, restrict your contribution to the generic sheet structure and user-entered data. A PR that adds rules prose needs a section in `SRD_ATTRIBUTION.md`. When in doubt, open an issue before writing code — it's easier to sort licensing up front than to unwind it later.

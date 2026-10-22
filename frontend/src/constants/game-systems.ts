@@ -62,7 +62,8 @@ export const GAME_SYSTEM_OPTIONS: GameSystemOption[] = [
     shortLabel: GAME_SYSTEM_SHORT_LABELS[GameSystem.PATHFINDER_2E],
     description: GAME_SYSTEM_DESCRIPTIONS[GameSystem.PATHFINDER_2E],
   },
-  // Shadowrun 6e - Temporarily disabled until further notice
+  // Shadowrun 6e — readable, assignable, and deletable for existing Characters;
+  // create/edit stay closed until the sheet UI exists (ADR 0013).
   // {
   //   value: GameSystem.SHADOWRUN_6E,
   //   label: GAME_SYSTEM_LABELS[GameSystem.SHADOWRUN_6E],
@@ -76,6 +77,20 @@ export const GAME_SYSTEM_OPTIONS: GameSystemOption[] = [
     description: GAME_SYSTEM_DESCRIPTIONS[GameSystem.CALL_OF_CTHULHU_7E],
   },
 ];
+
+/**
+ * Whether a game system can be chosen when creating a campaign or character.
+ * Flexible (null, empty string, or the word Flexible) and every value in
+ * `GAME_SYSTEM_OPTIONS` are choosable. Shadowrun 6e is not, until it is listed.
+ */
+export function isChoosableGameSystem(
+  gameSystem: GameSystem | string | null | undefined
+): boolean {
+  if (gameSystem == null || gameSystem === '' || gameSystem === 'Flexible') {
+    return true;
+  }
+  return GAME_SYSTEM_OPTIONS.some((option) => option.value === gameSystem);
+}
 
 /**
  * Get display label for a game system

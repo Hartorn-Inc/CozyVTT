@@ -15,7 +15,7 @@ import { randomUUID } from 'crypto';
 import { AuthenticatedRequest } from '../middleware/rbac';
 import { authenticated } from '../middleware/compose';
 import { prisma } from '../config/database';
-import { GameSystem } from '../game-systems';
+import { GameSystem, gameSystemSheetFrozenError, isGameSystemSheetFrozen } from '../game-systems';
 import { readEnumQuery } from '../utils/queryEnum';
 import { validateCharacterData, validateFlexibleSheet, sheetIssues } from '../validators/game-systems';
 import { migrateLegacySheetFields } from '../utils/sheetFieldMigrations';
@@ -274,6 +274,10 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
     }
     const { name, description, data, tokenImageUrl, gameSystem } = parsed.data;
 
+    if (isGameSystemSheetFrozen(gameSystem)) {
+      return res.status(400).json(gameSystemSheetFrozenError());
+    }
+
     const sheet = validateSheet(gameSystem, data);
     if (!sheet.ok) {
       return res
@@ -352,6 +356,12 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
         error: 'Forbidden',
         message: 'You do not have permission to edit this template',
       });
+    }
+
+    // Frozen systems (ADR 0013): sheet-data updates stay closed. Metadata-only
+    // PUT (name/description/image, no data) still succeeds.
+    if (data.data !== undefined && isGameSystemSheetFrozen(existing.gameSystem)) {
+      return res.status(400).json(gameSystemSheetFrozenError());
     }
 
     // Image and auth awaits stay outside the row lock: they must not hold it.

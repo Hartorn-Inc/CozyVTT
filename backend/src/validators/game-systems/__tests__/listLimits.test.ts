@@ -236,7 +236,14 @@ describe('the Pathfinder 2e spell slots', () => {
 });
 
 describe('the Call of Cthulhu lists', () => {
-  const sheet = (path: string, value: unknown) => setAt(blank(GameSystem.CALL_OF_CTHULHU_7E), path, value);
+  const sheet = (path: string, value: unknown) => {
+    const withList = setAt(blank(GameSystem.CALL_OF_CTHULHU_7E), path, value);
+    // The named blank starter omits spellsAndMythos. Writing only `spells`
+    // would leave `cthulhuMythos` undefined, which the schema refuses.
+    return path.startsWith('spellsAndMythos.')
+      ? setAt(withList, 'spellsAndMythos.cthulhuMythos', 0)
+      : withList;
+  };
   const skill = { baseValue: 20, currentValue: 20, improvementChecked: false };
   const named = { name: 'Revolver' };
 

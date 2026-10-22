@@ -29,7 +29,6 @@ _Nothing at present._
 ### Character sheets
 
 - `1.5.4` **D&D 5e: naming the spellcasting ability after raising that score leaves the spell save DC and attack unchanged.** The backfill in `DnD5eCharacterEditor.tsx` reads the DC the editor itself wrote as a hand-typed value and records minus the ability modifier as the other bonus.
-- `1.5.4` **The Call of Cthulhu read-only view's palette button changes nothing that lasts.** The colour picked there is never saved (`CallOfCthulhu7eCharacterView.tsx`).
 - `1.5.4` **On the Characters page, sheet stats look rollable but roll nothing.** `CharacterSheetViewerModal.tsx` passes a roll handler even when there is no live connection to roll on.
 - `1.5.4` **Call of Cthulhu: Firearms, Other Language and Science rows do not roll from the sheet,** and the last two print their language or specialization twice (`components/SkillsList.tsx`).
 - `1.5.4` **Pathfinder 2e: a sheet whose AC, Class DC or Spell DC works out under 10 cannot be saved.** `pathfinder2e.schema.ts` requires at least 10 for all three, and an untrained rank with a negative modifier goes below it.
@@ -114,7 +113,7 @@ _Nothing at present._
 - **Browser notifications.** Desktop alerts when it's a player's turn (initiative tracker), or when chat activity happens while the tab is backgrounded. Needs: `Notification.requestPermission()` flow, a per-user opt-in toggle, server-side hooks for turn change + chat broadcast events. Removed alongside sound effects on 2026-04-27.
 - **Per-user default dice color.** Surface a color in the dice picker so a player's rolls visually stand apart in the dice panel. Needs: pass the color into the dice log (`DiceRoller.tsx` and `DiceResult.tsx`) and the socket roll payload metadata, then re-add the color picker on the profile page. Removed on 2026-04-27 pending the renderer wiring.
 - **Bulk character export as a ZIP.** The app exports one character at a time, with **Export as JSON** on the Characters page. `downloadMultipleCharactersZIP` in `frontend/src/utils/character-export.ts` was written for a bulk export, but nothing calls it, and it downloads each character as a separate file. Building it needs a way to pick several characters, a fetch of each one's sheet (the Characters page loads only summaries), and a ZIP library such as JSZip, which is a new dependency.
-- **Merge the hardcoded starter templates into the character template library.** `backend/src/utils/character-templates/` holds two presets per system, a blank sheet and one example character, as source constants served by `GET /api/characters/templates/:gameSystem/:templateName`, and the New Character dialog lists them a second time (`NewCharacterModal.tsx`), while user-published templates live in the database. Two systems for one idea. Folding the presets in as seeded, admin-owned rows would leave one browsable list and one endpoint. `getTemplatesForGameSystem` and `getAllTemplates` in that directory have no callers, and `getBlankTemplate` there and `getBlankCharacterTemplate` in `validators/game-systems/index.ts` are called only by tests.
+- **Starter templates and the published character-template library remain distinct** (ADR 0014 — merging them is rejected, not an open todo). Hardcoded starters in `backend/src/utils/character-templates/` are served by `GET /api/characters/templates/:gameSystem/:templateName`; user-published templates live in the database at `/api/character-templates`. `getBlankCharacterTemplate` aliases a clone of the named `blank` starter.
 - **Shadowrun 6E character sheet.** The backend (types, validation, templates) is complete, but the frontend sheet is still a placeholder and the system is hidden from the creation dropdown until it's finished. See `docs/GAME_SYSTEMS.md`.
 - **NPC chatbot / asset generation (AI).** No code yet. The `@anthropic-ai/sdk` dependency was removed before v1.0.0 launch (it was installed but unused, and shipping it left an open `npm audit` finding). When this feature work begins, re-add the current major of the SDK and introduce `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` env vars at the same time so they enter the codebase together and never sit around as dead config.
 - **EPUB and other document formats in the library.** #39 asked for "PDF and standard e-reader formats"; the library shipped with PDF, plain text and Markdown, which a browser can show on its own. EPUB cannot: it is a zip of XHTML that needs a reader library (`epub.js` or similar), and every one of them renders the book's own HTML inside an iframe through `blob:` URLs, which means loosening the Content-Security-Policy the whole instance runs under, and trusting a third party to sanitise a file an anonymous user uploaded. That is the one genuinely risky part of the original request, and it is separable, so it waits. **Revisit if** people ask for it with real books in hand; the answer will hinge on finding a reader that renders into a sandboxed frame without `allow-same-origin`, and on measuring what the CSP change exposes.
@@ -273,22 +272,6 @@ _Nothing at present._
   and viewers. Neither has SRD seed data to test against. See the "Creature and
   NPC stat blocks" section of `docs/GAME_SYSTEMS.md` for where the branch points
   are.
-
-- **A shared character-sheet header / action bar.** Each system editor (D&D 5e,
-  Pathfinder 2e, Call of Cthulhu) draws its own header: the Save and Cancel
-  cluster, the palette button, the colour presets and the name and token
-  picture fields, with no shared component between them. The Flexible editor
-  repeats Save, Cancel and the token picture, and each editor and its view
-  declare their own `COLOR_PRESETS`. 1.2.2 fixed three separate
-  duplicate-control bugs that all had the same shape, a page or modal drawing
-  Save, Cancel or Edit that the sheet already draws, plus an overlap that had
-  to be corrected in three files where one should have done. The rule that
-  resolved them is worth keeping: **the sheet owns Save, Cancel and Edit;
-  whatever hosts it does not repeat them.** Extracting a shared header would
-  make that structural instead of a convention, and would stop the next system
-  added from inheriting the same layout bugs.
-  `frontend/src/components/character-sheets/types.ts` holds the props contract
-  the extraction would build on.
 
 - **Reassigning a character to a different player.** The roster's right-click
   menu carried a "Reassign to Player" entry that only ever showed "not yet
