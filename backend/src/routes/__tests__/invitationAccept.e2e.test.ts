@@ -21,9 +21,47 @@
  */
 
 import request from 'supertest';
-import type { GameSystem } from '@prisma/client';
+import { GameSystem } from '@prisma/client';
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import { prisma, createTestUser, createTestCampaign, cleanupUsers, cleanupCampaigns, TEST_PASSWORD } from '../../__tests__/helpers/db';
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Hold the Campaign row, then commit a change of gameSystem to D&D 5e.
+ * Models a concurrent PUT /api/campaigns/:id while a join is in flight.
+ */
+async function holdCampaignThenSetDnd(campaignId: string): Promise<{ release: () => Promise<void> }> {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let locked!: () => void;
+  const hasLocked = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+
+  const holder = prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${campaignId} FOR UPDATE`;
+      locked();
+      await released;
+      await tx.campaign.update({
+        where: { id: campaignId },
+        data: { gameSystem: GameSystem.DND_5E },
+      });
+    },
+    { timeout: 15000 },
+  );
+
+  await hasLocked;
+  return {
+    release: async () => {
+      release();
+      await holder;
+    },
+  };
+}
 
 jest.setTimeout(30000);
 
@@ -126,6 +164,24 @@ describe('POST /api/invitations/:id/accept', () => {
     const statuses = results.map((r) => r.status).sort();
     expect(statuses).toEqual([200, 400, 400, 400, 400]);
     expect(await prisma.campaignMembership.count({ where: { userId: playerId, campaignId: invite.campaignId } })).toBe(1);
+  });
+
+  it('refuses bringing a Pathfinder character when a concurrent PUT types the Campaign as D&D', async () => {
+    const invite = await invitation(null);
+    const hero = await character('PF race accept', 'PATHFINDER_2E');
+
+    const holder = await holdCampaignThenSetDnd(invite.campaignId);
+    const join = accept(invite.id, { characterIds: [hero.id] });
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(400);
+    expect((await prisma.character.findUnique({ where: { id: hero.id } }))?.campaignId).toBeNull();
+    expect((await prisma.campaignInvitation.findUnique({ where: { id: invite.id } }))?.status).toBe('PENDING');
+    expect(await prisma.campaignMembership.findUnique({
+      where: { userId_campaignId: { userId: playerId, campaignId: invite.campaignId } },
+    })).toBeNull();
   });
 
   it('brings a character into only one campaign when two invitations are accepted with it at once', async () => {

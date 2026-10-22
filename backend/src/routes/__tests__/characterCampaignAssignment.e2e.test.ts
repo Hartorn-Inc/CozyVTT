@@ -115,6 +115,21 @@ describe('creating a character with a campaign preselected', () => {
     )).toContain(created.body.character.id);
   });
 
+  it('keeps both characters on the membership when two are created into the campaign at once', async () => {
+    const results = await Promise.all([
+      playerAgent.post('/api/characters').send({ name: 'Concurrent A', campaignId }),
+      playerAgent.post('/api/characters').send({ name: 'Concurrent B', campaignId }),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([201, 201]);
+    const ids: string[] = results.map((r) => r.body.character.id);
+    const membership = await membershipFor(playerId);
+    expect(membership?.characterIds).toEqual(expect.arrayContaining(ids));
+    expect(new Set(membership?.characterIds).size).toBe(membership?.characterIds.length);
+    const stored = await prisma.character.findMany({ where: { id: { in: ids } }, select: { campaignId: true } });
+    expect(stored).toHaveLength(2);
+    expect(stored.every((c) => c.campaignId === campaignId)).toBe(true);
+  });
+
   it('does not add the character twice when created again', async () => {
     const before = await membershipFor(playerId);
     const res = await playerAgent

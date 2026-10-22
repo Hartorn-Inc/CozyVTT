@@ -25,7 +25,12 @@ import { readTokens, toJson, readJsonObject } from '../utils/prisma-json';
 import { extractCharacterHp, sameCharacterHp } from '../utils/characterHp';
 import { migrateLegacySheetFields } from '../utils/sheetFieldMigrations';
 import { withMapsLocked } from '../utils/mapTokens';
-import { systemsCompatible } from '../utils/gameSystemCompatibility';
+import {
+  assertCompatible,
+  CampaignGoneError,
+  GameSystemMismatchError,
+  lockCampaignGameSystem,
+} from '../utils/gameSystemMatchWrite';
 import { holdOwnerCreates } from '../utils/ownerLimit';
 import { getCharacterTemplate } from '../utils/character-templates';
 import { FLEXIBLE_TEMPLATES } from '../utils/character-templates/flexible-templates';
@@ -122,16 +127,15 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
     // Determine final gameSystem value
     let finalGameSystem = gameSystem;
 
-    // Creating straight into a campaign. The membership has to be checked here
-    // and updated below, because campaign membership is recorded in two places:
+    // Creating straight into a campaign. Membership is checked here for a
+    // 403, and `characterIds` is updated inside the write transaction,
+    // because campaign membership is recorded in two places:
     // `Character.campaignId`, and the `characterIds` array on the member's
     // `CampaignMembership`. Nearly everything a player sees reads the second —
     // the roster is built from it, and services/permissions.ts asks it whether
     // a player may move a token. Writing only the column left a character that
     // was in the campaign but invisible in it, and whose own owner could not
     // move its token. POST /:id/assign has always written both; this mirrors it.
-    let membershipToJoin: { characterIds: string[] } | null = null;
-
     if (campaignId) {
       const campaign = await prisma.campaign.findUnique({
         where: { id: campaignId },
@@ -145,12 +149,12 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         });
       }
 
-      membershipToJoin = await prisma.campaignMembership.findUnique({
+      const membership = await prisma.campaignMembership.findUnique({
         where: { userId_campaignId: { userId, campaignId } },
-        select: { characterIds: true },
+        select: { userId: true },
       });
 
-      if (!membershipToJoin) {
+      if (!membership) {
         return res.status(403).json({
           error: 'Forbidden',
           message: 'You must be a member of the campaign to create a character in it',
@@ -166,13 +170,15 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         // type finalGameSystem was inferred from (identical string values).
         finalGameSystem = campaign.gameSystem as GameSystem | null;
       }
-      if (!systemsCompatible(finalGameSystem, campaign.gameSystem)) {
-        const charLabel = finalGameSystem ?? 'flexible';
-        const campLabel = campaign.gameSystem ?? 'flexible';
-        return res.status(400).json({
-          error: 'Game System Mismatch',
-          message: `Cannot assign a ${charLabel} character to a ${campLabel} campaign. Character and campaign game systems must match.`,
-        });
+      // Fast-fail before sheet validation. The write transaction locks the
+      // Campaign and checks again against the committed gameSystem.
+      try {
+        assertCompatible(finalGameSystem, campaign.gameSystem);
+      } catch (error) {
+        if (error instanceof GameSystemMismatchError) {
+          return res.status(400).json({ error: error.error, message: error.message });
+        }
+        throw error;
       }
     }
 
@@ -260,6 +266,14 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
     // them would produce exactly the state this fixes: a character carrying a
     // campaignId that the campaign itself does not know about.
     const character = await prisma.$transaction(async (tx) => {
+      if (campaignId) {
+        // Commit-time check: a concurrent campaign PUT can change gameSystem
+        // after the fast-fail above. Lock the Campaign so this write sees the
+        // committed system. Do not re-inherit gameSystem here; the sheet was
+        // already validated against finalGameSystem.
+        const locked = await lockCampaignGameSystem(tx, campaignId);
+        assertCompatible(finalGameSystem, locked);
+      }
       await roomForCharacter(tx, userId);
       const created = await tx.character.create({
         data: {
@@ -272,11 +286,20 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         },
       });
 
-      if (campaignId && membershipToJoin && !membershipToJoin.characterIds.includes(created.id)) {
-        await tx.campaignMembership.update({
+      if (campaignId) {
+        // Re-read after the Campaign lock so a concurrent create-in that
+        // serialized behind this one is not clobbered by a snapshot taken
+        // before the transaction.
+        const currentMembership = await tx.campaignMembership.findUnique({
           where: { userId_campaignId: { userId, campaignId } },
-          data: { characterIds: [...membershipToJoin.characterIds, created.id] },
+          select: { characterIds: true },
         });
+        if (currentMembership && !currentMembership.characterIds.includes(created.id)) {
+          await tx.campaignMembership.update({
+            where: { userId_campaignId: { userId, campaignId } },
+            data: { characterIds: [...currentMembership.characterIds, created.id] },
+          });
+        }
       }
 
       return created;
@@ -289,6 +312,15 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
   } catch (error) {
     if (error instanceof CharacterLimitReached) {
       return res.status(400).json({ error: 'Validation Error', message: CHARACTER_LIMIT_REACHED });
+    }
+    if (error instanceof GameSystemMismatchError) {
+      return res.status(400).json({ error: error.error, message: error.message });
+    }
+    if (error instanceof CampaignGoneError) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'Campaign not found',
+      });
     }
     logger.error('Error creating character', { err: error });
     return res.status(500).json({
@@ -1094,64 +1126,76 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
     // A Campaign with no game system accepts any Character. A typed Campaign
     // refuses a Flexible sheet and any other system. Re-assigning to a
     // mismatched Campaign, including the one the Character is already in, is
-    // a mismatched write.
-    const charSystem = character.gameSystem;
-    const campSystem = campaign.gameSystem;
-
-    if (!systemsCompatible(charSystem, campSystem)) {
-      const charLabel = charSystem ?? 'flexible';
-      const campLabel = campSystem ?? 'flexible';
-      return res.status(400).json({
-        error: 'Game System Mismatch',
-        message: `Cannot assign a ${charLabel} character to a ${campLabel} campaign. Character and campaign game systems must match.`,
-      });
+    // a mismatched write. Fast-fail here; the write transaction locks the
+    // Campaign and checks again against the committed gameSystem.
+    try {
+      assertCompatible(character.gameSystem, campaign.gameSystem);
+    } catch (error) {
+      if (error instanceof GameSystemMismatchError) {
+        return res.status(400).json({ error: error.error, message: error.message });
+      }
+      throw error;
     }
 
-    // Remove from previous campaign's membership if changing campaigns
-    if (character.campaignId && character.campaignId !== campaignId) {
-      const previousMembership = await prisma.campaignMembership.findUnique({
-        where: {
-          userId_campaignId: {
-            userId,
-            campaignId: character.campaignId,
-          },
-        },
-      });
+    // Previous-membership removal, new-membership characterIds, Keeper's
+    // Notes, and Character.campaignId are one transaction. Compatibility is
+    // checked after locking the Campaign: a 400 must undo every write, and
+    // membership characterIds is re-read inside so a concurrent assign does
+    // not clobber the array.
+    const updatedCharacter = await prisma.$transaction(async (tx) => {
+      const locked = await lockCampaignGameSystem(tx, campaignId);
+      assertCompatible(character.gameSystem, locked);
 
-      if (previousMembership) {
-        await prisma.campaignMembership.update({
+      if (character.campaignId && character.campaignId !== campaignId) {
+        const previousMembership = await tx.campaignMembership.findUnique({
           where: {
             userId_campaignId: {
               userId,
               campaignId: character.campaignId,
             },
           },
-          data: {
-            characterIds: previousMembership.characterIds.filter((cId) => cId !== id),
-          },
         });
-      }
-    }
 
-    // Add to new campaign's membership characterIds
-    if (!membership.characterIds.includes(id)) {
-      await prisma.campaignMembership.update({
+        if (previousMembership) {
+          await tx.campaignMembership.update({
+            where: {
+              userId_campaignId: {
+                userId,
+                campaignId: character.campaignId,
+              },
+            },
+            data: {
+              characterIds: previousMembership.characterIds.filter((cId) => cId !== id),
+            },
+          });
+        }
+      }
+
+      const currentMembership = await tx.campaignMembership.findUnique({
         where: {
           userId_campaignId: {
             userId,
             campaignId,
           },
         },
-        data: {
-          characterIds: [...membership.characterIds, id],
-        },
       });
-    }
+      if (currentMembership && !currentMembership.characterIds.includes(id)) {
+        await tx.campaignMembership.update({
+          where: {
+            userId_campaignId: {
+              userId,
+              campaignId,
+            },
+          },
+          data: {
+            characterIds: [...currentMembership.characterIds, id],
+          },
+        });
+      }
 
-    // Assign character to campaign. Coming from another campaign, or from
-    // none, it leaves the Keeper's Notes behind: they are the last Keeper's,
-    // and the owner may be this campaign's DM.
-    const updatedCharacter = await prisma.$transaction(async (tx) => {
+      // Assign character to campaign. Coming from another campaign, or from
+      // none, it leaves the Keeper's Notes behind: they are the last Keeper's,
+      // and the owner may be this campaign's DM.
       if (character.campaignId !== campaignId) await clearKeeperNotes(tx, id);
       return tx.character.update({
         where: { id },
@@ -1186,6 +1230,15 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
       character: characterForReader(updatedCharacter, membership.role === 'DM'),
     });
   } catch (error) {
+    if (error instanceof GameSystemMismatchError) {
+      return res.status(400).json({ error: error.error, message: error.message });
+    }
+    if (error instanceof CampaignGoneError) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: 'Campaign not found',
+      });
+    }
     logger.error('Error assigning character to campaign', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',

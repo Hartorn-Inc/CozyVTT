@@ -25,12 +25,51 @@ jest.setTimeout(30000);
 
 const app = createTestApp();
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Hold the Campaign row, then commit a change of gameSystem to D&D 5e.
+ * Models a concurrent PUT /api/campaigns/:id while a join is in flight.
+ */
+async function holdCampaignThenSetDnd(campaignId: string): Promise<{ release: () => Promise<void> }> {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let locked!: () => void;
+  const hasLocked = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+
+  const holder = prisma.$transaction(
+    async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${campaignId} FOR UPDATE`;
+      locked();
+      await released;
+      await tx.campaign.update({
+        where: { id: campaignId },
+        data: { gameSystem: GameSystem.DND_5E },
+      });
+    },
+    { timeout: 15000 },
+  );
+
+  await hasLocked;
+  return {
+    release: async () => {
+      release();
+      await holder;
+    },
+  };
+}
+
 describe('Character assign and create-in match Campaign game system', () => {
   let dmId: string;
   let playerId: string;
   let outsiderId: string;
   let dndCampaignId: string;
   let untypedCampaignId: string;
+  const extraCampaignIds: string[] = [];
   let playerAgent: ReturnType<typeof request.agent>;
   let outsiderAgent: ReturnType<typeof request.agent>;
 
@@ -82,10 +121,22 @@ describe('Character assign and create-in match Campaign game system', () => {
   });
 
   afterAll(async () => {
-    await cleanupCampaigns([dndCampaignId, untypedCampaignId]);
+    await cleanupCampaigns([dndCampaignId, untypedCampaignId, ...extraCampaignIds]);
     await cleanupUsers([dmId, playerId, outsiderId]);
     await prisma.$disconnect();
   });
+
+  const untypedCampaignForRace = async (name: string) => {
+    const campaign = await createTestCampaign(dmId, { name, gameSystem: null });
+    extraCampaignIds.push(campaign.id);
+    await prisma.campaignMembership.createMany({
+      data: [
+        { userId: dmId, campaignId: campaign.id, role: 'DM', characterIds: [] },
+        { userId: playerId, campaignId: campaign.id, role: 'PLAYER', characterIds: [] },
+      ],
+    });
+    return campaign.id;
+  };
 
   it('refuses assigning a Pathfinder Character into a D&D Campaign', async () => {
     const created = await createCharacter({
@@ -278,6 +329,50 @@ describe('Character assign and create-in match Campaign game system', () => {
     expect(res.status).toBe(200);
     expect((await prisma.character.findUnique({ where: { id: characterId } }))?.campaignId).toBeNull();
     expect((await membershipFor(playerId, dndCampaignId))?.characterIds).not.toContain(characterId);
+  });
+
+  it('refuses assign when a concurrent PUT types the Campaign as D&D', async () => {
+    const campaignId = await untypedCampaignForRace(`Race assign ${Date.now()}`);
+    const created = await createCharacter({
+      name: 'PF race assign',
+      gameSystem: GameSystem.PATHFINDER_2E,
+      data: pfSheet(),
+    }).expect(201);
+    const characterId: string = created.body.character.id;
+
+    const holder = await holdCampaignThenSetDnd(campaignId);
+    const join = assign(characterId, campaignId);
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Game System Mismatch');
+    expect((await prisma.character.findUnique({ where: { id: characterId } }))?.campaignId).toBeNull();
+    expect((await membershipFor(playerId, campaignId))?.characterIds).not.toContain(characterId);
+  });
+
+  it('refuses create-in when a concurrent PUT types the Campaign as D&D', async () => {
+    const campaignId = await untypedCampaignForRace(`Race create-in ${Date.now()}`);
+    const before = await prisma.character.count({ where: { userId: playerId } });
+    const beforeMembership = (await membershipFor(playerId, campaignId))?.characterIds.length ?? 0;
+
+    const holder = await holdCampaignThenSetDnd(campaignId);
+    const join = createCharacter({
+      name: 'PF race create-in',
+      campaignId,
+      gameSystem: GameSystem.PATHFINDER_2E,
+      data: pfSheet(),
+    });
+    await sleep(500);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Game System Mismatch');
+    expect(await prisma.character.count({ where: { userId: playerId } })).toBe(before);
+    expect(await prisma.character.findFirst({ where: { userId: playerId, name: 'PF race create-in' } })).toBeNull();
+    expect((await membershipFor(playerId, campaignId))?.characterIds.length ?? 0).toBe(beforeMembership);
   });
 
   it('refuses re-assigning a mismatched Character to the Campaign it is already in', async () => {
