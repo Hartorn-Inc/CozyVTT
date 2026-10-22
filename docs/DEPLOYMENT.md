@@ -1410,9 +1410,10 @@ that schema's `session` and `revoked_login_session` rows out of a script
 backup, and empties those same tables on restore — not every schema, and never
 a tenant or extension table that happens to be named `session`. Dump and
 restore only accept a simple identifier as the schema name (letters, digits,
-underscore). A name with a hyphen, space, quote, or wildcard is refused, not
-treated as `public`. A restore on `?schema=` other than `public` drops that
-schema, not `public`; the dump creates it again. Leftover `public.session`
+underscore). A percent-encoded value that decodes to a simple identifier is
+accepted, as the dashboard does. A name with a hyphen, space, quote, or wildcard
+is refused, not treated as `public`. A restore on `?schema=` other than `public`
+drops that schema, not `public`; the dump creates it again. Leftover `public.session`
 is still emptied by the trailer.
 
 To restore it, use `restore.sh` from the section above, which accepts this file

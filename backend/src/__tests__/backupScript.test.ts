@@ -130,6 +130,27 @@ describeOnPosix('backup.sh', () => {
     ]);
   });
 
+  it('percent-decodes ?schema= before the identifier check, so app%5Fdata excludes app_data', async () => {
+    const seen = path.join(root, 'seen.txt');
+    await fs.writeFile(
+      path.join(bin, 'pg_dump'),
+      `#!/bin/sh\nprintf '%s\\n' "$@" > "${seen}"\necho "-- PostgreSQL database dump complete"\n`,
+      { mode: 0o755 }
+    );
+
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app%5Fdata');
+
+    expect(result.status).toBe(0);
+    const args = (await fs.readFile(seen, 'utf8')).trimEnd().split('\n');
+    expect(args).toEqual(
+      expect.arrayContaining([
+        '--exclude-table-data=app_data.session',
+        '--exclude-table-data=app_data.revoked_login_session',
+      ])
+    );
+    expect(args.join('\n')).not.toMatch(/app%5Fdata/);
+  });
+
   it('refuses a non-simple ?schema= without invoking pg_dump', async () => {
     const seen = path.join(root, 'seen.txt');
     await fs.writeFile(
@@ -138,7 +159,7 @@ describeOnPosix('backup.sh', () => {
       { mode: 0o755 }
     );
 
-    for (const schema of ['*', 'foo-bar', '1nope', "foo'bar"]) {
+    for (const schema of ['*', 'foo-bar', '1nope', "foo'bar", '%2A', 'foo%2Dbar']) {
       await fs.rm(seen, { force: true });
       const result = run(`postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=${schema}`);
       expect([schema, result.status]).not.toEqual([schema, 0]);

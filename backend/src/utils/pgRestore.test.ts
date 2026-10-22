@@ -189,7 +189,18 @@ describe('buildDumpArgs', () => {
     expect(args.join(' ')).not.toMatch(/pg_namespace|nspname/);
   });
 
-  it.each(['*', 'foo-bar'])(
+  it('percent-decodes ?schema= before the identifier check, so app%5Fdata excludes app_data rather than refusing', () => {
+    const args = buildDumpArgs('postgresql://u:p@h:5432/db?schema=app%5Fdata', '/tmp/db.sql');
+    expect(args).toEqual(expect.arrayContaining([
+      '--exclude-table-data=public.session',
+      '--exclude-table-data=public.revoked_login_session',
+      '--exclude-table-data=app_data.session',
+      '--exclude-table-data=app_data.revoked_login_session',
+    ]));
+    expect(args.join(' ')).not.toMatch(/app%5Fdata/);
+  });
+
+  it.each(['*', 'foo-bar', '%2A'])(
     'refuses ?schema=%s instead of treating it as public or interpolating a wildcard exclude',
     (schema) => {
       expect(() => buildDumpArgs(`postgresql://u:p@h:5432/db?schema=${schema}`, '/tmp/db.sql')).toThrow(
@@ -216,6 +227,11 @@ describe('schemaFromDatabaseUrl', () => {
     expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=*')).toBe('*');
     expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=foo-bar')).toBe('foo-bar');
   });
+
+  it('percent-decodes ?schema= the way URLSearchParams does, before dump and restore assert a simple identifier', () => {
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=app%5Fdata')).toBe('app_data');
+    expect(schemaFromDatabaseUrl('postgresql://u@h/db?schema=%2A')).toBe('*');
+  });
 });
 
 describe('loginSessionRestoreTrailer', () => {
@@ -234,6 +250,19 @@ describe('loginSessionRestoreTrailer', () => {
     expect(lines[1]).toContain("format('%I.revoked_login_session'");
     expect(lines[1]).toContain("'tenant'");
     expect(lines.join('\n')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it('accepts a schema percent-decoded from DATABASE_URL, naming app_data not app%5Fdata', () => {
+    const schema = schemaFromDatabaseUrl('postgresql://u@h/db?schema=app%5Fdata');
+    const lines = loginSessionRestoreTrailer(schema);
+    expect(lines[1]).toContain("'app_data'");
+    expect(lines[1]).toContain("format('%I.session'");
+    expect(lines.join('\n')).not.toMatch(/app%5Fdata/);
+  });
+
+  it('refuses a schema percent-decoded from ?schema=%2A instead of using the public-only trailer', () => {
+    const schema = schemaFromDatabaseUrl('postgresql://u@h/db?schema=%2A');
+    expect(() => loginSessionRestoreTrailer(schema)).toThrow(UnsupportedBackupRestoreSchema);
   });
 
   it.each(['*', 'foo-bar'])('refuses schema name %s instead of using the public-only trailer', (schema) => {
@@ -262,6 +291,21 @@ describe('restorePreamble', () => {
     expect(lines.join('\n')).not.toContain("format('CREATE SCHEMA %I'");
     expect(lines.join('\n')).not.toContain('DROP SCHEMA public');
     expect(lines.join('\n')).not.toMatch(/pg_namespace|nspname/);
+  });
+
+  it('accepts a schema percent-decoded from DATABASE_URL and drops app_data via format(%I), not public', () => {
+    const schema = schemaFromDatabaseUrl('postgresql://u@h/db?schema=app%5Fdata');
+    const lines = restorePreamble(schema);
+    expect(lines).toEqual([
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;",
+    ]);
+    expect(lines.join('\n')).not.toContain('DROP SCHEMA public');
+    expect(lines.join('\n')).not.toMatch(/app%5Fdata/);
+  });
+
+  it('refuses a schema percent-decoded from ?schema=%2A instead of falling back to the public preamble', () => {
+    const schema = schemaFromDatabaseUrl('postgresql://u@h/db?schema=%2A');
+    expect(() => restorePreamble(schema)).toThrow(UnsupportedBackupRestoreSchema);
   });
 
   it.each(['*', 'foo-bar'])('refuses schema name %s instead of falling back to the public preamble', (schema) => {
@@ -463,9 +507,43 @@ describe('prepareDumpForRestore', () => {
     }
   });
 
+  it('writes a custom-schema preamble when DATABASE_URL percent-encodes a simple schema as app%5Fdata', async () => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=app%5Fdata';
+    try {
+      const src = await write('database.sql', NEWER_CLIENT_DUMP);
+      const dest = path.join(dir, 'restore.sql');
+
+      await prepareDumpForRestore(src, dest);
+
+      const out = await fs.readFile(dest, 'utf8');
+      expect(out).toContain("format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data')");
+      expect(out).toContain("to_regclass(format('%I.session', 'app_data'))");
+      expect(out).not.toContain('DROP SCHEMA public');
+      expect(out).not.toMatch(/app%5Fdata/);
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  });
+
   it('refuses a DATABASE_URL whose ?schema= is not a simple identifier', async () => {
     const previous = process.env.DATABASE_URL;
     process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=*';
+    try {
+      const src = await write('database.sql', NEWER_CLIENT_DUMP);
+      await expect(prepareDumpForRestore(src, path.join(dir, 'restore.sql'))).rejects.toThrow(
+        UnsupportedBackupRestoreSchema,
+      );
+    } finally {
+      if (previous === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = previous;
+    }
+  });
+
+  it('refuses a DATABASE_URL whose percent-encoded ?schema=%2A is not a simple identifier', async () => {
+    const previous = process.env.DATABASE_URL;
+    process.env.DATABASE_URL = 'postgresql://u:p@h:5432/db?schema=%2A';
     try {
       const src = await write('database.sql', NEWER_CLIENT_DUMP);
       await expect(prepareDumpForRestore(src, path.join(dir, 'restore.sql'))).rejects.toThrow(

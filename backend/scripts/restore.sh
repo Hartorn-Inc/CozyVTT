@@ -83,10 +83,11 @@ fi
 trap 'rm -f "$PREPARED"' EXIT
 RESTRICT_KEY=$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')
 # Login-session tables follow DATABASE_URL's ?schema=, with public as the
-# default and as the legacy location. Missing or empty is public. Only a
-# simple identifier is used as a SQL literal. A ?schema= that is present
-# and not a simple identifier (a wildcard, hyphen, quote, leading digit) is
-# refused, so a tenant or extension table named session is never touched
+# default and as the legacy location. Missing or empty is public. A
+# percent-encoded value is decoded first, like the dashboard. Only a simple
+# identifier is used as a SQL literal. A ?schema= that is present and not a
+# simple identifier after decode (a wildcard, hyphen, quote, leading digit)
+# is refused, so a tenant or extension table named session is never touched
 # and psql is not run. Never FROM pg_namespace, never every schema.
 APP_SCHEMA=public
 if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
@@ -103,6 +104,33 @@ if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
       _VAL=""
       [[ "$_PAIR" == *=* ]] && _VAL="${_PAIR#*=}"
       if [[ -n "$_VAL" ]]; then
+        # Percent-decode like URLSearchParams: + is space, %HH is that octet.
+        # Invalid % is left so the identifier check refuses it, not public.
+        # printf -v keeps a trailing %0A; command substitution would strip it.
+        _DEC=""
+        _I=0
+        _LEN=${#_VAL}
+        while ((_I < _LEN)); do
+          _C="${_VAL:_I:1}"
+          if [[ "$_C" == "+" ]]; then
+            _DEC+=" "
+            _I=$((_I + 1))
+          elif [[ "$_C" == "%" ]]; then
+            _HEX="${_VAL:_I+1:2}"
+            if [[ "$_HEX" =~ ^[0-9A-Fa-f]{2}$ ]]; then
+              printf -v _OCT '%b' "\\x${_HEX}"
+              _DEC+="$_OCT"
+              _I=$((_I + 3))
+            else
+              _DEC+="%"
+              _I=$((_I + 1))
+            fi
+          else
+            _DEC+="$_C"
+            _I=$((_I + 1))
+          fi
+        done
+        _VAL="$_DEC"
         if [[ "$_VAL" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
           APP_SCHEMA="$_VAL"
         else
@@ -113,7 +141,7 @@ if [[ -n "${DATABASE_URL:-}" && "${DATABASE_URL}" == *"?"* ]]; then
       break
     fi
   done
-  unset _QS _PAIR _VAL
+  unset _QS _PAIR _VAL _DEC _I _LEN _C _HEX _OCT
 fi
 # The public-schema statement matches RESTORE_TRAILER in
 # backend/src/utils/pgRestore.ts (loginSessionRestoreTrailer('public'));

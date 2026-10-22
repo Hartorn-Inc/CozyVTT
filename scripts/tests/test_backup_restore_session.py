@@ -2,9 +2,9 @@
 
 Always public.session and public.revoked_login_session; a DATABASE_URL
 ?schema= other than public adds that schema only. Never every schema.
-A missing or empty ?schema= is public. A present non-simple identifier
-is refused; restore of a simple custom schema replaces that schema,
-not public.
+A missing or empty ?schema= is public. A percent-encoded value is decoded
+like the dashboard; a present non-simple identifier is then refused.
+Restore of a simple custom schema replaces that schema, not public.
 
     python3 -m unittest discover -s scripts/tests
 """
@@ -84,6 +84,9 @@ INVALID_SCHEMA_URLS = (
     'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=foo-bar',
     "postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=foo'bar",
     'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=1nope',
+    'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=%2A',
+    'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=foo%2Dbar',
+    'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app_data%0A',
 )
 
 
@@ -99,7 +102,7 @@ class ScriptSource(unittest.TestCase):
         def parser(source):
             start = source.find('APP_SCHEMA=public\n')
             self.assertNotEqual(start, -1, 'script no longer parses APP_SCHEMA from DATABASE_URL')
-            end = source.find('unset _QS _PAIR _VAL\n', start)
+            end = source.find('unset _QS _PAIR _VAL', start)
             self.assertNotEqual(end, -1, 'schema parser no longer unsets its temporaries')
             self.assertEqual(source.count('APP_SCHEMA=public\n'), 1)
             return source[start:end]
@@ -130,7 +133,7 @@ class ScriptSource(unittest.TestCase):
     def test_scripts_refuse_a_non_simple_schema_in_the_shared_parser(self):
         for name, source in (('backup.sh', self.backup), ('restore.sh', self.restore)):
             parser_start = source.find('APP_SCHEMA=public\n')
-            parser = source[parser_start:source.find('unset _QS _PAIR _VAL\n', parser_start)]
+            parser = source[parser_start:source.find('unset _QS _PAIR _VAL', parser_start)]
             self.assertIn('exit 1', parser, name)
             self.assertIn('simple identifier', parser, name)
 
@@ -164,6 +167,7 @@ class ScriptSource(unittest.TestCase):
         self.assertIn('?schema=', guide)
         self.assertIn('not every schema', guide)
         self.assertIn('simple identifier', guide)
+        self.assertIn('percent-encoded value that decodes to a simple identifier', guide)
 
 
 class BackupRestoreScripts(unittest.TestCase):
@@ -261,6 +265,21 @@ class BackupRestoreScripts(unittest.TestCase):
             '--exclude-table-data=app_data.revoked_login_session',
         ])
 
+    def test_backup_percent_encoded_simple_schema_adds_that_schema_only(self):
+        urls = (
+            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app%5Fdata',
+            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?sslmode=require&schema=app%5Fdata',
+        )
+        expected = [
+            '--exclude-table-data=public.session',
+            '--exclude-table-data=public.revoked_login_session',
+            '--exclude-table-data=app_data.session',
+            '--exclude-table-data=app_data.revoked_login_session',
+        ]
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertEqual(self._excludes(self._backup_args(url)), expected)
+
     def test_backup_empty_schema_stays_public(self):
         args = self._backup_args(
             'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema='
@@ -338,6 +357,21 @@ class BackupRestoreScripts(unittest.TestCase):
         self.assertNotIn('DELETE FROM app_data.session', text)
         self.assertNotIn('to_regclass(\'app_data.session\')', text)
         self.assertNotIn('pg_namespace', text)
+
+    def test_restore_percent_encoded_simple_schema_uses_format_literal(self):
+        urls = (
+            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app%5Fdata',
+            'postgresql://cozyvtt:secret@localhost:5432/cozyvtt?sslmode=require&schema=app%5Fdata',
+        )
+        for url in urls:
+            with self.subTest(url=url):
+                text = self._restore_sql(url)
+                lines = text.rstrip('\n').split('\n')
+                self.assertEqual(lines[-2], PUBLIC_TRAILER)
+                self.assertEqual(lines[-1], custom_schema_trailer('app_data'))
+                self.assertIn(custom_schema_preamble('app_data'), text)
+                self.assertNotIn('DROP SCHEMA public CASCADE;', text)
+                self.assertNotIn('pg_namespace', text)
 
     def test_restore_public_schema_query_does_not_add_a_second_statement(self):
         text = self._restore_sql(

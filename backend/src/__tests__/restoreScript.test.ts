@@ -92,7 +92,7 @@ describeOnPosix('restore.sh', () => {
   it('refuses a non-simple ?schema= without invoking psql', async () => {
     const sentinel = '-- not loaded --\n';
     await fs.writeFile(loaded, sentinel);
-    for (const schema of ['*', 'foo-bar', '1nope', "foo'bar"]) {
+    for (const schema of ['*', 'foo-bar', '1nope', "foo'bar", '%2A', 'foo%2Dbar']) {
       await fs.writeFile(loaded, sentinel);
       const result = run(`postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=${schema}`);
       expect([schema, result.status]).not.toEqual([schema, 0]);
@@ -113,6 +113,20 @@ describeOnPosix('restore.sh', () => {
     expect(text).not.toContain('DROP SCHEMA public CASCADE;');
     expect(text).toMatch(/to_regclass\('public\.session'\)/);
     expect(text).toContain("to_regclass(format('%I.session', 'app_data'))");
+  });
+
+  it('percent-decodes ?schema= before the identifier check, so app%5Fdata uses the app_data preamble', async () => {
+    const result = run('postgresql://cozyvtt:secret@localhost:5432/cozyvtt?schema=app%5Fdata');
+
+    expect(result.status).toBe(0);
+    const text = await fs.readFile(loaded, 'utf8');
+    expect(text).toContain(
+      "DO $$ BEGIN EXECUTE format('DROP SCHEMA IF EXISTS %I CASCADE', 'app_data'); END $$;"
+    );
+    expect(text).toContain("to_regclass(format('%I.session', 'app_data'))");
+    expect(text).not.toContain("format('CREATE SCHEMA %I'");
+    expect(text).not.toContain('DROP SCHEMA public CASCADE;');
+    expect(text).not.toMatch(/app%5Fdata/);
   });
 
   it('loads nothing when the working file comes out cut short, even if awk says it succeeded', async () => {
