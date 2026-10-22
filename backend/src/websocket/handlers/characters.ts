@@ -8,6 +8,7 @@ import { AuthenticatedSocket } from '../auth';
 import { prisma } from '../../config/database';
 import logger from '../../utils/logger';
 import { toJson } from '../../utils/prisma-json';
+import { projectCharacterData } from '../../utils/sheetProjection';
 import type { DnD5eHitDice } from '../../game-systems/dnd5e';
 import { withinCeiling } from '../shared';
 import { emitCharacterUpdated } from '../utils';
@@ -36,7 +37,11 @@ type Refusal = { error: string };
 
 /**
  * The sheet with `delta` applied to its current hit points, clamped to 0 and
- * the maximum, or why it cannot be.
+ * the projected maximum, or why it cannot be.
+ *
+ * Roster and map bars use this event; a stale stored max must not clamp away
+ * current HP. Projection is for the clamp and the payload `max` only: current
+ * resources are writes, so derived fields stay as stored.
  *
  * Only the HP-bearing corners of the sheet are described: the blob is a full
  * character in one of several systems, and nothing else is read or written.
@@ -48,13 +53,15 @@ function applyHpDelta(
   delta: number
 ): { data: CharacterHpData; hp: { current: number; max: number; temp: number } } | Refusal {
   const charData = stored as CharacterHpData;
+  const projected = projectCharacterData(gameSystem, stored) as CharacterHpData;
   switch (gameSystem) {
     case 'DND_5E':
     case 'PATHFINDER_2E': {
       if (!charData?.hp || typeof charData.hp.maximum !== 'number') {
         return { error: 'Character does not have HP tracking' };
       }
-      const max = charData.hp.maximum;
+      const projectedMax = projected?.hp?.maximum;
+      const max = typeof projectedMax === 'number' && Number.isFinite(projectedMax) ? projectedMax : charData.hp.maximum;
       const temp = typeof charData.hp.temporary === 'number' ? charData.hp.temporary : 0;
       const current = Math.max(0, Math.min(max, (typeof charData.hp.current === 'number' ? charData.hp.current : max) + delta));
       return { data: { ...charData, hp: { ...charData.hp, current } }, hp: { current, max, temp } };
@@ -63,7 +70,8 @@ function applyHpDelta(
       if (!charData?.derivedStats?.hp || typeof charData.derivedStats.hp.maximum !== 'number') {
         return { error: 'Character does not have HP tracking' };
       }
-      const max = charData.derivedStats.hp.maximum;
+      const projectedMax = projected?.derivedStats?.hp?.maximum;
+      const max = typeof projectedMax === 'number' && Number.isFinite(projectedMax) ? projectedMax : charData.derivedStats.hp.maximum;
       const current = Math.max(0, Math.min(max, (typeof charData.derivedStats.hp.current === 'number' ? charData.derivedStats.hp.current : max) + delta));
       return {
         data: { ...charData, derivedStats: { ...charData.derivedStats, hp: { ...charData.derivedStats.hp, current } } },
@@ -87,6 +95,10 @@ function spendHitDie(stored: unknown, index: number): { data: CharacterHitDiceDa
 }
 
 export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocket): void {
+  /**
+   * CHARACTER.HP.UPDATE — apply a hit-point delta; clamp and broadcast use
+   * the projected maximum when inputs exist; only current is written.
+   */
   socket.on('character.hp.update', async (data: { characterId: string; delta: number }) => {
     try {
       if (!socket.campaignId) {
