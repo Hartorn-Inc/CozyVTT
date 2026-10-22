@@ -33,6 +33,12 @@ export interface ColorPreset {
 
 export interface HeaderPaint {
   text: string;
+  /**
+   * Colour for the right column (XP, hero points, CoC view player). Custom
+   * and vintage match `text`. Gradient presets are always white: every
+   * D&D/PF `to-*` stop is 800/900, so white on amber-800 (#92400e) is ~7:1.
+   */
+  trailingText: string;
   placeholder: string;
   fieldBg: string;
   fieldBorder: string;
@@ -79,8 +85,10 @@ export function headerPaint(args: {
 }): HeaderPaint {
   const { variant, isCustomColor, customColorHex, presetHex } = args;
   if (isCustomColor) {
+    const text = customHeaderTextClass(customColorHex);
     return {
-      text: customHeaderTextClass(customColorHex),
+      text,
+      trailingText: text,
       placeholder: customHeaderPlaceholderClass(customColorHex),
       fieldBg: CUSTOM_HEADER_FIELD_SURFACE,
       fieldBorder: CUSTOM_HEADER_FIELD_BORDER,
@@ -90,6 +98,7 @@ export function headerPaint(args: {
   if (variant === 'vintage') {
     return {
       text: 'text-white',
+      trailingText: 'text-white',
       placeholder: 'placeholder:text-white',
       fieldBg: 'bg-white/10',
       fieldBorder: 'border-white/30',
@@ -103,7 +112,8 @@ export function headerPaint(args: {
   const text = shouldUseWhiteText(presetHex) ? 'text-white' : 'text-stone-900';
   return {
     text,
-    placeholder: 'placeholder-current/50',
+    trailingText: 'text-white',
+    placeholder: text === 'text-white' ? 'placeholder:text-white' : 'placeholder:text-stone-900',
     fieldBg: 'bg-white/10',
     fieldBorder: 'border-white/20',
     fieldFocus: 'focus:border-white/40',
@@ -342,15 +352,22 @@ export const SheetHeader: React.FC<SheetHeaderProps> = ({
       </h2>
     );
 
+  // Gradient Edit and palette sit on the dark `to-*` stop; opaque fill so
+  // white text stays ≥4.5:1. Vintage palette stays a white wash on amber;
+  // vintage Edit stays dark amber. Custom keeps the current-color surface.
+  const gradientControlSurface =
+    'bg-stone-900 hover:bg-stone-950 text-white border border-current shadow-lg';
   const paletteSurface = isCustomColor
     ? CUSTOM_HEADER_CONTROL_SURFACE
-    : 'bg-white/20 hover:bg-white/30';
+    : variant === 'vintage'
+      ? 'bg-white/20 hover:bg-white/30'
+      : gradientControlSurface;
   const editSurface =
     variant === 'vintage'
       ? 'bg-amber-900 hover:bg-amber-950 text-white border border-current shadow-lg'
       : isCustomColor
         ? CUSTOM_HEADER_CONTROL_SURFACE
-        : 'bg-white/20 hover:bg-white/30';
+        : gradientControlSurface;
 
   return (
     <div className={headerClasses} style={headerStyle}>

@@ -190,13 +190,13 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
           </>
         )}
         trailing={(paint) => (
-          <div className={`text-right ${paint.text}`}>
-            <div className="text-xs mb-1">Experience Points</div>
-            <div className="text-2xl font-bold">{data.experiencePoints || 0}</div>
+          <div className={`text-right ${paint.trailingText}`}>
+            <div className={`text-xs mb-1 ${paint.trailingText}`}>Experience Points</div>
+            <div className={`text-2xl font-bold ${paint.trailingText}`}>{data.experiencePoints || 0}</div>
             {data.heroPoints !== undefined && (
               <div className="mt-2">
-                <div className="text-xs mb-1">Hero Points</div>
-                <div className="text-xl font-bold">
+                <div className={`text-xs mb-1 ${paint.trailingText}`}>Hero Points</div>
+                <div className={`text-xl font-bold ${paint.trailingText}`}>
                   {data.heroPoints} / 3
                 </div>
               </div>

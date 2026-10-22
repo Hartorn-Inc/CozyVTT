@@ -135,9 +135,9 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
       trailing={(paint) => {
         if (!data.playerName) return null;
         return (
-          <div className="text-right">
-            <div className={`text-xs uppercase tracking-wide ${paint.text}`}>Player</div>
-            <div className={`text-lg font-semibold ${paint.text}`}>{data.playerName}</div>
+          <div className={`text-right ${paint.trailingText}`}>
+            <div className={`text-xs uppercase tracking-wide ${paint.trailingText}`}>Player</div>
+            <div className={`text-lg font-semibold ${paint.trailingText}`}>{data.playerName}</div>
           </div>
         );
       }}

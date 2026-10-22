@@ -177,9 +177,9 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
       )}
       trailing={(paint) =>
         data.experiencePoints !== undefined ? (
-          <div className={`text-right ${paint.text}`}>
-            <div className="text-xs">Experience</div>
-            <div className="text-xl font-bold">{data.experiencePoints.toLocaleString()}</div>
+          <div className={`text-right ${paint.trailingText}`}>
+            <div className={`text-xs ${paint.trailingText}`}>Experience</div>
+            <div className={`text-xl font-bold ${paint.trailingText}`}>{data.experiencePoints.toLocaleString()}</div>
           </div>
         ) : null
       }

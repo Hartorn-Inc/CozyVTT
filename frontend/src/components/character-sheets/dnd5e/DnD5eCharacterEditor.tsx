@@ -69,6 +69,7 @@ import {
 import {
   toStoredHexColor,
   customHeaderColourError,
+  CUSTOM_HEADER_FIELD_SURFACE,
 } from '@/utils/themeColor';
 import { SHEET_LIST_MAX, SPELL_SLOTS_MAX } from '@/constants/sheetLimits';
 import { SheetHeader, shouldUseWhiteText, type ColorPreset } from '../SheetHeader';
@@ -1096,14 +1097,14 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
         </>
       )}
       trailing={(paint) => (
-        <div className={`text-right space-y-1 ${paint.text}`}>
-          <label htmlFor={xpFieldId} className="block text-xs">Experience Points</label>
+        <div className={`text-right space-y-1 ${paint.trailingText}`}>
+          <label htmlFor={xpFieldId} className={`block text-xs ${paint.trailingText}`}>Experience Points</label>
           <NumberField
             id={xpFieldId}
             min={0}
             value={formData.experiencePoints}
             onChange={(v: number) => updateField('experiencePoints', v)}
-            className={`w-24 text-xl font-bold ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} text-right focus:outline-none ${paint.fieldFocus}`}
+            className={`w-24 text-xl font-bold ${CUSTOM_HEADER_FIELD_SURFACE} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.trailingText} text-right focus:outline-none ${paint.fieldFocus}`}
             fallback={0}
           />
         </div>

@@ -337,7 +337,11 @@ describe('sheet header contrast and labels', () => {
   });
 
   it('paints D&D Amber Gold view name stone-900, not white, without pale-red meta', () => {
-    render(<DnD5eCharacterView character={dndCharacter({ themeColor: 'Amber Gold' })} />);
+    render(
+      <DnD5eCharacterView
+        character={dndCharacter({ themeColor: 'Amber Gold', experiencePoints: 0 })}
+      />,
+    );
     const heading = screen.getByRole('heading', { name: 'Aldra' });
     expect(heading.className).toContain('text-stone-900');
     expect(heading.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
@@ -345,16 +349,29 @@ describe('sheet header contrast and labels', () => {
     expect(header?.className).toContain('text-stone-900');
     expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
     expect(header?.innerHTML).not.toMatch(/text-red-100|text-red-200/);
+    const experience = screen.getByText('Experience');
+    expect(experience.className).toContain('text-white');
+    expect(experience.className).not.toContain('text-stone-900');
   });
 
   it('paints Pathfinder Golden view name stone-900, not white', () => {
-    render(<Pathfinder2eCharacterView character={pf2eCharacter({ themeColor: 'Golden' })} />);
+    render(
+      <Pathfinder2eCharacterView
+        character={pf2eCharacter({ themeColor: 'Golden', heroPoints: 0 })}
+      />,
+    );
     const heading = screen.getByRole('heading', { name: 'New Character' });
     expect(heading.className).toContain('text-stone-900');
     expect(heading.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
     const header = headerRoot(heading);
     expect(header?.className).toContain('text-stone-900');
     expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+    const experience = screen.getByText('Experience Points');
+    expect(experience.className).toContain('text-white');
+    expect(experience.className).not.toContain('text-stone-900');
+    const heroPoints = screen.getByText('Hero Points');
+    expect(heroPoints.className).toContain('text-white');
+    expect(heroPoints.className).not.toContain('text-stone-900');
   });
 
   it.each(NAME_EDITORS)(
@@ -432,6 +449,59 @@ describe('sheet header contrast and labels', () => {
     const edit = screen.getByRole('button', { name: 'Edit' });
     expect(edit.className).toContain('bg-amber-900');
     expect(edit.className).toMatch(/border-current|\bborder\b/);
+  });
+
+  it('paints Amber Gold D&D view Edit on opaque stone-900 with white text', () => {
+    render(
+      <DnD5eCharacterView
+        character={dndCharacter({ themeColor: 'Amber Gold', experiencePoints: 0 })}
+        onEdit={vi.fn()}
+      />,
+    );
+    const edit = screen.getByRole('button', { name: 'Edit' });
+    expect(edit.className).toContain('bg-stone-900');
+    expect(edit.className).toContain('text-white');
+    expect(edit.className).not.toContain('bg-white/20');
+  });
+
+  it('paints Golden Pathfinder view Edit on opaque stone-900 with white text', () => {
+    render(
+      <Pathfinder2eCharacterView
+        character={pf2eCharacter({ themeColor: 'Golden', heroPoints: 0 })}
+        onEdit={vi.fn()}
+      />,
+    );
+    const edit = screen.getByRole('button', { name: 'Edit' });
+    expect(edit.className).toContain('bg-stone-900');
+    expect(edit.className).toContain('text-white');
+    expect(edit.className).not.toContain('bg-white/20');
+  });
+
+  it('paints Classic Red D&D editor name placeholder solid white, not current/50', () => {
+    render(
+      <DnD5eCharacterEditor
+        character={dndCharacter({ themeColor: 'Classic Red' })}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const name = nameBox();
+    expect(name.className).toContain('placeholder:text-white');
+    expect(name.className).not.toContain('placeholder-current/50');
+  });
+
+  it('paints Classic Red D&D editor palette on opaque stone-900 with white text', () => {
+    render(
+      <DnD5eCharacterEditor
+        character={dndCharacter({ themeColor: 'Classic Red' })}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    const palette = paletteButton();
+    expect(palette.className).toContain('bg-stone-900');
+    expect(palette.className).toContain('text-white');
+    expect(palette.className).not.toContain('bg-white/20');
   });
 
   it('names D&D header fields Race, Class, Level, and Experience Points', () => {

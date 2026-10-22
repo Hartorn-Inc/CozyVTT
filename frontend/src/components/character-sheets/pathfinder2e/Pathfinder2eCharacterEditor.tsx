@@ -51,6 +51,7 @@ import { omitUnnamedRows } from '@/utils/sheetNamedRows';
 import {
   toStoredHexColor,
   customHeaderColourError,
+  CUSTOM_HEADER_FIELD_SURFACE,
 } from '@/utils/themeColor';
 import { SheetHeader, type ColorPreset } from '../SheetHeader';
 import { PF2E_COLOR_PRESETS, PF2E_DEFAULT_HEX } from './colorPresets';
@@ -907,24 +908,24 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
         </>
       )}
       trailing={(paint) => (
-        <div className={`text-right space-y-2 ${paint.text}`}>
-          <label htmlFor={xpFieldId} className="block text-xs">Experience Points</label>
+        <div className={`text-right space-y-2 ${paint.trailingText}`}>
+          <label htmlFor={xpFieldId} className={`block text-xs ${paint.trailingText}`}>Experience Points</label>
           <NumberField
             id={xpFieldId}
             min={0}
             value={formData.experiencePoints}
             onChange={(v: number) => updateField('experiencePoints', v)}
-            className={`w-24 text-xl font-bold ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} text-right focus:outline-none ${paint.fieldFocus}`}
+            className={`w-24 text-xl font-bold ${CUSTOM_HEADER_FIELD_SURFACE} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.trailingText} text-right focus:outline-none ${paint.fieldFocus}`}
             fallback={0}
           />
-          <label htmlFor={heroPointsFieldId} className="block text-xs mt-2">Hero Points</label>
+          <label htmlFor={heroPointsFieldId} className={`block text-xs mt-2 ${paint.trailingText}`}>Hero Points</label>
           <NumberField
             id={heroPointsFieldId}
             min={0}
             max={3}
             value={formData.heroPoints}
             onChange={(v: number) => updateField('heroPoints', Math.min(v, 3))}
-            className={`w-16 text-lg font-bold ${paint.fieldBg} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.text} text-right focus:outline-none ${paint.fieldFocus}`}
+            className={`w-16 text-lg font-bold ${CUSTOM_HEADER_FIELD_SURFACE} border ${paint.fieldBorder} rounded px-2 py-1 ${paint.trailingText} text-right focus:outline-none ${paint.fieldFocus}`}
             fallback={0}
           />
         </div>
