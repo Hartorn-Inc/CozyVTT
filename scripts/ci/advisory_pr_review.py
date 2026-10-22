@@ -1,13 +1,13 @@
 """
-Advisory Codex PR review helper for GitHub Actions.
+Advisory PR review helper for GitHub Actions.
 
 Resolve the pull request, collect review-only context, select a small CozyVTT
 reviewer set from changed paths, assemble one markdown comment from untrusted
 reviewer JSON, and post it as an advisory GitHub review (COMMENT, not a
 required check). No network in the tests.
 
-    python3 scripts/ci/codex_pr_review.py resolve --output "$GITHUB_OUTPUT"
-    python3 scripts/ci/codex_pr_review.py select --context assessment/review-context.json --output assessment/reviewers.json --github-output "$GITHUB_OUTPUT"
+    python3 scripts/ci/advisory_pr_review.py resolve --output "$GITHUB_OUTPUT"
+    python3 scripts/ci/advisory_pr_review.py select --context assessment/review-context.json --output assessment/reviewers.json --github-output "$GITHUB_OUTPUT"
     python3 -m unittest discover -s scripts/tests
 """
 
@@ -348,7 +348,7 @@ def is_ignored_author(author):
 
 def comment_commands(env=None):
     env = os.environ if env is None else env
-    raw = env.get('CODEX_ASSESS_COMMENT_COMMANDS', COMMENT_COMMANDS_DEFAULT)
+    raw = env.get('ADVISORY_REVIEW_COMMENT_COMMANDS', COMMENT_COMMANDS_DEFAULT)
     return {item.strip() for item in raw.split(',') if item.strip()}
 
 
@@ -365,7 +365,7 @@ def is_trusted_comment_event(event, commands=None):
     return str(comment.get('author_association') or '') in TRUSTED_ASSOCIATIONS
 
 
-REVIEW_REQUEST_LABEL = 'codex-review'
+REVIEW_REQUEST_LABEL = 'advisory-review'
 
 
 def resolve_workflow_run_pr_number(event, fetch_prs_for_sha=None):
@@ -416,7 +416,7 @@ def is_same_repo_pr(pr):
 
 def require_same_repo(env=None):
     env = os.environ if env is None else env
-    return env.get('CODEX_ASSESS_REQUIRE_SAME_REPO', 'true') == 'true'
+    return env.get('ADVISORY_REVIEW_REQUIRE_SAME_REPO', 'true') == 'true'
 
 
 def pr_has_label(pr, name):
@@ -532,12 +532,17 @@ def collect_human_comments(items, body_commands):
     return result
 
 
-def collect_prior_codex_reviews(repo, pr_number):
+def is_advisory_review_body(body):
+    text = str(body or '')
+    return 'Advisory review' in text or 'Advisory Codex review' in text
+
+
+def collect_prior_advisory_reviews(repo, pr_number):
     reviews = collect_paginated(f'repos/{repo}/pulls/{pr_number}/reviews')
     result = []
     for review in reviews:
         body = str(review.get('body') or '')
-        if 'Advisory Codex review' not in body and not body.startswith('## Advisory Codex review'):
+        if not is_advisory_review_body(body):
             continue
         author = review.get('user') or {}
         login = str(author.get('login') or '')
@@ -585,7 +590,7 @@ def collect_review_context(pr_number, env=None):
             collect_paginated(f'repos/{repo}/pulls/{pr_number}/comments'),
             commands,
         ),
-        'prior_codex_reviews': collect_prior_codex_reviews(repo, pr_number),
+        'prior_advisory_reviews': collect_prior_advisory_reviews(repo, pr_number),
     }
 
 
@@ -600,7 +605,7 @@ def placeholder_review(name):
                 'path': None,
                 'line': None,
                 'title': 'Reviewer pass failed',
-                'rationale': 'Codex did not produce a reviewer output for this pass.',
+                'rationale': 'Cursor CLI did not produce a reviewer output for this pass.',
                 'suggested_action': 'Inspect this workflow run if the missing reviewer output matters.',
             }
         ],
@@ -671,10 +676,10 @@ def load_reviewer_outputs(outputs_dir):
 
 def advisory_header():
     return (
-        '## Advisory Codex review (GPT-6 Luna Flex)\n\n'
+        '## Advisory review (Grok 4.7)\n\n'
         'This comment is **advisory**. It is not a required GitHub check and does '
         'not approve or block merge. A collaborator can opt in again with the '
-        '`codex-review` label or `/review`.\n'
+        '`advisory-review` label or `/review`.\n'
     )
 
 
@@ -711,7 +716,7 @@ def assemble_review(reviews):
     if len(body) > MAX_REVIEW_BODY_CHARS:
         body = body[:MAX_REVIEW_BODY_CHARS]
     body = sanitize_text(body, MAX_REVIEW_BODY_CHARS)
-    if not body.startswith('## Advisory Codex review'):
+    if not body.startswith('## Advisory review'):
         body = advisory_header() + '\n' + body
         if len(body) > MAX_REVIEW_BODY_CHARS:
             body = body[:MAX_REVIEW_BODY_CHARS] + '\n\n...[truncated]\n'
@@ -804,14 +809,14 @@ def main_assemble_review(args):
 
 def main_post_review(args):
     body = Path(args.body_file).read_text(encoding='utf-8')
-    if 'Advisory Codex review' not in body:
+    if not is_advisory_review_body(body):
         body = assemble_review([])
     post_review(repo_full_name(), args.pr_number, body)
     return 0
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description='Advisory Codex PR review CI helper')
+    parser = argparse.ArgumentParser(description='Advisory PR review CI helper')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     resolve = subparsers.add_parser('resolve')
