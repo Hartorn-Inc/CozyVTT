@@ -913,7 +913,7 @@ Accepts `name`, `description`, `tokenImageUrl`, `data`. An empty body returns
 data is only meaningful against the system it was built for. On a Call of
 Cthulhu sheet, Keeper's Notes are stripped on update the same way as on
 publish; a name-, description-, or image-only save also drops stored
-Keeper's Notes.
+Keeper's Notes without putting back a sheet that changed in between.
 
 ### `DELETE /api/character-templates/:id`
 

@@ -591,6 +591,63 @@ describe('Character template routes', () => {
       nestedNotesRemain(stored.data as Record<string, unknown>);
     });
 
+    it('does not rewrite the sheet on a metadata-only PUT when there is nothing to strip', async () => {
+      const created = await createTemplate(authorAgent, {
+        name: 'Arkham Professor',
+        gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+        data: cocSheet(),
+      });
+      expect(created.status).toBe(201);
+
+      const before = await prisma.characterTemplate.findUniqueOrThrow({ where: { id: created.body.id } });
+      expect(before.data).not.toHaveProperty('notes');
+
+      const res = await authorAgent.put(`/api/character-templates/${created.body.id}`).send({
+        name: 'Renamed Only',
+      });
+
+      expect(res.status).toBe(200);
+      expect(res.body.name).toBe('Renamed Only');
+
+      const after = await prisma.characterTemplate.findUniqueOrThrow({ where: { id: created.body.id } });
+      expect(after.data).toEqual(before.data);
+      expect(after.data).not.toHaveProperty('notes');
+      expect((after.data as Record<string, unknown>).occupation).toBe('Professor');
+      expect((after.data as Record<string, unknown>).investigatorName).toBe('Harvey Walters');
+    });
+
+    it('keeps a concurrent sheet PUT when a metadata-only PUT strips stored notes', async () => {
+      for (let i = 0; i < 5; i++) {
+        const leaked = await prisma.characterTemplate.create({
+          data: {
+            name: 'Leaked Notes',
+            gameSystem: GameSystem.CALL_OF_CTHULHU_7E,
+            data: toJson({ ...cocSheet(), notes: KEEPER_SECRET, occupation: 'Professor' }),
+            createdById: authorId,
+          },
+        });
+
+        const [renamed, sheet] = await Promise.all([
+          authorAgent.put(`/api/character-templates/${leaked.id}`).send({
+            name: 'Renamed Only',
+          }),
+          authorAgent.put(`/api/character-templates/${leaked.id}`).send({
+            data: { ...cocSheet(), occupation: 'Journalist' },
+          }),
+        ]);
+
+        expect(renamed.status).toBe(200);
+        expect(sheet.status).toBe(200);
+
+        const stored = await prisma.characterTemplate.findUniqueOrThrow({ where: { id: leaked.id } });
+        expect(stored.name).toBe('Renamed Only');
+        expect((stored.data as Record<string, unknown>).occupation).toBe('Journalist');
+        expect(stored.data).not.toHaveProperty('notes');
+        nestedNotesRemain(stored.data as Record<string, unknown>);
+        expect(JSON.stringify(stored)).not.toContain(KEEPER_SECRET);
+      }
+    });
+
     it('omits stored notes from GET, even for the author', async () => {
       const leaked = await prisma.characterTemplate.create({
         data: {

@@ -10562,9 +10562,10 @@ paths:
         parsed; a refused sheet answers 400 with `validationErrors` and the
         message the create route gives. On a Call of Cthulhu sheet the
         top-level `notes` (Keeper's Notes) is stripped from stored `data` on
-        every update, including a metadata-only PUT that does not send
-        `data`, so the Instance-wide library never carries it; a present
-        `notes` on a sheet PUT does not answer 400.
+        every update. A metadata-only PUT strips stored Keeper's Notes from
+        the sheet as it is at write time (row lock); it does not replace the
+        sheet with an earlier snapshot. Presence of `notes` on a sheet PUT
+        does not answer 400.
         `tokenImageUrl` follows the
         rule on create, and null or an empty string removes the image.
       operationId: updateCharacterTemplate
