@@ -23,21 +23,25 @@
  * seat is 403 and rolls back. Invitation-accept creates the membership, so it
  * only takes the Campaign lock.
  *
- * Assign then locks the Character. Two concurrent assigns of the same
- * unassigned Character to different campaigns used to both see campaignId
+ * Assign then locks previous (if any) and target (if any) memberships in
+ * sorted campaignId order, then the Character. Two concurrent assigns of the
+ * same unassigned Character to different campaigns used to both see campaignId
  * null (loaded before the transaction), append the id to both memberships,
  * and both UPDATE the column: the leftover roster entry stayed on the
  * campaign that lost the write. FOR UPDATE waits, then the write uses that
- * campaignId for previous-membership removal and the column.
+ * campaignId for previous-membership removal and the column. If the locked
+ * campaignId is not the hint used to choose those seats, the transaction
+ * aborts and retries with a fresh hint: that is how assign learns the real
+ * previous seat without locking Character first and then waiting on a
+ * membership (kick is membership then Character; the reverse deadlocks).
+ * Unassign uses the same membership-then-Character write, with no target seat.
  *
  * Kick used to updateMany characters then delete the seat. If a join already
  * held membership, updateMany matched zero rows and did not wait; DELETE
  * waited; the join wrote campaignId and committed; kick deleted the seat —
  * leftover `Character.campaignId` again. Kick now FOR UPDATE the membership
  * before updateMany. It does not take Campaign FOR UPDATE after the seat
- * (join is Campaign then membership; the reverse deadlocks). Assign's
- * Character lock comes after that same membership, matching kick
- * (membership then Character).
+ * (join is Campaign then membership; the reverse deadlocks).
  */
 
 import type { CampaignRole, Prisma } from '@prisma/client';
@@ -86,6 +90,24 @@ export class CharacterGoneError extends Error {
 }
 
 /**
+ * Character.campaignId was not the previous seat this attempt locked.
+ * Assign/unassign abort and retry with a fresh hint rather than FOR UPDATE
+ * another membership after Character.
+ */
+export class StaleCampaignHintError extends Error {
+  constructor() {
+    super('Character.campaignId changed after membership locks');
+    this.name = 'StaleCampaignHintError';
+  }
+}
+
+/** Assign/unassign retries when Character.campaignId is not the hinted previous seat. */
+export const CHARACTER_CAMPAIGN_WRITE_ATTEMPTS = 5;
+
+/** A CampaignMembership row locked FOR UPDATE. */
+export type LockedCampaignMembership = { characterIds: string[]; role: CampaignRole };
+
+/**
  * Lock the Campaign row and return its current gameSystem.
  *
  * `SELECT ... FOR UPDATE` waits for a concurrent PUT (or another join) that
@@ -113,7 +135,8 @@ export async function lockCampaignGameSystem(
  * seat throws `MembershipGoneError` (create-in/assign → 403, kick → 404).
  *
  * Join paths call this after `lockCampaignGameSystem` (Campaign, then
- * membership). Assign then locks the Character. Kick does not take Campaign
+ * membership). Assign/unassign lock previous and target seats in sorted
+ * campaignId order, then the Character. Kick does not take Campaign
  * FOR UPDATE after the seat.
  */
 export async function lockCampaignMembership(
@@ -121,26 +144,92 @@ export async function lockCampaignMembership(
   userId: string,
   campaignId: string,
   goneMessage: string,
-): Promise<{ characterIds: string[]; role: CampaignRole }> {
-  await tx.$queryRaw`SELECT id FROM "CampaignMembership" WHERE "userId" = ${userId} AND "campaignId" = ${campaignId} FOR UPDATE`;
-  const membership = await tx.campaignMembership.findUnique({
-    where: { userId_campaignId: { userId, campaignId } },
-    select: { characterIds: true, role: true },
-  });
+): Promise<LockedCampaignMembership> {
+  const membership = await lockCampaignMembershipIfPresent(tx, userId, campaignId);
   if (!membership) throw new MembershipGoneError(goneMessage);
   return membership;
 }
 
 /**
+ * Lock this userId's CampaignMembership row when it still exists.
+ *
+ * Assign/unassign use this for a hinted previous seat: a concurrent kick may
+ * have already deleted it, and that is skip (not 403). A missing row does
+ * not wait; FOR UPDATE of zero rows takes no lock.
+ */
+export async function lockCampaignMembershipIfPresent(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  campaignId: string,
+): Promise<LockedCampaignMembership | null> {
+  await tx.$queryRaw`SELECT id FROM "CampaignMembership" WHERE "userId" = ${userId} AND "campaignId" = ${campaignId} FOR UPDATE`;
+  return tx.campaignMembership.findUnique({
+    where: { userId_campaignId: { userId, campaignId } },
+    select: { characterIds: true, role: true },
+  });
+}
+
+/**
+ * Lock previous (if any) and target (if any) CampaignMembership rows in
+ * sorted campaignId order, without locking the same id twice.
+ *
+ * Assign/unassign take these seats before Character so they never wait on a
+ * membership after holding the Character lock (kick is membership then
+ * Character; the reverse deadlocks). Sorting keeps two writes that touch
+ * both A and B from taking those rows in opposite orders. A missing target
+ * seat is MembershipGoneError; a missing previous seat is skipped (already
+ * kicked).
+ */
+export async function lockCampaignMembershipsInSortedOrder(
+  tx: Prisma.TransactionClient,
+  userId: string,
+  seats: {
+    previousCampaignId: string | null;
+    targetCampaignId: string | null;
+    targetGoneMessage: string;
+  },
+): Promise<{
+  previous: LockedCampaignMembership | null;
+  target: LockedCampaignMembership | null;
+}> {
+  const { previousCampaignId, targetCampaignId, targetGoneMessage } = seats;
+  const jobs: Array<{ campaignId: string; kind: 'previous' | 'target' }> = [];
+  if (previousCampaignId && previousCampaignId !== targetCampaignId) {
+    jobs.push({ campaignId: previousCampaignId, kind: 'previous' });
+  }
+  if (targetCampaignId) {
+    jobs.push({ campaignId: targetCampaignId, kind: 'target' });
+  }
+  jobs.sort((a, b) => (a.campaignId < b.campaignId ? -1 : 1));
+
+  let previous: LockedCampaignMembership | null = null;
+  let target: LockedCampaignMembership | null = null;
+  for (const job of jobs) {
+    if (job.kind === 'target') {
+      target = await lockCampaignMembership(tx, userId, job.campaignId, targetGoneMessage);
+    } else {
+      previous = await lockCampaignMembershipIfPresent(tx, userId, job.campaignId);
+    }
+  }
+  if (previousCampaignId && previousCampaignId === targetCampaignId) {
+    previous = target;
+  }
+  return { previous, target };
+}
+
+/**
  * Lock the Character row and return its current campaignId.
  *
- * Assign calls this after Campaign then membership. Concurrent assigns of
- * the same Character serialize here so the loser sees the committed
- * campaignId and can strip the id from that previous membership. A missing
- * Character is not a 500: the route turns `CharacterGoneError` into 404.
+ * Assign/unassign call this after the previous and target memberships
+ * (sorted by campaignId). Concurrent assigns of the same Character
+ * serialize here so the loser sees the committed campaignId. If that id
+ * is not the hint used to lock those seats, the write aborts and retries
+ * with a fresh hint rather than FOR UPDATE another campaign's membership
+ * after this lock: kick of that campaign is membership then Character,
+ * and the reverse deadlocks.
  *
- * Do not FOR UPDATE another campaign's membership after this lock: kick of
- * that campaign is membership then Character, and the reverse deadlocks.
+ * A missing Character is not a 500: the route turns `CharacterGoneError`
+ * into 404.
  */
 export async function lockCharacterCampaignId(
   tx: Prisma.TransactionClient,

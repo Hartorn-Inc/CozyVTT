@@ -981,6 +981,8 @@ router.delete('/:campaignId/members/:userId', campaignDM, async (req: Authentica
       // and left the leftover column. FOR UPDATE waits, then updateMany sees
       // that Character. Do not take Campaign FOR UPDATE after the seat —
       // join is Campaign then membership, and the reverse deadlocks.
+      // Assign/unassign lock this membership before Character, matching this
+      // order so they do not wait on the seat after holding Character.
       const membership = await lockCampaignMembership(
         tx,
         userId,
