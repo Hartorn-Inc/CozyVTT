@@ -702,7 +702,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     setErrors(newErrors);
     // Reading order: name, then level, then colour. Only open the picker
     // when colour is the first invalid field.
-    if (!newErrors.characterName && newErrors.level && !colourError) {
+    if (!newErrors.characterName && newErrors.level) {
       document.getElementById(levelFieldId)?.focus();
     } else if (!newErrors.characterName && !newErrors.level && colourError) {
       setColorPickerFocusKey((n) => n + 1);

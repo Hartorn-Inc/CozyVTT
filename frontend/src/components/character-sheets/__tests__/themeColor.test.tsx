@@ -375,6 +375,28 @@ describe('sheet header contrast and labels', () => {
     },
   );
 
+  it.each(NAME_EDITORS)(
+    '$system focuses Level before colour when both fail',
+    async ({ Editor, character }) => {
+      const user = userEvent.setup();
+      render(
+        <Editor
+          character={character({ level: 0, themeColor: '#FFFF00' })}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />,
+      );
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+
+      const alert = await screen.findByText('Level must be between 1 and 20');
+      expect(alert).toHaveAttribute('role', 'alert');
+      const level = screen.getByLabelText('Level');
+      expect(level).toHaveAccessibleDescription('Level must be between 1 and 20');
+      await waitFor(() => expect(level).toHaveFocus());
+      expect(screen.queryByLabelText('Custom colour hex code')).toBeNull();
+    },
+  );
+
   it('keeps the token file input in the tab order and shows error plus hint in normal flow', async () => {
     render(
       <DnD5eCharacterEditor character={dndCharacter()} onSave={vi.fn()} onCancel={vi.fn()} />,
