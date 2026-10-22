@@ -71,7 +71,7 @@ field out for anyone else. A save by anyone else keeps the stored notes
 (`sheetKeepingKeeperNotes`), and a create by anyone but the Keeper drops
 them. They are cleared when the character enters another campaign, by
 `POST /api/characters/:id/assign` or by accepting an invitation with it, and
-a copy has none.
+a copy has none. A published character template never carries them.
 
 #### 5. Campaign DM or Player (Excludes Spectators)
 `campaignDMOrPlayer` is defined in `middleware/compose.ts` and no route uses it

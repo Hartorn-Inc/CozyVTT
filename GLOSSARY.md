@@ -77,7 +77,7 @@ A hardcoded starting sheet for a game system, offered by the Instance.
 _Avoid_: Template (unqualified), example sheet (for this object)
 
 **Published character template**:
-A shareable sheet in the Instance library, readable by every signed-in user. Distinct from a starter template and from a token template.
+A shareable sheet in the Instance library, readable by every signed-in user. Distinct from a starter template and from a token template. Never carries Keeper's Notes.
 _Avoid_: Public template, character template (unqualified), shared template
 
 **Token template**:
@@ -85,7 +85,7 @@ A reusable token definition that belongs to one Campaign.
 _Avoid_: Template (unqualified), token preset
 
 **Keeper's Notes**:
-The Call of Cthulhu field on a Character that only the DM of that Character's Campaign may read or write. It is a field, not a role.
+The Call of Cthulhu field on a Character that only the DM of that Character's Campaign may read or write. It is a field, not a role. Published character templates never carry it.
 _Avoid_: Keeper (as a role), GM notes, private notes (for this field)
 
 **Derived value**:

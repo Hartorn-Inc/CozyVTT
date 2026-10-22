@@ -10,6 +10,12 @@
  * the last campaign's Keeper's, and a player who moved their investigator
  * into a campaign they run would otherwise be its Keeper and read them.
  *
+ * Instance-wide published character templates have no Keeper, so every
+ * publish, update, and template read uses `sheetWithoutKeeperNotes` (the
+ * same helper Character projection uses). Do not reject the field; strip it.
+ * Character paths keep today's DM-only read/write and clear-on-move/copy via
+ * `characterForReader`, `sheetKeepingKeeperNotes`, and `clearKeeperNotes`.
+ *
  * The notes stay inside the stored sheet, so the schema, exports and imports
  * are unchanged. A database backup keeps them; a campaign export carries no
  * character sheets.
@@ -28,7 +34,10 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** The sheet with its Keeper-only field taken out; any other sheet as it is. */
+/**
+ * The sheet with its Keeper-only field taken out; any other sheet as it is.
+ * Published character templates always use this helper: they have no Keeper.
+ */
 export function sheetWithoutKeeperNotes<T>(gameSystem: GameSystem | null, data: T): T {
   const field = gameSystem ? KEEPER_ONLY_FIELD[gameSystem] : undefined;
   if (!field || !isPlainObject(data) || !(field in data)) return data;

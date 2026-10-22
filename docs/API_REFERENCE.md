@@ -871,7 +871,9 @@ its sheet (`data`), which a page of 100 would otherwise carry 100 times.
 ### `GET /api/character-templates/:id`
 
 One template, with its sheet in `data`. Fetch this before copying a template
-into a character or editing it.
+into a character or editing it. A published Call of Cthulhu sheet never
+includes Keeper's Notes (the top-level `notes` key), even if an older row
+still stored them.
 
 ### `POST /api/character-templates`
 
@@ -890,10 +892,13 @@ into a character or editing it.
 - `name` is required; `gameSystem` may be null for a flexible template.
 - `data` is validated against the game system's schema exactly as a character's
   is, and stored as the schema returns it, so a field the sheet does not define
-  is dropped. Fields from a sheet written before 1.3.0 are moved to where the
-  sheet reads them first, as they are for a character. A flexible template's
-  `data` must be an object laid out as a Flexible sheet, as a Flexible
-  character's must; anything else answers `400` with `validationErrors`.
+  is dropped. On a Call of Cthulhu sheet, Keeper's Notes (the top-level `notes`)
+  are stripped before the published character template is stored; sending them
+  does not answer `400`. Fields from a sheet written before 1.3.0 are moved to
+  where the sheet reads them first, as they are for a character. A flexible
+  template's `data` must be an object laid out as a Flexible sheet, as a
+  Flexible character's must; anything else answers `400` with
+  `validationErrors`.
 - **`tokenImageUrl` must reference a `GLOBAL` asset.** A template is visible to
   everyone, so a `USER`- or `CAMPAIGN`-scoped image would 403 for other readers
   and show as broken. A non-global asset returns `400` with an explanation.
@@ -905,7 +910,10 @@ into a character or editing it.
 
 Accepts `name`, `description`, `tokenImageUrl`, `data`. An empty body returns
 `400`. `gameSystem` is fixed at creation, as it is for a character — the sheet
-data is only meaningful against the system it was built for.
+data is only meaningful against the system it was built for. On a Call of
+Cthulhu sheet, Keeper's Notes are stripped on update the same way as on
+publish; a name-, description-, or image-only save also drops stored
+Keeper's Notes without putting back a sheet that changed in between.
 
 ### `DELETE /api/character-templates/:id`
 
@@ -914,7 +922,8 @@ data is only meaningful against the system it was built for.
 There is no dedicated endpoint. The client reads the template and posts its
 `data`, `gameSystem` and `tokenImageUrl` to `POST /api/characters` — the
 resulting character belongs to whoever made the request, not to the template's
-author.
+author. Use copies a sheet without Keeper's Notes: a published Call of Cthulhu
+template never carries the key, so the created Character is stored without it.
 
 ---
 
