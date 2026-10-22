@@ -40,7 +40,10 @@ beforeAll(async () => {
   await loginSessionRevocationGuard;
 });
 
-afterAll(() => pool.end());
+afterAll(async () => {
+  // jest.afterEnv ends this pool first. pg-pool throws if end() runs twice.
+  if (!pool.ending) await pool.end();
+});
 
 it('is constructed from databaseConnectionSettings for the configured schema', () => {
   const url = process.env.DATABASE_URL;
