@@ -11,9 +11,10 @@ import { HEX_COLOR_PATTERN, THEME_COLOR_PATTERN } from '../../utils/styleAllowli
  *
  * A custom hex is also held to WCAG 2.1 contrast of 4.5:1 against fixed white
  * header text (`#FFFFFF`). Pale picks are refused; they are not auto-adjusted.
- * Already-stored pale hex still loads; the client paints dark name text so
- * the sheet is readable, and the next save is refused until it is a passing
- * hex or a preset. Preset names and empty string skip the contrast check.
+ * Already-stored pale hex still loads; the client paints white or black name
+ * text, whichever contrasts more against that hex, and the next save is
+ * refused until it is a passing hex or a preset. Preset names and empty
+ * string skip the contrast check.
  */
 
 export const PALE_HEADER_COLOUR_MESSAGE =

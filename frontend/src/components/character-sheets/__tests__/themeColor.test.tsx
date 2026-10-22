@@ -19,7 +19,7 @@ import { CallOfCthulhu7eCharacterEditor } from '../call-of-cthulhu-7e/CallOfCthu
 import { CallOfCthulhu7eCharacterView } from '../call-of-cthulhu-7e/CallOfCthulhu7eCharacterView';
 import { pf2eCharacter } from '../pathfinder2e/__tests__/pf2eFixture';
 import { cocCharacter } from '../call-of-cthulhu-7e/__tests__/cocFixture';
-import { PALE_HEADER_COLOUR_MESSAGE } from '@/utils/themeColor';
+import { PALE_HEADER_COLOUR_MESSAGE, customHeaderTextClass } from '@/utils/themeColor';
 import type { Character, CharacterData } from '../../../types';
 
 vi.mock('@/hooks/queries', () => ({
@@ -146,11 +146,19 @@ describe.each(EDITORS)('$system custom colour', (entry) => {
     expect(name.className).not.toContain('bg-white/10');
   });
 
-  it('paints dark header text for a stored pale custom colour', () => {
+  it('paints black header text for a stored pale custom colour', () => {
     const { Editor, character } = entry;
     render(<Editor character={character({ themeColor: '#FFFF00' })} onSave={vi.fn()} onCancel={vi.fn()} />);
     const name = nameBox();
-    expect(name.className).toContain('text-stone-900');
+    expect(name.className).toContain('text-black');
+    expect(name.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+  });
+
+  it('paints black header text for a stored mid-tone custom colour', () => {
+    const { Editor, character } = entry;
+    render(<Editor character={character({ themeColor: '#777777' })} onSave={vi.fn()} onCancel={vi.fn()} />);
+    const name = nameBox();
+    expect(name.className).toContain('text-black');
     expect(name.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
   });
 });
@@ -170,10 +178,37 @@ describe.each(VIEWS)('$system custom colour view', ({ View, character }) => {
     expect(header?.className).toContain('text-white');
   });
 
-  it('paints dark header text for a stored pale custom colour', () => {
+  it('paints black header text for a stored pale custom colour', () => {
     render(<View character={character({ themeColor: '#FFFF00' })} />);
     const header = document.querySelector('[style*="background"]');
-    expect(header?.className).toContain('text-stone-900');
+    expect(header?.className).toContain('text-black');
     expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+  });
+
+  it('paints black header text for a stored mid-tone custom colour', () => {
+    render(<View character={character({ themeColor: '#777777' })} />);
+    const header = document.querySelector('[style*="background"]');
+    expect(header?.className).toContain('text-black');
+    expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
+  });
+});
+
+describe('customHeaderTextClass', () => {
+  it('uses white when white contrasts more than black', () => {
+    expect(customHeaderTextClass('#14532d')).toBe('text-white');
+  });
+
+  it('uses black for pale and mid-tone hex that fail against white', () => {
+    expect(customHeaderTextClass('#FFFF00')).toBe('text-black');
+    expect(customHeaderTextClass('#777777')).toBe('text-black');
+    expect(customHeaderTextClass('#808080')).toBe('text-black');
+  });
+});
+
+describe('Pathfinder custom header chips', () => {
+  it('do not sit on a translucent white wash', () => {
+    render(<Pathfinder2eCharacterView character={pf2eCharacter({ themeColor: '#737373' })} />);
+    const chip = screen.getByText(/Level 1 Fighter/);
+    expect(chip.className).not.toMatch(/bg-white\/(?:10|20)/);
   });
 });

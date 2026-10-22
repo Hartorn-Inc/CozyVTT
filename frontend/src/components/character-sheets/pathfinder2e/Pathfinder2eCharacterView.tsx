@@ -139,6 +139,12 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
     // Passing custom hex keeps white name text. Stored pale hex uses dark
     // text so the view is readable; the next save is still refused.
     const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-white';
+    const chipClass = isCustomColor
+      ? 'px-3 py-1 rounded-full text-sm border border-current'
+      : 'px-3 py-1 bg-white/10 rounded-full text-sm';
+    const chipStrongClass = isCustomColor
+      ? 'px-3 py-1 rounded-full text-sm font-medium border border-current'
+      : 'px-3 py-1 bg-white/20 rounded-full text-sm font-medium';
 
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative`
@@ -150,7 +156,9 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
         {onEdit && (
           <button
             onClick={onEdit}
-            className="absolute top-4 right-4 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors flex items-center space-x-2 font-medium"
+            className={`absolute top-4 right-4 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 font-medium ${
+              isCustomColor ? 'border border-current bg-transparent' : 'bg-white/20 hover:bg-white/30'
+            }`}
             title="Edit character"
           >
             <Edit className="w-4 h-4" />
@@ -173,24 +181,24 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
           <div>
             <h2 className="text-3xl font-bold mb-2">{data.characterName}</h2>
             <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
-              <span className="px-3 py-1 bg-white/20 rounded-full text-sm font-medium">
+              <span className={chipStrongClass}>
                 Level {data.level} {data.class}
               </span>
-              <span className="px-3 py-1 bg-white/10 rounded-full text-sm">
+              <span className={chipClass}>
                 {data.ancestry} ({data.heritage})
               </span>
-              <span className="px-3 py-1 bg-white/10 rounded-full text-sm">
+              <span className={chipClass}>
                 {data.background}
               </span>
               {/* Deity and alignment: on the sheet and in the schema, but shown
                   nowhere in the app until now. */}
               {data.deity && (
-                <span className="px-3 py-1 bg-white/10 rounded-full text-sm">
+                <span className={chipClass}>
                   {data.deity}
                 </span>
               )}
               {data.alignment && (
-                <span className="px-3 py-1 bg-white/10 rounded-full text-sm">
+                <span className={chipClass}>
                   {data.alignment}
                 </span>
               )}

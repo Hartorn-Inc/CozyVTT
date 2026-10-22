@@ -40,31 +40,33 @@ export function customHeaderFill(hex: string): { background: string } {
  */
 export const CUSTOM_HEADER_PLACEHOLDER_CLASS = 'placeholder:text-white';
 
-/** Dark name text used when a stored or in-progress custom hex fails 4.5:1. */
-export const CUSTOM_HEADER_TEXT_DARK = 'text-stone-900';
-
 /** Field fill on a custom header: the validated hex, not a 10% white wash. */
 export const CUSTOM_HEADER_FIELD_SURFACE = 'bg-transparent';
 
+const WHITE: Rgb = [255, 255, 255];
+const BLACK: Rgb = [0, 0, 0];
+
 /**
- * Name-text class for a custom header. A passing hex keeps white; a pale
- * stored hex uses dark text so the view stays readable. Save still refuses
- * the pale pick — this does not rewrite the colour.
+ * Name-text class for a custom header. White when it beats black against the
+ * stored hex (and for a colour the save rule accepts); otherwise pure black.
+ * `text-stone-900` is not black enough for mid-tone hex such as `#777777`.
+ * Save still refuses a pale pick — this does not rewrite the colour.
  */
 export function customHeaderTextClass(hex: string): string {
   const stored = toStoredHexColor(hex);
-  if (stored && headerHexMeetsContrast(stored)) return 'text-white';
-  return CUSTOM_HEADER_TEXT_DARK;
+  const rgb = stored ? parseHexRgb(stored) : null;
+  if (!rgb) return 'text-black';
+  const whiteContrast = contrastRatio(rgb, WHITE);
+  const blackContrast = contrastRatio(rgb, BLACK);
+  return whiteContrast >= blackContrast ? 'text-white' : 'text-black';
 }
 
 /** Placeholder class matching {@link customHeaderTextClass}. */
 export function customHeaderPlaceholderClass(hex: string): string {
-  return customHeaderTextClass(hex) === CUSTOM_HEADER_TEXT_DARK
-    ? 'placeholder:text-stone-900'
+  return customHeaderTextClass(hex) === 'text-black'
+    ? 'placeholder:text-black'
     : CUSTOM_HEADER_PLACEHOLDER_CLASS;
 }
-
-const WHITE: Rgb = [255, 255, 255];
 
 /** `value` as `#rrggbb`, or null when it is not a hex colour. */
 export function toStoredHexColor(value: string): string | null {

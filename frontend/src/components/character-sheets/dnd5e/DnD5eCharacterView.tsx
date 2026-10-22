@@ -173,7 +173,9 @@ export const DnD5eCharacterView: React.FC<DnD5eCharacterViewProps> = ({ characte
         {onEdit && (
           <button
             onClick={onEdit}
-            className="absolute top-4 right-4 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition-colors flex items-center space-x-2 font-medium"
+            className={`absolute top-4 right-4 px-4 py-2 rounded-lg transition-colors flex items-center space-x-2 font-medium ${
+              isCustomColor ? 'border border-current bg-transparent' : 'bg-white/20 hover:bg-white/30'
+            }`}
             title="Edit character"
           >
             <Edit className="w-4 h-4" />
