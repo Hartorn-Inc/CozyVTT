@@ -142,14 +142,16 @@ describe.each(EDITORS)('$system custom colour', (entry) => {
     expect(header?.getAttribute('style') ?? '').not.toMatch(/linear-gradient/i);
     expect(name.className).toContain('placeholder:text-white');
     expect(name.className).not.toMatch(/placeholder-current\/50|placeholder:text-white\/50/);
+    expect(name.className).toContain('bg-transparent');
+    expect(name.className).not.toContain('bg-white/10');
   });
 
-  it('keeps white header text for a stored pale custom colour', () => {
+  it('paints dark header text for a stored pale custom colour', () => {
     const { Editor, character } = entry;
     render(<Editor character={character({ themeColor: '#FFFF00' })} onSave={vi.fn()} onCancel={vi.fn()} />);
     const name = nameBox();
-    expect(name.className).toContain('text-white');
-    expect(name.className).not.toContain('text-stone-900');
+    expect(name.className).toContain('text-stone-900');
+    expect(name.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
   });
 });
 
@@ -166,5 +168,12 @@ describe.each(VIEWS)('$system custom colour view', ({ View, character }) => {
     expect(header?.getAttribute('style') ?? '').toMatch(/background:\s*(#14532d|rgb\(20,\s*83,\s*45\))/i);
     expect(header?.getAttribute('style') ?? '').not.toMatch(/linear-gradient/i);
     expect(header?.className).toContain('text-white');
+  });
+
+  it('paints dark header text for a stored pale custom colour', () => {
+    render(<View character={character({ themeColor: '#FFFF00' })} />);
+    const header = document.querySelector('[style*="background"]');
+    expect(header?.className).toContain('text-stone-900');
+    expect(header?.className).not.toMatch(/(?:^|\s)text-white(?:\s|$)/);
   });
 });

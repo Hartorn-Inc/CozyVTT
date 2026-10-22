@@ -63,7 +63,9 @@ import {
   toStoredHexColor,
   customHeaderColourError,
   customHeaderFill,
-  CUSTOM_HEADER_PLACEHOLDER_CLASS,
+  customHeaderTextClass,
+  customHeaderPlaceholderClass,
+  CUSTOM_HEADER_FIELD_SURFACE,
   THEME_COLOR_ERROR_ID,
 } from '@/utils/themeColor';
 import { omitUnnamedRows } from '@/utils/sheetNamedRows';
@@ -542,10 +544,12 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
     // Determine the current background style
     const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
-    // Custom hex headers keep fixed light text so a pale pick looks unreadable,
-    // matching the save rule against #FFFFFF. Preset chrome stays parchment.
-    const headerTextColor = isCustomColor ? 'text-white' : 'text-parchment';
-    const headerPlaceholder = isCustomColor ? CUSTOM_HEADER_PLACEHOLDER_CLASS : 'placeholder:text-parchment-light/50';
+    // Passing custom hex keeps white name text. Stored pale hex uses dark
+    // text so the header is readable; save still refuses until it is a
+    // passing hex or a preset. Preset chrome stays parchment.
+    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-parchment';
+    const headerPlaceholder = isCustomColor ? customHeaderPlaceholderClass(customColorHex) : 'placeholder:text-parchment-light/50';
+    const headerFieldBg = isCustomColor ? CUSTOM_HEADER_FIELD_SURFACE : 'bg-white/10';
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-amber-600`
       : `bg-gradient-to-r ${themeColor.from} via-${themeColor.accent} ${themeColor.to} ${headerTextColor} p-6 rounded-t-lg relative border-b-4 border-${themeColor.border}`;
@@ -717,7 +721,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
             onChange={(e) => setFormData({ ...formData, investigatorName: e.target.value })}
             maxLength={SHEET_NAME_MAX}
             placeholder="Investigator Name"
-            className={`text-3xl font-bold bg-white/10 border-2 border-white/30 rounded px-3 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+            className={`text-3xl font-bold ${headerFieldBg} border-2 border-white/30 rounded px-3 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
           />
 
           <div className="grid grid-cols-3 gap-3">
@@ -731,14 +735,14 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.occupation || ''}
               onChange={(e) => setFormData({ ...formData, occupation: e.target.value })}
               placeholder="Occupation"
-              className={`text-sm bg-white/10 border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
             />
             <input
               type="text"
               value={formData.era || ''}
               onChange={(e) => setFormData({ ...formData, era: e.target.value })}
               placeholder="Era (e.g., 1920s)"
-              className={`text-sm bg-white/10 border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
             />
           </div>
 
@@ -747,7 +751,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.age ?? 0}
               onChange={(v: number) => setFormData({ ...formData, age: v })}
               placeholder="Age"
-              className={`text-sm bg-white/10 border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
               fallback={0}
             />
             <input
@@ -755,14 +759,14 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               value={formData.sex || ''}
               onChange={(e) => setFormData({ ...formData, sex: e.target.value })}
               placeholder="Sex"
-              className={`text-sm bg-white/10 border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
             />
             <input
               type="text"
               value={formData.residence || ''}
               onChange={(e) => setFormData({ ...formData, residence: e.target.value })}
               placeholder="Residence"
-              className={`text-sm bg-white/10 border border-white/30 rounded px-2 py-1 col-span-2 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+              className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 col-span-2 ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
             />
           </div>
 
@@ -771,7 +775,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
             value={formData.birthplace || ''}
             onChange={(e) => setFormData({ ...formData, birthplace: e.target.value })}
             placeholder="Birthplace"
-            className={`text-sm bg-white/10 border border-white/30 rounded px-2 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
+            className={`text-sm ${headerFieldBg} border border-white/30 rounded px-2 py-1 w-full ${headerTextColor} ${headerPlaceholder} focus:outline-none focus:ring-2 focus:ring-amber-500`}
           />
         </div>
       </div>

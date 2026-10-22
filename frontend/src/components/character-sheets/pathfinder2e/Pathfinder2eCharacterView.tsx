@@ -39,7 +39,7 @@ import type {
   SheetChrome,
 } from '../../../types/game-systems';
 import { isHexColor } from '@/utils/styleAllowlists';
-import { customHeaderFill } from '@/utils/themeColor';
+import { customHeaderFill, customHeaderTextClass } from '@/utils/themeColor';
 
 interface Pathfinder2eCharacterViewProps {
   character: Character;
@@ -136,9 +136,9 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
   const renderHeader = () => {
     const headerStyle = isCustomColor ? customHeaderFill(customColorHex) : {};
 
-    // Custom hex headers keep fixed light text so a pale pick looks unreadable,
-    // matching the save rule. Presets stay light as they always were.
-    const headerTextColor = 'text-white';
+    // Passing custom hex keeps white name text. Stored pale hex uses dark
+    // text so the view is readable; the next save is still refused.
+    const headerTextColor = isCustomColor ? customHeaderTextClass(customColorHex) : 'text-white';
 
     const headerClasses = isCustomColor
       ? `${headerTextColor} p-6 rounded-t-lg relative`
@@ -172,7 +172,7 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
           {/* Character Info */}
           <div>
             <h2 className="text-3xl font-bold mb-2">{data.characterName}</h2>
-            <div className="flex items-center flex-wrap gap-2 opacity-90">
+            <div className={`flex items-center flex-wrap gap-2 ${isCustomColor ? '' : 'opacity-90'}`}>
               <span className="px-3 py-1 bg-white/20 rounded-full text-sm font-medium">
                 Level {data.level} {data.class}
               </span>
@@ -196,7 +196,7 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
               )}
             </div>
             {data.playerName && (
-              <div className="mt-2 text-sm opacity-80">
+              <div className={`mt-2 text-sm ${isCustomColor ? '' : 'opacity-80'}`}>
                 Player: {data.playerName}
               </div>
             )}
@@ -204,11 +204,11 @@ export const Pathfinder2eCharacterView: React.FC<Pathfinder2eCharacterViewProps>
         </div>
 
         <div className="text-right">
-          <div className="text-xs opacity-70 mb-1">Experience Points</div>
+          <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Experience Points</div>
           <div className="text-2xl font-bold">{data.experiencePoints || 0}</div>
           {data.heroPoints !== undefined && (
             <div className="mt-2">
-              <div className="text-xs opacity-70 mb-1">Hero Points</div>
+              <div className={`text-xs mb-1 ${isCustomColor ? '' : 'opacity-70'}`}>Hero Points</div>
               <div className="text-xl font-bold">
                 {data.heroPoints} / 3
               </div>

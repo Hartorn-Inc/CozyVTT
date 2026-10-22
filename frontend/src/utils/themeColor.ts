@@ -8,7 +8,9 @@
  *
  * A completed custom hex must also meet WCAG 2.1 contrast of 4.5:1 against
  * the fixed light header text (`#FFFFFF`). Pale picks are refused on save;
- * they are not auto-adjusted and the header text is not flipped.
+ * they are not auto-adjusted. Already-stored pale hex still loads; the view
+ * and editor paint dark name text so the sheet is readable until the next
+ * save is a passing hex or a preset. The stored colour is not rewritten.
  */
 
 import { AA_TEXT, contrastRatio, type Rgb } from './color';
@@ -37,6 +39,30 @@ export function customHeaderFill(hex: string): { background: string } {
  * 4.5:1 on a colour that only just passes for solid white.
  */
 export const CUSTOM_HEADER_PLACEHOLDER_CLASS = 'placeholder:text-white';
+
+/** Dark name text used when a stored or in-progress custom hex fails 4.5:1. */
+export const CUSTOM_HEADER_TEXT_DARK = 'text-stone-900';
+
+/** Field fill on a custom header: the validated hex, not a 10% white wash. */
+export const CUSTOM_HEADER_FIELD_SURFACE = 'bg-transparent';
+
+/**
+ * Name-text class for a custom header. A passing hex keeps white; a pale
+ * stored hex uses dark text so the view stays readable. Save still refuses
+ * the pale pick — this does not rewrite the colour.
+ */
+export function customHeaderTextClass(hex: string): string {
+  const stored = toStoredHexColor(hex);
+  if (stored && headerHexMeetsContrast(stored)) return 'text-white';
+  return CUSTOM_HEADER_TEXT_DARK;
+}
+
+/** Placeholder class matching {@link customHeaderTextClass}. */
+export function customHeaderPlaceholderClass(hex: string): string {
+  return customHeaderTextClass(hex) === CUSTOM_HEADER_TEXT_DARK
+    ? 'placeholder:text-stone-900'
+    : CUSTOM_HEADER_PLACEHOLDER_CLASS;
+}
 
 const WHITE: Rgb = [255, 255, 255];
 
