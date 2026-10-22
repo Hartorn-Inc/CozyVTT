@@ -31,6 +31,8 @@ import {
   CampaignGoneError,
   GameSystemMismatchError,
   lockCampaignGameSystem,
+  lockCampaignMembership,
+  MembershipGoneError,
 } from '../utils/gameSystemMatchWrite';
 import { holdOwnerCreates } from '../utils/ownerLimit';
 import { getCharacterTemplate } from '../utils/character-templates';
@@ -50,6 +52,10 @@ export const MAX_CHARACTERS_PER_USER = 1000;
 const CHARACTER_LIMIT_REACHED =
   `You already have ${MAX_CHARACTERS_PER_USER} characters, the most one account can. ` +
   'Delete one you no longer need to make room.';
+const CREATE_IN_NOT_A_MEMBER =
+  'You must be a member of the campaign to create a character in it';
+const ASSIGN_NOT_A_MEMBER =
+  'You must be a member of the campaign to assign a character to it';
 
 /** Refused inside a create's transaction when the owner is at the ceiling. */
 class CharacterLimitReached extends Error {}
@@ -240,7 +246,7 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
       if (!membership) {
         return res.status(403).json({
           error: 'Forbidden',
-          message: 'You must be a member of the campaign to create a character in it',
+          message: CREATE_IN_NOT_A_MEMBER,
         });
       }
 
@@ -304,6 +310,7 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
     const sheetValidatedAs = finalGameSystem ?? null;
     let storedGameSystem = finalGameSystem;
     const character = await prisma.$transaction(async (tx) => {
+      let membershipCharacterIds: string[] | undefined;
       if (campaignId) {
         // Commit-time check: a concurrent campaign PUT can change gameSystem
         // after the fast-fail above. Lock the Campaign so this write sees the
@@ -324,6 +331,15 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
             keeper,
           });
         }
+        // A concurrent kick can delete the seat without taking Campaign
+        // FOR UPDATE, so it can finish while this join waits on (or holds)
+        // the Campaign row. Lock and revalidate membership before writing
+        // Character.campaignId: a gone seat is 403 and rolls back, instead
+        // of leaving a leftover campaignId the remaining members could treat
+        // as in-campaign.
+        membershipCharacterIds = (
+          await lockCampaignMembership(tx, userId, campaignId, CREATE_IN_NOT_A_MEMBER)
+        ).characterIds;
       }
       await roomForCharacter(tx, userId);
       const created = await tx.character.create({
@@ -337,20 +353,14 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
         },
       });
 
-      if (campaignId) {
-        // Re-read after the Campaign lock so a concurrent create-in that
-        // serialized behind this one is not clobbered by a snapshot taken
-        // before the transaction.
-        const currentMembership = await tx.campaignMembership.findUnique({
+      if (campaignId && membershipCharacterIds && !membershipCharacterIds.includes(created.id)) {
+        // Re-read after the membership lock is enough: concurrent create-ins
+        // already serialize on Campaign then this seat, so a snapshot taken
+        // before the transaction cannot clobber the array.
+        await tx.campaignMembership.update({
           where: { userId_campaignId: { userId, campaignId } },
-          select: { characterIds: true },
+          data: { characterIds: [...membershipCharacterIds, created.id] },
         });
-        if (currentMembership && !currentMembership.characterIds.includes(created.id)) {
-          await tx.campaignMembership.update({
-            where: { userId_campaignId: { userId, campaignId } },
-            data: { characterIds: [...currentMembership.characterIds, created.id] },
-          });
-        }
       }
 
       return created;
@@ -378,6 +388,12 @@ router.post('/', authenticated, async (req: AuthenticatedRequest, res: Response)
       return res.status(404).json({
         error: 'Not Found',
         message: 'Campaign not found',
+      });
+    }
+    if (error instanceof MembershipGoneError) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: error.message,
       });
     }
     logger.error('Error creating character', { err: error });
@@ -1177,7 +1193,7 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
     if (!membership) {
       return res.status(403).json({
         error: 'Forbidden',
-        message: 'You must be a member of the campaign to assign a character to it',
+        message: ASSIGN_NOT_A_MEMBER,
       });
     }
 
@@ -1203,6 +1219,18 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
     const updatedCharacter = await prisma.$transaction(async (tx) => {
       const locked = await lockCampaignGameSystem(tx, campaignId);
       assertCompatible(character.gameSystem, locked);
+      // A concurrent kick can delete the seat without taking Campaign
+      // FOR UPDATE, so it can finish while this join waits on (or holds)
+      // the Campaign row. Lock and revalidate membership before writing
+      // Character.campaignId: a gone seat is 403 and rolls back, instead
+      // of leaving a leftover campaignId the remaining members could treat
+      // as in-campaign.
+      const currentMembership = await lockCampaignMembership(
+        tx,
+        userId,
+        campaignId,
+        ASSIGN_NOT_A_MEMBER,
+      );
 
       if (character.campaignId && character.campaignId !== campaignId) {
         const previousMembership = await tx.campaignMembership.findUnique({
@@ -1229,15 +1257,7 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
         }
       }
 
-      const currentMembership = await tx.campaignMembership.findUnique({
-        where: {
-          userId_campaignId: {
-            userId,
-            campaignId,
-          },
-        },
-      });
-      if (currentMembership && !currentMembership.characterIds.includes(id)) {
+      if (!currentMembership.characterIds.includes(id)) {
         await tx.campaignMembership.update({
           where: {
             userId_campaignId: {
@@ -1295,6 +1315,12 @@ router.post('/:id/assign', authenticated, async (req: AuthenticatedRequest, res:
       return res.status(404).json({
         error: 'Not Found',
         message: 'Campaign not found',
+      });
+    }
+    if (error instanceof MembershipGoneError) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: error.message,
       });
     }
     logger.error('Error assigning character to campaign', { err: error });

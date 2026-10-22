@@ -25,6 +25,7 @@ import { leftNotesDownloadLimiter } from '../middleware/leftNotesDownloadLimiter
 import type { Prisma } from '@prisma/client';
 import { errorMessage } from '../utils/errors';
 import { inSerializableTransaction } from '../utils/serializable';
+import { lockCampaignMembership, MembershipGoneError } from '../utils/gameSystemMatchWrite';
 import { toJson, readJsonObject } from '../utils/prisma-json';
 import { extractCharacterHp } from '../utils/characterHp';
 import logger from '../utils/logger';
@@ -974,13 +975,18 @@ router.delete('/:campaignId/members/:userId', campaignDM, async (req: Authentica
     // otherwise give this member the seat just before they were removed,
     // leaving the campaign with no DM.
     const refusal = await inSerializableTransaction(async (tx): Promise<{ status: number; message: string } | null> => {
-      const membership = await tx.campaignMembership.findUnique({
-        where: { userId_campaignId: { userId, campaignId } },
-        select: { role: true },
-      });
-      if (!membership) {
-        return { status: 404, message: 'User is not a member of this campaign' };
-      }
+      // Lock the seat before updateMany: a join that already holds membership
+      // can write Character.campaignId after an unlocked updateMany matched
+      // zero rows; DELETE waited; the join committed; kick deleted the seat
+      // and left the leftover column. FOR UPDATE waits, then updateMany sees
+      // that Character. Do not take Campaign FOR UPDATE after the seat —
+      // join is Campaign then membership, and the reverse deadlocks.
+      const membership = await lockCampaignMembership(
+        tx,
+        userId,
+        campaignId,
+        'User is not a member of this campaign',
+      );
 
       // CRITICAL: Cannot remove the DM
       if (membership.role === 'DM') {
@@ -1026,6 +1032,12 @@ router.delete('/:campaignId/members/:userId', campaignDM, async (req: Authentica
       message: 'Member removed successfully',
     });
   } catch (error) {
+    if (error instanceof MembershipGoneError) {
+      return res.status(404).json({
+        error: 'Not Found',
+        message: error.message,
+      });
+    }
     logger.error('Error removing member from campaign', { err: error });
     return res.status(500).json({
       error: 'Internal Server Error',

@@ -19,6 +19,7 @@
  */
 
 import request from 'supertest';
+import type { Prisma } from '@prisma/client';
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import {
   prisma,
@@ -29,13 +30,67 @@ import {
   TEST_PASSWORD,
 } from '../../__tests__/helpers/db';
 
+jest.setTimeout(30000);
+
 const app = createTestApp();
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function holdUntilReleased(
+  lock: (tx: Prisma.TransactionClient) => Promise<void>,
+): Promise<{ release: () => Promise<void> }> {
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let locked!: () => void;
+  const hasLocked = new Promise<void>((resolve) => {
+    locked = resolve;
+  });
+
+  const holder = prisma.$transaction(
+    async (tx) => {
+      await lock(tx);
+      locked();
+      await released;
+    },
+    { timeout: 15000 },
+  );
+
+  await hasLocked;
+  return {
+    release: async () => {
+      release();
+      await holder;
+    },
+  };
+}
+
+/**
+ * Hold the Campaign row FOR UPDATE until release().
+ * Models a concurrent join waiting on Campaign while kick runs without that lock.
+ */
+const holdCampaign = (campaignId: string) =>
+  holdUntilReleased(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${campaignId} FOR UPDATE`;
+  });
+
+/**
+ * Hold the player's CampaignMembership row FOR UPDATE until release().
+ * Models a join that already holds the seat while kick waits on it.
+ */
+const holdMembership = (userId: string, campaignId: string) =>
+  holdUntilReleased(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "CampaignMembership" WHERE "userId" = ${userId} AND "campaignId" = ${campaignId} FOR UPDATE`;
+  });
 
 describe('creating a character with a campaign preselected', () => {
   let dmId: string;
   let playerId: string;
   let outsiderId: string;
   let campaignId: string;
+  const extraCampaignIds: string[] = [];
+  let dmAgent: ReturnType<typeof request.agent>;
   let playerAgent: ReturnType<typeof request.agent>;
   let outsiderAgent: ReturnType<typeof request.agent>;
 
@@ -64,20 +119,36 @@ describe('creating a character with a campaign preselected', () => {
       ],
     });
 
+    dmAgent = await signIn(`cca_dm_${stamp}@test.invalid`);
     playerAgent = await signIn(`cca_pl_${stamp}@test.invalid`);
     outsiderAgent = await signIn(`cca_out_${stamp}@test.invalid`);
   });
 
   afterAll(async () => {
-    await cleanupCampaigns([campaignId]);
+    await cleanupCampaigns([campaignId, ...extraCampaignIds]);
     await cleanupUsers([dmId, playerId, outsiderId]);
     await prisma.$disconnect();
   });
 
-  const membershipFor = (userId: string) =>
+  const membershipFor = (userId: string, ofCampaignId = campaignId) =>
     prisma.campaignMembership.findUnique({
-      where: { userId_campaignId: { userId, campaignId } },
+      where: { userId_campaignId: { userId, campaignId: ofCampaignId } },
     });
+
+  const campaignForRace = async (name: string) => {
+    const campaign = await createTestCampaign(dmId, { name, gameSystem: null });
+    extraCampaignIds.push(campaign.id);
+    await prisma.campaignMembership.createMany({
+      data: [
+        { userId: dmId, campaignId: campaign.id, role: 'DM', characterIds: [] },
+        { userId: playerId, campaignId: campaign.id, role: 'PLAYER', characterIds: [] },
+      ],
+    });
+    return campaign.id;
+  };
+
+  const kickPlayer = (ofCampaignId: string, userId: string) =>
+    dmAgent.delete(`/api/campaigns/${ofCampaignId}/members/${userId}`);
 
   it('records the campaign on the character', async () => {
     const res = await playerAgent
@@ -162,5 +233,80 @@ describe('creating a character with a campaign preselected', () => {
       .expect(201);
 
     expect(res.body.character.campaignId).toBeNull();
+  });
+
+  it('refuses create-in when a concurrent kick removes the player before the write', async () => {
+    const raceCampaignId = await campaignForRace(`Kick race create-in ${Date.now()}`);
+
+    const holder = await holdCampaign(raceCampaignId);
+    const join = playerAgent.post('/api/characters').send({
+      name: 'Kicked during create-in',
+      campaignId: raceCampaignId,
+    });
+    await sleep(500);
+    expect((await kickPlayer(raceCampaignId, playerId)).status).toBe(200);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('Forbidden');
+    expect(res.body.message).toBe('You must be a member of the campaign to create a character in it');
+    expect(
+      await prisma.character.findFirst({ where: { userId: playerId, name: 'Kicked during create-in' } }),
+    ).toBeNull();
+    expect(await membershipFor(playerId, raceCampaignId)).toBeNull();
+    expect(
+      await prisma.character.findMany({
+        where: { userId: playerId, campaignId: raceCampaignId },
+        select: { id: true },
+      }),
+    ).toEqual([]);
+  });
+
+  it('refuses assign when a concurrent kick removes the player before the write', async () => {
+    const raceCampaignId = await campaignForRace(`Kick race assign ${Date.now()}`);
+    const created = await playerAgent.post('/api/characters').send({ name: 'Kicked during assign' }).expect(201);
+    const characterId: string = created.body.character.id;
+
+    const holder = await holdCampaign(raceCampaignId);
+    const join = playerAgent.post(`/api/characters/${characterId}/assign`).send({ campaignId: raceCampaignId });
+    await sleep(500);
+    expect((await kickPlayer(raceCampaignId, playerId)).status).toBe(200);
+    await holder.release();
+    const res = await join;
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBe('Forbidden');
+    expect(res.body.message).toBe('You must be a member of the campaign to assign a character to it');
+    expect((await prisma.character.findUnique({ where: { id: characterId } }))?.campaignId).toBeNull();
+    expect(await membershipFor(playerId, raceCampaignId)).toBeNull();
+    expect(
+      await prisma.character.findMany({
+        where: { userId: playerId, campaignId: raceCampaignId },
+        select: { id: true },
+      }),
+    ).toEqual([]);
+  });
+
+  it('clears a Character written while kick waited on the membership lock', async () => {
+    const raceCampaignId = await campaignForRace(`Kick race membership hold ${Date.now()}`);
+
+    const holder = await holdMembership(playerId, raceCampaignId);
+    const kick = kickPlayer(raceCampaignId, playerId);
+    await sleep(500);
+    const character = await prisma.character.create({
+      data: {
+        userId: playerId,
+        campaignId: raceCampaignId,
+        name: 'Inserted while kick waits',
+        data: {},
+      },
+    });
+    await holder.release();
+    const res = await kick;
+
+    expect(res.status).toBe(200);
+    expect((await prisma.character.findUnique({ where: { id: character.id } }))?.campaignId).toBeNull();
+    expect(await membershipFor(playerId, raceCampaignId)).toBeNull();
   });
 });
