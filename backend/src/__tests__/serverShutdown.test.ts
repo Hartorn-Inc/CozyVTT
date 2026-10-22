@@ -30,12 +30,30 @@ interface Ended {
   ms: number;
 }
 
+/**
+ * Env for a real server process. Jest workers cap Prisma at five connections;
+ * that cap is for the suite, not for the spawned backend.
+ */
+function serverEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'test', PORT: '0', LOG_LEVEL: 'info' };
+  const url = env.DATABASE_URL;
+  if (!url) return env;
+  try {
+    const parsed = new URL(url);
+    parsed.searchParams.delete('connection_limit');
+    env.DATABASE_URL = parsed.toString();
+  } catch {
+    // Unusual addresses still reach the server as they were.
+  }
+  return env;
+}
+
 /** Starts the server, waits until it listens, sends the signal, and reports how it ended. */
 function startAndStop(signal: NodeJS.Signals): Promise<Ended> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['-r', 'ts-node/register/transpile-only', 'src/server.ts'], {
       cwd: backend,
-      env: { ...process.env, NODE_ENV: 'test', PORT: '0', LOG_LEVEL: 'info' },
+      env: serverEnv(),
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     let output = '';
@@ -64,6 +82,9 @@ it.each(['SIGTERM', 'SIGINT'] as const)('%s closes everything and exits 0 within
   const ended = await startAndStop(signal);
 
   expect(ended.signal).toBeNull();
+  if (ended.code !== 0) {
+    throw new Error(`${signal} expected exit 0, received ${ended.code} (signal ${String(ended.signal)}):\n${ended.output}`);
+  }
   expect(ended.code).toBe(0);
   expect(ended.output).toContain(`${signal} received; shutting down`);
   expect(ended.output).toContain('Shutdown complete');
@@ -81,7 +102,7 @@ it('writes a promise rejection nothing handled to its log, and exits 1', async (
     const ended = await new Promise<Ended>((resolve, reject) => {
       const child = spawn(process.execPath, ['-r', 'ts-node/register/transpile-only', '-r', preload, 'src/server.ts'], {
         cwd: backend,
-        env: { ...process.env, NODE_ENV: 'test', PORT: '0', LOG_LEVEL: 'info' },
+        env: serverEnv(),
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       let output = '';

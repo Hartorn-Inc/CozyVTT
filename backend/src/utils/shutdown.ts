@@ -38,6 +38,13 @@ export interface ShutdownTargets {
   backups?: { readonly count: number; finished(): Promise<void> };
   /** Files of deleted accounts being removed, which the shutdown lets finish before it closes the database. */
   files?: { readonly count: number; finished(): Promise<void> };
+  /**
+   * Work the listen callback started (leftover restore uploads, setup state)
+   * that still talks to the database. The shutdown lets it finish before it
+   * disconnects Prisma. Before listen, `finished` is already resolved so a
+   * stop does not hang waiting for startup that never started.
+   */
+  startup?: { finished(): Promise<void> };
 }
 
 export interface ShutdownOptions {
@@ -161,6 +168,10 @@ export function createShutdown(targets: ShutdownTargets, options: ShutdownOption
         if (!finished) {
           logger.warn(`The files of a deleted account were still being removed after ${fileWaitMs / 1000} seconds; the ones not reached stay as assets with no owner, which an administrator can delete`);
         }
+      }
+      const startup = targets.startup;
+      if (startup) {
+        await step('finish startup work', () => startup.finished());
       }
       await step('disconnect from the database', () => targets.prisma.$disconnect());
       await step('close the session store', () => targets.sessionPool.end());

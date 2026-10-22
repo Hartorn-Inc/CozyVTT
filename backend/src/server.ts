@@ -37,11 +37,23 @@ const PORT = process.env.PORT || 4000;
 
 const io = initializeWebSocket(httpServer);
 
+// Until the listen callback assigns the real work, this is already done, so a
+// stop before listen does not hang waiting for startup that never started.
+let startupDone: Promise<void> = Promise.resolve();
+
 // Docker's stop, a service manager's stop and Ctrl+C all end the backend
 // here, which lets a backup being written finish, then closes the sockets,
-// lets the removal of a deleted account's files finish, and closes the
-// database and the session store.
-onShutdownSignals(createShutdown({ io, prisma, sessionPool, backups: backupsInProgress, files: personalFilesBeingRemoved }));
+// lets the removal of a deleted account's files finish, lets listen-callback
+// work that still talks to the database finish, and closes the database and
+// the session store.
+onShutdownSignals(createShutdown({
+  io,
+  prisma,
+  sessionPool,
+  backups: backupsInProgress,
+  files: personalFilesBeingRemoved,
+  startup: { finished: () => startupDone },
+}));
 
 // ============================================
 // START SERVER
@@ -71,18 +83,20 @@ void loginSessionRevocationGuard.then(() => {
 
     // A backend stopped mid-restore left the uploaded backup in the backups
     // folder; nothing can finish restoring it now.
-    void removeLeftoverRestoreUploads(resolveBackupDir());
+    const leftoverRestoreUploads = removeLeftoverRestoreUploads(resolveBackupDir());
 
     // Until setup has run, the wizard asks for a token only the owner can
     // read, so a stranger who finds the instance first cannot become its
     // administrator. Printed here, where the owner reads the log, unless they
     // set one themselves in .env.
-    setupState()
+    const setup = setupState()
       .then(({ setupCompleted }) => {
         if (setupCompleted) return;
         logger.warn(`Setup is not complete. ${setupTokenHint()}`);
       })
       .catch((err: unknown) => logger.error('Could not read the setup state at start', { err }));
+
+    startupDone = Promise.all([leftoverRestoreUploads, setup]).then(() => undefined);
   });
 }).catch((err) => {
   logger.error('[FATAL] Login session revocation guard could not be applied', { err });

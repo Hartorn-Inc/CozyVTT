@@ -253,6 +253,47 @@ describe('a shutdown while the files of a deleted account are being removed', ()
   });
 });
 
+/** Listen-callback work that still talks to the database, until `finish` is called. */
+function startupRunning() {
+  let finish = () => {};
+  const done = new Promise<void>((resolve) => { finish = resolve; });
+  const startup = {
+    finished: () => done,
+  };
+  return { startup, finish };
+}
+
+describe('a shutdown while the listen callback is still starting up', () => {
+  it('closes the database only once startup has finished', async () => {
+    const order: string[] = [];
+    const t = targets(order);
+    const { startup, finish } = startupRunning();
+    const exit = jest.fn();
+    const done = createShutdown({ ...t, startup }, { exit })('SIGTERM');
+
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(t.io.close).toHaveBeenCalledTimes(1);
+    expect(t.prisma.$disconnect).not.toHaveBeenCalled();
+
+    order.push('startup');
+    finish();
+    await done;
+    expect(order).toEqual(['io', 'startup', 'prisma', 'sessionPool']);
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it('still closes the rest when startup fails, and exits 1', async () => {
+    const t = targets();
+    const startup = { finished: jest.fn(async () => { throw new Error('setup still running'); }) };
+    const exit = jest.fn();
+    await createShutdown({ ...t, startup }, { exit })('SIGTERM');
+
+    expect(t.prisma.$disconnect).toHaveBeenCalledTimes(1);
+    expect(t.sessionPool.end).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
 describe('an error nothing caught', () => {
   it.each([
     ['uncaughtException', new Error('thrown and never caught')],

@@ -181,9 +181,10 @@ src/
 │   ├── proxyLimits.ts    Proxy body-cap parsing and startup warnings
 │   ├── byteRange.ts      HTTP Range header reading for audio streaming
 │   ├── shutdown.ts       SIGTERM/SIGINT: stop taking requests, let a dashboard backup finish
-│   │                     (up to 10 minutes, services/backupsInProgress.ts) and a deleted
-│   │                     account's file removal (up to 4 seconds), close sockets,
-│   │                     database and session store, then exit; an error nothing caught is
+│   │                     (up to 10 minutes, services/backupsInProgress.ts), a deleted
+│   │                     account's file removal (up to 4 seconds), and listen-callback
+│   │                     startup work that still talks to the database, then close sockets,
+│   │                     database and session store and exit; an error nothing caught is
 │   │                     logged before the process exits 1
 │   └── logger.ts         Winston logger configuration
 └── types/             Shared TypeScript interfaces
