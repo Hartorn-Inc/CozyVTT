@@ -113,6 +113,41 @@
       "matchPackageNames": ["postgres"],
       "matchUpdateTypes": ["major"],
       "enabled": false
+    },
+    {
+      "description": "Group Cursor CLI version bumps so the SHA256 digest refresh can follow.",
+      "matchManagers": ["custom.regex"],
+      "matchFileNames": [".github/workflows/advisory-pr-review.yml"],
+      "groupName": "cursor-cli",
+      "groupSlug": "cursor-cli",
+      "commitMessagePrefix": "chore(deps):",
+      "commitMessageAction": "bump",
+      "commitMessageTopic": "Cursor CLI",
+      "labels": ["dependencies", "deps:cursor-cli"]
+    }
+  ],
+  "customDatasources": {
+    "cursor-cli": {
+      "defaultRegistryUrlTemplate": "https://cursor.com/install",
+      "format": "plain",
+      "transformTemplates": [
+        "{\"releases\":[{\"version\": $match($, /lab\\\\/([0-9.]+-[a-f0-9]+)/).groups[0]}]}"
+      ]
+    }
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Pin Cursor CLI version in the advisory review workflow. SHA256 digest is refreshed separately (scripts/ci/refresh-cursor-cli-digest.sh).",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/advisory-pr-review\\.yml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+CURSOR_CLI_VERSION: \"(?<currentValue>[^\"]+)\""
+      ],
+      "datasourceTemplate": "{{#if datasource}}{{{datasource}}}{{else}}custom.cursor-cli{{/if}}",
+      "extractVersionTemplate": "^v?(?<version>.*)$",
+      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}loose{{/if}}"
     }
   ]
 }

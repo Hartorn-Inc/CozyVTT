@@ -1,16 +1,16 @@
-# Advisory Codex pull request review (secret-bearing).
+# Advisory pull request review (secret-bearing).
 #
 # This workflow's YAML is only trusted from the default branch (`dev`).
-# It must not use `pull_request` or `pull_request_target`: same-repo PR YAML
-# that names Environment `codex-review` could steal `OPENROUTER_API_KEY`.
+# It must not use pull_request or pull_request_target: same-repo PR YAML
+# that names Environment `advisory-review` could steal `CURSOR_API_KEY`.
 #
 # Triggers that run this file from `dev`:
 #   - `issue_comment` `/review` (OWNER/MEMBER/COLLABORATOR; silent skip else)
 #   - `workflow_dispatch` only when `github.ref` is the default branch
-#   - `workflow_run` of "Codex review request" after that no-secret
-#     `pull_request` job succeeds (the `codex-review` label path)
+#   - `workflow_run` of "Advisory review request" after that no-secret
+#     pull-request job succeeds (the `advisory-review` label path)
 #
-# Restrict Environment `codex-review` to branch `dev` only (a human GitHub
+# Restrict Environment `advisory-review` to branch `dev` only (a human GitHub
 # setting). Do not add `refs/pull/*/merge`. `workflow_dispatch` off `dev`
 # must not reach the Environment.
 #
@@ -26,7 +26,7 @@
 # Every action is pinned to a commit, with its version in a comment.
 # Untrusted strings arrive through env so they are never interpolated into
 # the shell. No PAT, no GitHub App, no Azure, no Instance secrets.
-name: Codex PR review
+name: Advisory PR review
 
 on:
   issue_comment: # zizmor: ignore[dangerous-triggers] /review is gated to OWNER/MEMBER/COLLABORATOR
@@ -38,14 +38,17 @@ on:
         required: true
         type: string
   workflow_run: # zizmor: ignore[dangerous-triggers] no-secret request on pull_request; this file runs from dev
-    workflows: ["Codex review request"]
+    workflows: ["Advisory review request"]
     types: [completed]
 
 permissions: {}
 
 env:
-  # Same pin as openai/codex-action v1.13; bump them together.
-  CODEX_CLI_VERSION: "0.146.1"
+  # renovate: datasource=custom.cursor-cli depName=cursor-cli versioning=loose
+  CURSOR_CLI_VERSION: "2026.10.19-6bbf2c4"
+  # Digest lines must be refreshed when CURSOR_CLI_VERSION changes
+  # (see scripts/ci/refresh-cursor-cli-digest.sh).
+  CURSOR_CLI_INSTALL_SHA256: "cf80cc18d8b33bf33e762353977ca1868cfc45290c92c0ffdcef83bb8b37b44f"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.issue.number || inputs.pr_number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.id || github.run_id }}
@@ -97,10 +100,10 @@ jobs:
       - name: Resolve pull request
         id: resolve
         env:
-          CODEX_ASSESS_COMMENT_COMMANDS: /review
-          CODEX_ASSESS_REQUIRE_SAME_REPO: "true"
+          ADVISORY_REVIEW_COMMENT_COMMANDS: /review
+          ADVISORY_REVIEW_REQUIRE_SAME_REPO: "true"
           GH_TOKEN: ${{ github.token }}
-        run: python3 .trusted-automation/scripts/ci/codex_pr_review.py resolve --output "$GITHUB_OUTPUT"
+        run: python3 .trusted-automation/scripts/ci/advisory_pr_review.py resolve --output "$GITHUB_OUTPUT"
 
   review-context:
     name: Collect review context
@@ -128,14 +131,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
         run: >-
-          python3 .trusted-automation/scripts/ci/codex_pr_review.py collect-review
+          python3 .trusted-automation/scripts/ci/advisory_pr_review.py collect-review
           --pr-number "$PR_NUMBER"
           --output assessment/review-context.json
 
       - name: Select reviewer passes
         id: select
         run: >-
-          python3 .trusted-automation/scripts/ci/codex_pr_review.py select
+          python3 .trusted-automation/scripts/ci/advisory_pr_review.py select
           --context assessment/review-context.json
           --output assessment/reviewers.json
           --github-output "$GITHUB_OUTPUT"
@@ -143,12 +146,12 @@ jobs:
       - name: Upload review context
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: codex-review-context
+          name: advisory-review-context
           path: assessment/
           if-no-files-found: error
 
   reviewer:
-    name: Codex reviewer (${{ matrix.name }})
+    name: Advisory reviewer (${{ matrix.name }})
     needs:
       - resolve
       - review-context
@@ -156,7 +159,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     environment:
-      name: codex-review
+      name: advisory-review
       deployment: false
     permissions:
       contents: read # PR tree as evidence in review-tree; prompts and helper from the default branch.
@@ -192,7 +195,7 @@ jobs:
       - name: Download review context
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: codex-review-context
+          name: advisory-review-context
           path: assessment
 
       - name: Prepare reviewer prompt
@@ -212,9 +215,14 @@ jobs:
           mkdir -p assessment
           cp ".trusted-automation/$REVIEWER_PROMPT_FILE" assessment/reviewer-instructions.md
           {
-            cat .trusted-automation/.github/codex/prompts/pr-reviewer.md
+            cat .trusted-automation/.github/advisory-review/prompts/pr-reviewer.md
             echo
             echo "Reviewer name: ${REVIEWER_NAME}"
+            echo
+            echo "Output JSON schema:"
+            echo '```json'
+            cat .trusted-automation/.github/advisory-review/schemas/reviewer-output.schema.json
+            echo '```'
           } > assessment/reviewer-task.md
           if [ -L review-tree/assessment ]; then
             rm -f review-tree/assessment
@@ -223,65 +231,73 @@ jobs:
           mkdir -p review-tree/assessment
           cp assessment/review-context.json assessment/reviewer-instructions.md review-tree/assessment/
 
-      - name: Create unprivileged Codex user
+      - name: Install pinned Cursor CLI
+        env:
+          CURSOR_CLI_VERSION: ${{ env.CURSOR_CLI_VERSION }}
+          CURSOR_CLI_INSTALL_SHA256: ${{ env.CURSOR_CLI_INSTALL_SHA256 }}
+        run: |
+          set -euo pipefail
+          url="https://downloads.cursor.com/lab/${CURSOR_CLI_VERSION}/linux/x64/agent-cli-package.tar.gz"
+          curl --proto '=https' --tlsv1.2 -fsSL "$url" -o /tmp/cursor-agent-cli.tgz
+          echo "${CURSOR_CLI_INSTALL_SHA256}  /tmp/cursor-agent-cli.tgz" | sha256sum -c -
+          sudo mkdir -p /opt/cursor-cli
+          sudo tar --strip-components=1 -xzf /tmp/cursor-agent-cli.tgz -C /opt/cursor-cli
+          sudo chmod -R a+rX /opt/cursor-cli
+          sudo chmod a+x /opt/cursor-cli/cursor-agent
+          reported="$(/opt/cursor-cli/cursor-agent --version | tr -d '[:space:]')"
+          echo "Cursor CLI reported version: ${reported}"
+          echo "${reported}" | grep -F "${CURSOR_CLI_VERSION}"
+
+      - name: Create unprivileged advisory review user
         run: |
           set -euo pipefail
           # drop-sudo is not used: ubuntu-26.04 drop-sudo cannot always ACL
           # /run/dbus/system_bus_socket (setfacl fails; chmod fallback never
-          # runs). unprivileged-user is the documented key-protection
-          # alternative in openai/codex-action security.md.
-          if ! getent passwd codexreview >/dev/null; then
-            sudo useradd --system --create-home codexreview
+          # runs). An unprivileged UNIX user is the key-protection alternative.
+          if ! getent passwd advisoryreview >/dev/null; then
+            sudo useradd --system --create-home advisoryreview
           fi
           # actions/checkout trees are 0700. The unprivileged user must read
           # trusted automation, the PR tree, and assessment inputs.
           chmod -R a+rX .trusted-automation review-tree assessment
           # GitHub-hosted /home/runner is 750. Grant execute on parents so
-          # codexreview can reach GITHUB_WORKSPACE without joining sudo.
+          # advisoryreview can reach GITHUB_WORKSPACE without joining sudo.
           path="$GITHUB_WORKSPACE"
           while [ "$path" != "/" ]; do
             sudo chmod a+x "$path"
             path="$(dirname "$path")"
           done
-          # Codex writes assessment/reviewer-output-*.json at workspace root
-          # (upload-artifact) and under --cd review-tree. Grant write on those
-          # dirs only; do not chmod 777 the repo. Group runner keeps later
-          # placeholder/upload steps working.
-          sudo chown -R codexreview:runner assessment review-tree/assessment
+          sudo chown -R advisoryreview:runner assessment review-tree/assessment
           sudo chmod -R ug+rwX assessment review-tree/assessment
 
-      - name: Run Codex reviewer
-        id: codex
+      - name: Run Cursor reviewer
+        id: cursor
         continue-on-error: true
-        uses: openai/codex-action@bdf19a4a223ec2549a3e2274a0cf61556bc07675 # v1.13
-        with:
-          openai-api-key: ${{ secrets.OPENROUTER_API_KEY }}
-          responses-api-endpoint: https://openrouter.ai/api/v1/responses
-          # Grilling name: GPT-6 Luna Flex. Keep this slug even if OpenRouter docs 404.
-          codex-version: ${{ env.CODEX_CLI_VERSION }}
-          model: openai/gpt-5.6-luna::openai/flex
-          effort: medium
-          working-directory: review-tree
-          prompt-file: assessment/reviewer-task.md
-          output-file: assessment/reviewer-output-${{ matrix.name }}.json
-          output-schema-file: .trusted-automation/.github/codex/schemas/reviewer-output.schema.json
-          sandbox: read-only
-          # drop-sudo is not used: ubuntu-26.04 drop-sudo cannot always ACL
-          # /run/dbus/system_bus_socket (setfacl fails; chmod fallback never
-          # runs). unprivileged-user is the documented key-protection
-          # alternative in openai/codex-action security.md.
-          safety-strategy: unprivileged-user
-          codex-user: codexreview
-          allow-bots: true
-          allow-bot-users: github-actions[bot],cursor[bot],renovate[bot]
-          codex-args: '["--ephemeral"]'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          REVIEWER_NAME: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          sudo -u advisoryreview \
+            env HOME=/home/advisoryreview CI=true \
+            PATH="/opt/cursor-cli:/usr/bin:/bin" \
+            CURSOR_API_KEY="$CURSOR_API_KEY" \
+            /opt/cursor-cli/cursor-agent \
+            -p "$(cat assessment/reviewer-task.md)" \
+            --mode=ask \
+            --trust \
+            --sandbox enabled \
+            --workspace "${GITHUB_WORKSPACE}/review-tree" \
+            --model grok-4.7 \
+            --output-format text \
+            > "assessment/reviewer-output-${REVIEWER_NAME}.json"
 
       - name: Create reviewer failure placeholder
-        if: steps.codex.outcome != 'success'
+        if: steps.cursor.outcome != 'success'
         env:
           REVIEWER_NAME: ${{ matrix.name }}
         run: >-
-          python3 .trusted-automation/scripts/ci/codex_pr_review.py placeholder
+          python3 .trusted-automation/scripts/ci/advisory_pr_review.py placeholder
           --name "$REVIEWER_NAME"
           --output "assessment/reviewer-output-${REVIEWER_NAME}.json"
 
@@ -289,7 +305,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: codex-reviewer-output-${{ matrix.name }}
+          name: advisory-reviewer-output-${{ matrix.name }}
           path: assessment/reviewer-output-${{ matrix.name }}.json
           if-no-files-found: ignore
 
@@ -321,13 +337,13 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: codex-reviewer-output-*
+          pattern: advisory-reviewer-output-*
           path: assessment/reviewer-outputs
           merge-multiple: true
 
       - name: Assemble advisory markdown
         run: >-
-          python3 .trusted-automation/scripts/ci/codex_pr_review.py assemble-review
+          python3 .trusted-automation/scripts/ci/advisory_pr_review.py assemble-review
           --outputs-dir assessment/reviewer-outputs
           --output assessment/final-review.md
 
@@ -336,6 +352,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ needs.resolve.outputs.pr_number }}
         run: >-
-          python3 .trusted-automation/scripts/ci/codex_pr_review.py post-review
+          python3 .trusted-automation/scripts/ci/advisory_pr_review.py post-review
           --pr-number "$PR_NUMBER"
           --body-file assessment/final-review.md

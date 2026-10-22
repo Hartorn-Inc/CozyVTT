@@ -7,6 +7,7 @@
 
 # ---- Environment / Secrets --------------------------------------------------
 # Never commit env files. The .example versions are committed; real values are not.
+.local/
 .env
 .env.local
 .env.production

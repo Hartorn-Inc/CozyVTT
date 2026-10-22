@@ -151,3 +151,17 @@ _Avoid_: Spirit plane (for this view)
 **Initiative**:
 The DM's combat turn order for a campaign. Distinct from the dice history of those rolls.
 _Avoid_: Encounter, combat log (for this object)
+
+## Contribution
+
+**Advisory review**:
+An opt-in, non-blocking GitHub COMMENT on a pull request, assembled from readonly roster reviewer passes. Distinct from a required check and from Cloud Agent work.
+_Avoid_: Codex review (for this object), Luna review, Bugbot, merge review
+
+**Reviewer pass**:
+One readonly roster role run against a pull request. Its findings feed the advisory review. Distinct from the advisory review itself and from a Cloud Agent.
+_Avoid_: Codex pass, Luna pass, review (unqualified)
+
+**Cloud Agent**:
+A Cursor-hosted implementer on this repository, started by a write collaborator's `@cursor` issue comment. Distinct from the advisory review.
+_Avoid_: Agent (unqualified), Bugbot, Copilot
