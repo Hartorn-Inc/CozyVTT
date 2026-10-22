@@ -254,10 +254,10 @@ export const pf2eFighterTemplate: CharacterTemplate = {
     ],
     feats: {
       ancestryAndHeritage: [
-        { level: 1, name: 'Darkvision', notes: 'You can see in darkness and dim light as well as you can see in bright light.' },
+        { level: 1, name: 'Darkvision', notes: '' },
       ],
       class: [
-        { level: 1, name: 'Power Attack', notes: 'Make a melee Strike. The Strike deals two extra weapon damage dice.' },
+        { level: 1, name: 'Power Attack', notes: '' },
       ],
       skill: [],
       general: [],
@@ -266,11 +266,11 @@ export const pf2eFighterTemplate: CharacterTemplate = {
     classFeatures: [
       {
         name: 'Attack of Opportunity',
-        description: 'You can make melee Strikes against creatures that move adjacent to you or take certain actions.',
+        description: '',
       },
       {
         name: 'Shield Block',
-        description: 'You can use your shield to prevent damage.',
+        description: '',
       },
     ],
     inventory: [
@@ -296,7 +296,7 @@ export const pf2eFighterTemplate: CharacterTemplate = {
         attuned: false,
         invested: false,
         value: 2,
-        notes: 'Hardness 5, HP 20, BT 10',
+        notes: '',
       },
       {
         name: 'Scale Mail',
@@ -308,7 +308,7 @@ export const pf2eFighterTemplate: CharacterTemplate = {
         attuned: false,
         invested: false,
         value: 4,
-        notes: 'AC +3, Dex Cap +2',
+        notes: '',
       },
       {
         name: 'Crossbow',

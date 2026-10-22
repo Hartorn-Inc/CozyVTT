@@ -2,9 +2,10 @@
  * A named feature with an optional description.
  *
  * D&D 5e keeps these in `featuresAndTraits` and Pathfinder 2e in
- * `classFeatures`. Both used to be a bare list of names, while the built-in
- * templates wrote full rules text — Second Wind, Attack of Opportunity, Shield
- * Block — into separate fields that nothing read, so none of it was ever shown.
+ * `classFeatures`. Both used to be a bare list of names, while older
+ * built-in templates wrote full rules text — Second Wind, Attack of
+ * Opportunity, Shield Block — into separate fields that nothing read.
+ * Shipped starters keep those names and drop rules prose (ADR 0013).
  *
  * Declared once and imported by both schemas, so the two systems cannot end up
  * with different ideas of what a feature is.

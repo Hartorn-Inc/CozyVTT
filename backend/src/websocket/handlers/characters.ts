@@ -10,6 +10,7 @@ import logger from '../../utils/logger';
 import { toJson } from '../../utils/prisma-json';
 import { projectCharacterData } from '../../utils/sheetProjection';
 import type { DnD5eHitDice } from '../../game-systems/dnd5e';
+import { GAME_SYSTEM_SHEET_FROZEN_MESSAGE, isGameSystemSheetFrozen } from '../../game-systems';
 import { withinCeiling } from '../shared';
 import { emitCharacterUpdated } from '../utils';
 
@@ -97,7 +98,8 @@ function spendHitDie(stored: unknown, index: number): { data: CharacterHitDiceDa
 export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
    * CHARACTER.HP.UPDATE — apply a hit-point delta; clamp and broadcast use
-   * the projected maximum when inputs exist; only current is written.
+   * the projected maximum when inputs exist; only current is written; a frozen
+   * Shadowrun 6e sheet is refused.
    */
   socket.on('character.hp.update', async (data: { characterId: string; delta: number }) => {
     try {
@@ -151,6 +153,14 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
         return;
       }
 
+      // Frozen sheets stay readable; live resource patches wait for a sheet
+      // and an attribution section (ADR 0013). Check after permission so a
+      // stranger still hears they may not touch the character.
+      if (isGameSystemSheetFrozen(character.gameSystem)) {
+        socket.emit('error', { message: GAME_SYSTEM_SHEET_FROZEN_MESSAGE });
+        return;
+      }
+
       // Read and written under the row's lock, afresh. Reading before the
       // lock and writing the whole sheet back undid any save that landed in
       // between; a save arriving now waits for this one instead.
@@ -182,7 +192,8 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
   });
 
   /**
-   * CHARACTER.HITDICE.SPEND — spend one D&D 5e hit die.
+   * CHARACTER.HITDICE.SPEND — spend one D&D 5e hit die; a frozen Shadowrun 6e
+   * sheet is refused.
    *
    * The roll itself goes through `dice.roll` like every other roll; this only
    * decrements the pool, so the count cannot be inflated by a client that
@@ -227,6 +238,11 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
 
       if (character.userId !== socket.userId && socket.role !== 'DM') {
         socket.emit('error', { message: 'You do not have permission to spend this character\'s hit dice' });
+        return;
+      }
+
+      if (isGameSystemSheetFrozen(character.gameSystem)) {
+        socket.emit('error', { message: GAME_SYSTEM_SHEET_FROZEN_MESSAGE });
         return;
       }
 

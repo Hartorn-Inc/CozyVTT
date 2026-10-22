@@ -11,7 +11,12 @@ import { useState } from 'react';
 import { FileText } from 'lucide-react';
 import api from '@/services/api';
 import { useToast } from '@/contexts/ToastContext';
-import { GAME_SYSTEM_OPTIONS } from '@/constants/game-systems';
+import { GameSystem } from '@/types';
+import {
+  GAME_SYSTEM_LABELS,
+  GAME_SYSTEM_OPTIONS,
+  isChoosableGameSystem,
+} from '@/constants/game-systems';
 import Modal from '@/components/ui/Modal';
 import Button from '@/components/ui/Button';
 import Field from '@/components/ui/Field';
@@ -45,10 +50,18 @@ export default function NewCharacterTemplateModal({
   // When prefilled from an existing sheet the system is fixed — the data only
   // makes sense against the system it was written for.
   const systemLocked = initial?.data !== undefined;
+  const gameSystemChoosable = isChoosableGameSystem(gameSystem);
 
   const handleSubmit = async () => {
     if (!name.trim()) {
       setError('A template name is required');
+      return;
+    }
+
+    if (!isChoosableGameSystem(gameSystem)) {
+      setError(
+        'New templates cannot be published for that system until the sheet ships.'
+      );
       return;
     }
 
@@ -97,7 +110,11 @@ export default function NewCharacterTemplateModal({
           <Button variant="secondary" onClick={onClose} disabled={saving}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} loading={saving}>
+          <Button
+            onClick={handleSubmit}
+            loading={saving}
+            disabled={!gameSystemChoosable}
+          >
             Publish Template
           </Button>
         </>
@@ -158,9 +175,20 @@ export default function NewCharacterTemplateModal({
                   {opt.label}
                 </option>
               ))}
+              {gameSystem && !gameSystemChoosable && (
+                <option value={gameSystem}>
+                  {GAME_SYSTEM_LABELS[gameSystem as GameSystem]}
+                </option>
+              )}
             </Select>
           )}
         </Field>
+
+        {!gameSystemChoosable && (
+          <p role="status" className="text-sm text-ink-muted">
+            New templates cannot be published for that system until the sheet ships.
+          </p>
+        )}
       </div>
     </Modal>
   );

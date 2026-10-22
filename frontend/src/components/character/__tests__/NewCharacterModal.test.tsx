@@ -5,11 +5,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import NewCharacterModal from '../NewCharacterModal';
 import { GameSystem, type Campaign } from '@/types';
-import { getGameSystemLabel } from '@/constants/game-systems';
+import {
+  GAME_SYSTEM_LABELS,
+  GAME_SYSTEM_SHORT_LABELS,
+  getGameSystemLabel,
+} from '@/constants/game-systems';
 
 vi.mock('@/services/api', () => {
   const client = { listCampaigns: vi.fn() };
@@ -127,5 +131,106 @@ describe('NewCharacterModal', () => {
     const gameSystem = screen.getByLabelText(/Game System/);
     expect(gameSystem).toBeDisabled();
     expect(gameSystem).toHaveValue(GameSystem.DND_5E);
+  });
+
+  it('offers Flexible, D&D 5e, Pathfinder 2e, and Call of Cthulhu 7e, but not Shadowrun 6e', () => {
+    render(<NewCharacterModal isOpen onClose={vi.fn()} onSuccess={vi.fn()} />);
+
+    const gameSystem = screen.getByLabelText(/Game System/);
+    const options = within(gameSystem);
+
+    expect(options.getByRole('option', { name: 'Flexible (No System)' })).toBeInTheDocument();
+    expect(
+      options.getByRole('option', { name: GAME_SYSTEM_LABELS[GameSystem.DND_5E] })
+    ).toBeInTheDocument();
+    expect(
+      options.getByRole('option', { name: GAME_SYSTEM_LABELS[GameSystem.PATHFINDER_2E] })
+    ).toBeInTheDocument();
+    expect(
+      options.getByRole('option', { name: GAME_SYSTEM_LABELS[GameSystem.CALL_OF_CTHULHU_7E] })
+    ).toBeInTheDocument();
+
+    expect(
+      options.queryByRole('option', { name: GAME_SYSTEM_LABELS[GameSystem.SHADOWRUN_6E] })
+    ).not.toBeInTheDocument();
+    expect(options.queryByRole('option', { name: GameSystem.SHADOWRUN_6E })).not.toBeInTheDocument();
+    expect(
+      options.queryByRole('option', { name: GAME_SYSTEM_SHORT_LABELS[GameSystem.SHADOWRUN_6E] })
+    ).not.toBeInTheDocument();
+    expect(options.queryByRole('option', { name: /Shadowrun/i })).not.toBeInTheDocument();
+
+    const values = options
+      .getAllByRole('option')
+      .filter((el): el is HTMLOptionElement => el instanceof HTMLOptionElement)
+      .map((el) => el.value);
+    expect(values).toContain(GameSystem.DND_5E);
+    expect(values).toContain(GameSystem.PATHFINDER_2E);
+    expect(values).toContain(GameSystem.CALL_OF_CTHULHU_7E);
+    expect(values).not.toContain(GameSystem.SHADOWRUN_6E);
+    expect(values).not.toContain(GAME_SYSTEM_SHORT_LABELS[GameSystem.SHADOWRUN_6E]);
+  });
+
+  it('does not offer a Shadowrun Campaign on the Flexible path, so Game system stays unmatched-free', async () => {
+    listCampaigns.mockResolvedValue({
+      campaigns: [
+        campaign('camp-dnd', 'Lost Mine', GameSystem.DND_5E),
+        campaign('camp-sr6', 'Shadows of Seattle', GameSystem.SHADOWRUN_6E),
+        campaign('camp-open', 'Open Table', null),
+      ],
+    });
+    render(<NewCharacterModal isOpen onClose={vi.fn()} onSuccess={vi.fn()} />);
+
+    await vi.waitFor(() =>
+      expect(screen.getByRole('option', { name: /Lost Mine/ })).toBeInTheDocument()
+    );
+
+    expect(
+      screen.queryByRole('option', { name: /Shadows of Seattle/ })
+    ).not.toBeInTheDocument();
+
+    const gameSystem = screen.getByLabelText(/Game System/);
+    expect(gameSystem).toHaveValue('');
+    expect(gameSystem).not.toHaveValue(GameSystem.SHADOWRUN_6E);
+
+    const options = within(gameSystem);
+    expect(
+      options.queryByRole('option', { name: GAME_SYSTEM_LABELS[GameSystem.SHADOWRUN_6E] })
+    ).not.toBeInTheDocument();
+    expect(options.queryByRole('option', { name: GameSystem.SHADOWRUN_6E })).not.toBeInTheDocument();
+    expect(options.queryByRole('option', { name: /Shadowrun/i })).not.toBeInTheDocument();
+
+    const values = options
+      .getAllByRole('option')
+      .filter((el): el is HTMLOptionElement => el instanceof HTMLOptionElement)
+      .map((el) => el.value);
+    expect(values).not.toContain(GameSystem.SHADOWRUN_6E);
+  });
+
+  it('renders a named Shadowrun option and disables submit when Game system is preselected as unchoosable', async () => {
+    render(
+      <NewCharacterModal
+        isOpen
+        onClose={vi.fn()}
+        onSuccess={vi.fn()}
+        preselectedGameSystem={GameSystem.SHADOWRUN_6E}
+      />
+    );
+
+    const gameSystem = screen.getByLabelText(/Game System/);
+    expect(
+      within(gameSystem).getByRole('option', {
+        name: GAME_SYSTEM_LABELS[GameSystem.SHADOWRUN_6E],
+      })
+    ).toBeInTheDocument();
+    expect(gameSystem).toHaveValue(GameSystem.SHADOWRUN_6E);
+
+    await userEvent.type(screen.getByLabelText(/Character Name/), 'Runner');
+
+    expect(screen.getByRole('button', { name: /Create Character/ })).toBeDisabled();
+    expect(
+      screen.getByRole('button', { name: /Create & Publish as Template/ })
+    ).toBeDisabled();
+    expect(screen.getByText(/New Characters cannot be created/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Street Samurai/)).not.toBeInTheDocument();
   });
 });
