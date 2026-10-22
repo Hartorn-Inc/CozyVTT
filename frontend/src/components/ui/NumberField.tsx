@@ -42,6 +42,8 @@ interface NumberFieldProps {
   disabled?: boolean;
   id?: string;
   'aria-label'?: string;
+  'aria-invalid'?: boolean | 'true' | 'false';
+  'aria-describedby'?: string;
   title?: string;
 }
 
@@ -58,6 +60,8 @@ export default function NumberField({
   disabled,
   id,
   'aria-label': ariaLabel,
+  'aria-invalid': ariaInvalid,
+  'aria-describedby': ariaDescribedBy,
   title,
 }: NumberFieldProps) {
   // What the box shows. Tracks `value` except while the user is mid-edit, which
@@ -115,6 +119,8 @@ export default function NumberField({
       inputMode="numeric"
       id={id}
       aria-label={ariaLabel}
+      aria-invalid={ariaInvalid}
+      aria-describedby={ariaDescribedBy}
       title={title}
       value={text}
       min={min}

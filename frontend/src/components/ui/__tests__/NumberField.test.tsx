@@ -153,4 +153,19 @@ describe('NumberField', () => {
     rerender(<NumberField value={20} onChange={() => {}} aria-label="score" />);
     expect(box().value).toBe('20');
   });
+
+  it('passes aria-invalid and aria-describedby through to the input', () => {
+    render(
+      <NumberField
+        value={10}
+        onChange={() => {}}
+        aria-label="score"
+        aria-invalid={true}
+        aria-describedby="score-error"
+      />
+    );
+
+    expect(box()).toHaveAttribute('aria-invalid', 'true');
+    expect(box()).toHaveAttribute('aria-describedby', 'score-error');
+  });
 });
