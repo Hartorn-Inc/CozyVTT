@@ -135,6 +135,22 @@ class SchemaOwnerStatic(unittest.TestCase):
         self.assertIn('DB_USER="${DATABASE_APP_USER:-cozyvtt_app}"', read(RESTORE))
         self.assertIn('--no-owner --no-privileges', read(BACKUP))
 
+    def test_password_substring_of_a_printed_role_is_not_a_leak(self):
+        self.assertFalse(
+            _secret_appears_outside_identifiers(
+                'cozyvtt',
+                '✅ Schema owner ensured (cozyvtt_app)\n',
+                ('cozyvtt', 'cozyvtt_app', 'cozyvtt_test'),
+            )
+        )
+        self.assertTrue(
+            _secret_appears_outside_identifiers(
+                'bootsecret',
+                'PASSWORD bootsecret\n',
+                ('cozyvtt', 'cozyvtt_app', 'cozyvtt'),
+            )
+        )
+
     def test_operator_docs_name_both_roles_and_fail_closed_boot(self):
         deployment = read(DEPLOYMENT)
         self.assertIn('bootstrap superuser', deployment.lower())
@@ -359,6 +375,14 @@ def _psql(host, port, user, password, dbname, *args, sql=None, check=True):
         text=True,
         check=check,
     )
+
+
+def _secret_appears_outside_identifiers(secret, text, identifiers):
+    if not secret:
+        return False
+    if any(secret in ident for ident in identifiers if ident):
+        return False
+    return secret in text
 
 
 def _revocation_guard_sql():
@@ -613,8 +637,14 @@ class SchemaOwnerLivePostgres(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn('Schema owner ensured', result.stdout)
-            self.assertNotIn(cluster.password, result.stdout + result.stderr)
-            self.assertNotIn(APP_PASSWORD, result.stdout + result.stderr)
+            combined = result.stdout + result.stderr
+            self.assertFalse(
+                _secret_appears_outside_identifiers(
+                    cluster.password, combined, (cluster.user, APP_USER, cluster.dbname)
+                ),
+                combined,
+            )
+            self.assertNotIn(APP_PASSWORD, combined)
 
             wrong = _psql(
                 cluster.host, cluster.port, APP_USER, 'wrong-password', cluster.dbname,
