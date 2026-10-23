@@ -82,8 +82,12 @@ if [ "$bootstrap_super" != "t" ]; then
   fatal "bootstrap role ($DATABASE_USER) is not a superuser (rolsuper)."
 fi
 
-# psql interpolates :'var' only outside dollar-quoted strings, so these must
-# stay at top level. format('%I'/'%L') then \gexec runs the quoted SQL.
+# psql interpolates :'var' / :"var" only outside dollar-quoted strings, so
+# these stay at top level. CREATE ROLE uses a catalog predicate (PostgreSQL 18
+# has no IF NOT EXISTS clause on CREATE ROLE). Do not REASSIGN OWNED BY the bootstrap
+# superuser: PostgreSQL 18 refuses that with "cannot reassign ownership of
+# objects owned by role … because they are required by the database system".
+# ALTER ROLE … PASSWORD is a single statement so \gexec never prints it.
 if ! psql_as "$DATABASE_USER" "$DATABASE_PASSWORD" -q \
   -v "app_user=${DATABASE_APP_USER}" \
   -v "app_password=${DATABASE_APP_PASSWORD}" \
@@ -92,25 +96,36 @@ if ! psql_as "$DATABASE_USER" "$DATABASE_PASSWORD" -q \
 SELECT format('CREATE ROLE %I', :'app_user')
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user');
 \gexec
+ALTER ROLE :"app_user" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'app_password';
+GRANT CONNECT ON DATABASE :"db_name" TO :"app_user";
+GRANT USAGE, CREATE ON SCHEMA public TO :"app_user";
+ALTER DATABASE :"db_name" OWNER TO :"app_user";
+ALTER SCHEMA public OWNER TO :"app_user";
 SELECT format(
-  'ALTER ROLE %I LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD %L',
-  :'app_user',
-  :'app_password'
-);
-\gexec
-SELECT format('GRANT CONNECT ON DATABASE %I TO %I', :'db_name', :'app_user');
-\gexec
-SELECT format('GRANT USAGE, CREATE ON SCHEMA public TO %I', :'app_user');
-\gexec
-SELECT format('REASSIGN OWNED BY %I TO %I', :'bootstrap_user', :'app_user');
-\gexec
-SELECT format('ALTER SCHEMA public OWNER TO %I', :'app_user');
-\gexec
-SELECT format('ALTER DATABASE %I OWNER TO %I', :'db_name', :'app_user');
+  'ALTER %s %I.%I OWNER TO %I',
+  CASE c.relkind
+    WHEN 'r' THEN 'TABLE'
+    WHEN 'p' THEN 'TABLE'
+    WHEN 'S' THEN 'SEQUENCE'
+    WHEN 'v' THEN 'VIEW'
+    WHEN 'm' THEN 'MATERIALIZED VIEW'
+    WHEN 'f' THEN 'FOREIGN TABLE'
+  END,
+  n.nspname,
+  c.relname,
+  :'app_user'
+)
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+JOIN pg_roles o ON o.oid = c.relowner
+WHERE o.rolname = :'bootstrap_user'
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
+  AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
+  AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f');
 \gexec
 SQL
 then
-  fatal "CREATE/ALTER/GRANT/REASSIGN/OWNER change for the schema owner failed."
+  fatal "CREATE/ALTER/GRANT/OWNER change for the schema owner failed."
 fi
 
 app_super=""

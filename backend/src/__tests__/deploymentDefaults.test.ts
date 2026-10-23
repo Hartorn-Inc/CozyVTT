@@ -303,7 +303,13 @@ describe('the containers', () => {
       expect(helper).toContain('docs/DEPLOYMENT.md');
       expect(helper).toContain("format('CREATE ROLE %I'");
       expect(helper).toContain('WHERE NOT EXISTS');
-      expect(helper).not.toContain('CREATE ROLE IF NOT EXISTS');
+      const uncommented = helper
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('#'))
+        .join('\n');
+      expect(uncommented).not.toContain('CREATE ROLE IF NOT EXISTS');
+      expect(uncommented).not.toContain('REASSIGN OWNED');
+      expect(helper).toContain("ALTER %s %I.%I OWNER TO %I");
       expect(helper).toContain('\\gexec');
       expect(script).toContain('READY_USER="${DATABASE_USER:-$DB_USER}"');
       expect(helper).toContain('NOSUPERUSER');

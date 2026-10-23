@@ -76,8 +76,12 @@ class SchemaOwnerStatic(unittest.TestCase):
         self.assertIn('docs/DEPLOYMENT.md', helper)
         self.assertIn("format('CREATE ROLE %I'", helper)
         self.assertIn('WHERE NOT EXISTS', helper)
-        self.assertNotIn('CREATE ROLE IF NOT EXISTS', helper)
-        self.assertIn('PASSWORD %L', helper)
+        uncommented = '\n'.join(
+            line for line in helper.splitlines() if not line.lstrip().startswith('#')
+        )
+        self.assertNotIn('CREATE ROLE IF NOT EXISTS', uncommented)
+        self.assertIn("PASSWORD :'app_password'", helper)
+        self.assertNotIn('PASSWORD %L', helper)
         self.assertIn('\\gexec', helper)
         self.assertNotIn('DO $ensure$', helper)
         self.assertIn('-v ON_ERROR_STOP=1', helper)
@@ -87,16 +91,18 @@ class SchemaOwnerStatic(unittest.TestCase):
         self.assertIn('NOCREATEROLE', helper)
         self.assertIn('NOREPLICATION', helper)
         self.assertIn('NOBYPASSRLS', helper)
-        self.assertIn('REASSIGN OWNED BY', helper)
+        self.assertNotIn('REASSIGN OWNED', uncommented)
+        self.assertIn('required by the database system', helper)
+        self.assertIn("ALTER %s %I.%I OWNER TO %I", helper)
         self.assertIn('ALTER SCHEMA public OWNER TO', helper)
         self.assertIn('ALTER DATABASE', helper)
-        uncommented = lambda text: '\n'.join(
-            line for line in text.splitlines() if not line.lstrip().startswith('#')
-        )
-        self.assertNotRegex(uncommented(helper), r'\bnpx\b')
+        self.assertNotRegex(uncommented, r'\bnpx\b')
         self.assertLess(start.index('ensure-schema-owner.sh'), start.index('prisma migrate deploy'))
         self.assertIn('prisma migrate deploy', start)
-        self.assertNotRegex(uncommented(start), r'\bnpx\b')
+        uncommented_start = '\n'.join(
+            line for line in start.splitlines() if not line.lstrip().startswith('#')
+        )
+        self.assertNotRegex(uncommented_start, r'\bnpx\b')
 
     def test_docker_backup_restore_use_the_schema_owner(self):
         self.assertIn('DB_USER="${DATABASE_APP_USER:-cozyvtt_app}"', read(BACKUP))
@@ -199,7 +205,7 @@ class SchemaOwnerHelper(unittest.TestCase):
     def test_refuses_when_create_alter_grant_fails(self):
         result = self.run_helper(extra_env={'FAKE_PSQL_FAIL_SQL': '1'})
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn('CREATE/ALTER/GRANT/REASSIGN/OWNER', self.combined(result))
+        self.assertIn('CREATE/ALTER/GRANT/OWNER', self.combined(result))
 
     def test_refuses_when_schema_owner_cannot_connect(self):
         result = self.run_helper(extra_env={'FAKE_PSQL_FAIL_USER': 'cozyvtt_app'})
@@ -223,7 +229,12 @@ class SchemaOwnerHelper(unittest.TestCase):
         self.assertIn("format('CREATE ROLE %I'", logged)
         self.assertIn('WHERE NOT EXISTS', logged)
         self.assertNotIn('CREATE ROLE IF NOT EXISTS', logged)
-        self.assertIn('PASSWORD %L', logged)
+        uncommented_sql = '\n'.join(
+            line for line in logged.splitlines() if not line.lstrip().startswith('#')
+        )
+        self.assertNotIn('REASSIGN OWNED', uncommented_sql)
+        self.assertIn("PASSWORD :'app_password'", logged)
+        self.assertIn("ALTER %s %I.%I OWNER TO %I", logged)
         self.assertIn('\\gexec', logged)
         self.assertNotIn("PASSWORD 'appsecret'", logged)
 
