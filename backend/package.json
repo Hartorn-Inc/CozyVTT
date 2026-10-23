@@ -77,6 +77,9 @@
     "typescript-eslint": "8.72.0"
   },
   "overrides": {
+    "express": {
+      "body-parser": "2.4.0"
+    },
     "prisma": {
       "mysql2": "3.24.6"
     },
