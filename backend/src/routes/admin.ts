@@ -51,6 +51,17 @@ import { clearAllState as clearAllCombatState } from '../websocket/initiativeSta
 import { forgetSetupComplete } from '../middleware/setup';
 import { backupsInProgress } from '../services/backupsInProgress';
 import { uploadsDiskUsage } from '../services/uploadsDisk';
+import {
+  BackupEncryptionKeyMissingError,
+  backupEncryptionKeyMissingReply,
+  currentBackupEncryptionKey,
+} from '../config/backupEncryptionKey';
+import {
+  BackupEncryptedWithUnknownKeyError,
+  decryptBackupFile,
+  inspectBackupFileKind,
+  pipeEncryptedBackup,
+} from '../utils/backupEncryption';
 import logger from '../utils/logger';
 
 const execFileAsync = promisify(execFile);
@@ -917,13 +928,6 @@ function tempFolderReply() {
 }
 
 /**
- * Write a backup ZIP into BACKUP_DIR: a pg_dump of the database (flags
- * explained in utils/pgRestore.ts), plus the uploaded files when asked. Create
- * Backup takes both; a restore takes the database alone as the copy that lets
- * it be undone. The ZIP is named by the second it was made, like every backup
- * the dashboard lists.
- */
-/**
  * A backup name of its own, and the partial file to write it into. The name
  * is the second the backup was asked for; two asked for in the same second,
  * or a restore's safety copy taken in the second a backup was made, used to
@@ -962,7 +966,17 @@ const PARTIAL = '.partial';
 
 const exists = (file: string) => fs.access(file).then(() => true, () => false);
 
+/**
+ * Write an Instance backup into BACKUP_DIR: a pg_dump of the database (flags
+ * explained in utils/pgRestore.ts), plus the uploaded files when asked, as a
+ * ZIP encrypted with BACKUP_ENCRYPTION_KEY (utils/backupEncryption.ts). Create
+ * Backup takes both; a restore takes the database alone as the copy that lets
+ * it be undone. The file is named by the second it was made, like every backup
+ * the dashboard lists, still `backup-….zip`.
+ */
 async function writeBackupZip(dbUrl: string, withUploads: boolean): Promise<{ filename: string; sizeBytes: number }> {
+  const key = currentBackupEncryptionKey();
+  if (key === null) throw new BackupEncryptionKeyMissingError();
   await ensureBackupDir(BACKUP_DIR).catch((error: unknown) => { throw inBackupsFolder(error); });
   const { filename, handle } = await openNewBackup();
   backupsInProgress.add(filename);
@@ -991,30 +1005,32 @@ async function writeBackupZip(dbUrl: string, withUploads: boolean): Promise<{ fi
       throw new DumpFailed(errorCode(execError), errorStderr(execError));
     }
 
-    await new Promise<void>((resolve, reject) => {
-      streamed = true;
-      const output = handle.createWriteStream();
-      const archive = new ZipArchive({ zlib: { level: 6 } });
-      // Both ends can fail: the archive while reading, the file while
-      // writing (a full disk). A stream error with nobody listening is an
-      // uncaught exception, which exits the process mid-backup. Creating the
-      // file on a full disk succeeds; running out of room shows up here.
-      output.on('error', (error) => reject(inBackupsFolder(error)));
-      output.on('close', resolve);
-      archive.on('error', reject);
-      archive.pipe(output);
-      archive.file(sqlPath, { name: 'database.sql' });
-      if (withUploads) {
-        // Under an "uploads/" prefix, skipping the backups subdir older installs had there
-        // TODO(backups): the folder's own entry is named "backups", with no
-        // slash, so the filter keeps it and every backup holds an empty
-        // uploads/backups/ folder. Leave out entry.name === 'backups' too.
-        archive.directory(UPLOADS_DIR, 'uploads', (entry) => {
-          return entry.name.startsWith('backups/') ? false : entry;
-        });
-      }
-      archive.finalize();
+    streamed = true;
+    const output = handle.createWriteStream();
+    const archive = new ZipArchive({ zlib: { level: 6 } });
+    // Both ends can fail: the archive while reading, the file while
+    // writing (a full disk). A stream error with nobody listening is an
+    // uncaught exception, which exits the process mid-backup. Creating the
+    // file on a full disk succeeds; running out of room shows up here.
+    // Archiver → AES-256-GCM → file; the tag is appended when the cipher ends.
+    const writing = pipeEncryptedBackup(archive, output, key).catch((error: unknown) => {
+      throw inBackupsFolder(error);
     });
+    archive.on('error', (error: Error) => {
+      output.destroy(error);
+    });
+    archive.file(sqlPath, { name: 'database.sql' });
+    if (withUploads) {
+      // Under an "uploads/" prefix, skipping the backups subdir older installs had there
+      // TODO(backups): the folder's own entry is named "backups", with no
+      // slash, so the filter keeps it and every backup holds an empty
+      // uploads/backups/ folder. Leave out entry.name === 'backups' too.
+      archive.directory(UPLOADS_DIR, 'uploads', (entry) => {
+        return entry.name.startsWith('backups/') ? false : entry;
+      });
+    }
+    archive.finalize();
+    await writing;
 
     // Complete: only now does it take a backup's name.
     await fs.rename(partialPath, zipPath).catch((error: unknown) => { throw inBackupsFolder(error); });
@@ -1033,9 +1049,9 @@ async function writeBackupZip(dbUrl: string, withUploads: boolean): Promise<{ fi
 
 // ============================================
 // POST /api/admin/backups
-// Creates a full instance backup: pg_dump of the database + all uploaded
-// files bundled into a single downloadable ZIP archive.
-// Requires pg_dump, which the backend Dockerfiles install.
+// Creates a full Instance backup: pg_dump of the database + all uploaded
+// files, as a ZIP encrypted with BACKUP_ENCRYPTION_KEY. The dashboard name
+// stays backup-….zip. Requires pg_dump, which the backend Dockerfiles install.
 // ============================================
 router.post('/backups', async (req, res) => {
   const dbUrl = process.env.DATABASE_URL;
@@ -1060,6 +1076,9 @@ router.post('/backups', async (req, res) => {
 
     return res.status(201).json({ filename, sizeBytes, createdAt: new Date().toISOString() });
   } catch (error) {
+    if (error instanceof BackupEncryptionKeyMissingError) {
+      return res.status(400).json(backupEncryptionKeyMissingReply());
+    }
     if (error instanceof ToolMissing) {
       return res.status(500).json(TOOL_MISSING_REPLY);
     }
@@ -1123,7 +1142,7 @@ router.get('/backups', async (_req, res) => {
 
 // ============================================
 // GET /api/admin/backups/:filename/download
-// Downloads a backup ZIP file.
+// Downloads an Instance backup (encrypted, still named .zip).
 // ============================================
 router.get('/backups/:filename/download', async (req, res) => {
   const { filename } = req.params;
@@ -1166,9 +1185,11 @@ router.delete('/backups/:filename', async (req, res) => {
 
 // ============================================
 // POST /api/admin/backups/restore
-// Restores the entire instance from an uploaded backup ZIP.
-// The ZIP must contain database.sql (created by pg_dump --clean --if-exists)
-// and optionally an uploads/ directory.
+// Restores the entire instance from an uploaded Instance backup.
+// Encrypted archives (CVTTBK01) are decrypted with the current then previous
+// backup keys; a legacy plaintext ZIP is still accepted. The ZIP must contain
+// database.sql (created by pg_dump --clean --if-exists) and optionally an
+// uploads/ directory.
 // WARNING: This overwrites the current database and copies the archive's
 // uploaded files over the existing ones. A backup of the database as it was
 // is written first, so the database half can be undone.
@@ -1248,18 +1269,30 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
     }
 
     // 1. Extract ZIP to temp directory.
+    // An encrypted Instance backup is decrypted here first, with the current
+    // then previous backup keys, never SESSION_SECRET. A legacy plaintext ZIP
+    // is unpacked as it always was.
     // openArchiveFile refuses a file that is not a ZIP, and one listing more
     // entries than a backup may hold, before reading its directory;
     // extractArchiveSafely rejects path-traversal (zip-slip) entries and caps
     // the total decompressed size (zip-bomb protection). Each refusal says why,
     // with 400, or 413 for a size limit.
     try {
-      const directory = await openArchiveFile(uploadedZip, RESTORE_MAX_FILES);
+      let zipPath = uploadedZip;
+      if ((await inspectBackupFileKind(uploadedZip)) === 'encrypted') {
+        zipPath = path.join(tempDir, 'plaintext.zip');
+        await decryptBackupFile(uploadedZip, zipPath);
+      }
+      const directory = await openArchiveFile(zipPath, RESTORE_MAX_FILES);
       await extractArchiveSafely(directory, tempDir, {
         maxFiles: RESTORE_MAX_FILES,
         maxTotalBytes: RESTORE_MAX_TOTAL_BYTES,
       });
     } catch (error) {
+      if (error instanceof BackupEncryptedWithUnknownKeyError) {
+        logger.warn('Restore refused the uploaded backup', { reason: error.message });
+        return res.status(400).json({ error: 'Invalid Backup', message: error.message });
+      }
       if (error instanceof ArchiveRefusedError) {
         logger.warn('Restore refused the uploaded backup', { reason: error.message });
         return res.status(error instanceof ArchiveLimitError ? 413 : 400).json({
@@ -1324,6 +1357,9 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
     try {
       safetyBackup = (await writeBackupZip(dbUrl, false)).filename;
     } catch (error) {
+      if (error instanceof BackupEncryptionKeyMissingError) {
+        return res.status(400).json(backupEncryptionKeyMissingReply(true));
+      }
       if (error instanceof ToolMissing) {
         return res.status(500).json(TOOL_MISSING_REPLY);
       }

@@ -46,6 +46,11 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY scripts/start.sh /usr/local/bin/start.sh
 RUN sed -i 's/\r$//' /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 
+# Unlock helper for encrypted Admin Dashboard Instance backups
+# (docs/DEPLOYMENT.md). Operators run:
+#   docker compose exec -T -u appuser backend node scripts/unlock-instance-backup.mjs …
+COPY scripts/unlock-instance-backup.mjs ./scripts/unlock-instance-backup.mjs
+
 # Create directories; ownership will be set at container startup by start.sh
 # (bind mounts override Dockerfile chown, so we fix it at runtime via su-exec)
 RUN mkdir -p /app/uploads /app/logs /app/backups && chown -R appuser:appgroup /app

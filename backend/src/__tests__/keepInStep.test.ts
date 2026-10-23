@@ -57,6 +57,12 @@
  * to generate one; the guide's example was once changed without the list of
  * refused values, and the new example line started a server.
  *
+ * The Instance backup on-disk format. backend/scripts/unlock-instance-backup.mjs
+ * duplicates BACKUP_ARCHIVE_MAGIC, BACKUP_NONCE_LENGTH and BACKUP_AUTH_TAG_LENGTH
+ * from utils/backupEncryption.ts because the production image runs the helper
+ * as plain Node, not TypeScript. A length change in one file alone would leave
+ * Operators unable to unlock a new archive from the command line.
+ *
  * The database address in the backup and restore scripts. Each reads
  * DATABASE_URL in its own copy of the same block; a fix to one (decoding the
  * password, the default port) has to reach the other.
@@ -432,6 +438,34 @@ describe('the socket flood ceilings in the WebSocket guide', () => {
 
   it.each(Object.entries(SOCKET_CEILINGS))('%s is stated as the server applies it', (event, ceiling) => {
     expect(stated(event)).toBe(inWords(ceiling.windows));
+  });
+});
+
+describe('the Instance backup on-disk format', () => {
+  const format = (rel: string) => {
+    const source = read(rel);
+    const magic = /BACKUP_ARCHIVE_MAGIC = Buffer\.from\('([^']+)', 'ascii'\)/.exec(source)?.[1];
+    const nonce = /BACKUP_NONCE_LENGTH = (\d+)/.exec(source)?.[1];
+    const tag = /BACKUP_AUTH_TAG_LENGTH = (\d+)/.exec(source)?.[1];
+    if (!magic || !nonce || !tag) {
+      throw new Error(`${rel} no longer declares BACKUP_ARCHIVE_MAGIC / BACKUP_NONCE_LENGTH / BACKUP_AUTH_TAG_LENGTH; update this test with the file`);
+    }
+    return { magic, nonce: Number(nonce), tag: Number(tag) };
+  };
+
+  it('is the same in the TypeScript module and the unlock helper', () => {
+    expect(format('backend/scripts/unlock-instance-backup.mjs')).toEqual(
+      format('backend/src/utils/backupEncryption.ts')
+    );
+  });
+
+  it('is copied into the production image, and the deployment guide names that command', () => {
+    expect(read('backend/Dockerfile.prod')).toMatch(
+      /COPY scripts\/unlock-instance-backup\.mjs \.\/scripts\/unlock-instance-backup\.mjs/
+    );
+    expect(read('docs/DEPLOYMENT.md')).toContain(
+      'node scripts/unlock-instance-backup.mjs'
+    );
   });
 });
 
