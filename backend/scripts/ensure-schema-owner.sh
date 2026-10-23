@@ -87,14 +87,21 @@ fi
 # has no IF NOT EXISTS clause on CREATE ROLE). Do not REASSIGN OWNED BY the bootstrap
 # superuser: PostgreSQL 18 refuses that with "cannot reassign ownership of
 # objects owned by role … because they are required by the database system".
-# ALTER ROLE … PASSWORD is a single statement so \gexec never prints it.
+# Ownership transfer is ALTER DATABASE / ALTER SCHEMA public plus ALTER … OWNER
+# on non-catalog relations (pg_class), functions/procedures (pg_proc), and
+# enums/domains/composites (pg_type). \gexec sends the generating SELECT: a
+# semicolon before it would clear the buffer and skip CREATE ROLE / ALTER OWNER.
+# The schema-owner password is \getenv from the environment, not psql -v, so it
+# does not appear on the process command line. ALTER ROLE … PASSWORD is a single
+# statement so \gexec never prints it.
+export DATABASE_APP_PASSWORD
 if ! psql_as "$DATABASE_USER" "$DATABASE_PASSWORD" -q \
   -v "app_user=${DATABASE_APP_USER}" \
-  -v "app_password=${DATABASE_APP_PASSWORD}" \
   -v "bootstrap_user=${DATABASE_USER}" \
   -v "db_name=${DATABASE_NAME}" <<'SQL'
+\getenv app_password DATABASE_APP_PASSWORD
 SELECT format('CREATE ROLE %I', :'app_user')
-WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user');
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'app_user')
 \gexec
 ALTER ROLE :"app_user" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD :'app_password';
 GRANT CONNECT ON DATABASE :"db_name" TO :"app_user";
@@ -121,7 +128,39 @@ JOIN pg_roles o ON o.oid = c.relowner
 WHERE o.rolname = :'bootstrap_user'
   AND n.nspname NOT IN ('pg_catalog', 'information_schema', 'pg_toast')
   AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
-  AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f');
+  AND c.relkind IN ('r', 'p', 'S', 'v', 'm', 'f')
+\gexec
+SELECT format(
+  'ALTER %s %s OWNER TO %I',
+  CASE p.prokind
+    WHEN 'p' THEN 'PROCEDURE'
+    WHEN 'a' THEN 'AGGREGATE'
+    ELSE 'FUNCTION'
+  END,
+  p.oid::regprocedure,
+  :'app_user'
+)
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+JOIN pg_roles o ON o.oid = p.proowner
+WHERE o.rolname = :'bootstrap_user'
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
+\gexec
+SELECT format('ALTER TYPE %I.%I OWNER TO %I', n.nspname, t.typname, :'app_user')
+FROM pg_type t
+JOIN pg_namespace n ON n.oid = t.typnamespace
+JOIN pg_roles o ON o.oid = t.typowner
+WHERE o.rolname = :'bootstrap_user'
+  AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+  AND n.nspname NOT LIKE 'pg\_%' ESCAPE '\'
+  AND t.typtype IN ('e', 'd', 'c')
+  AND NOT EXISTS (
+    SELECT 1
+    FROM pg_class c
+    WHERE c.oid = t.typrelid
+      AND c.relkind IN ('r', 'p', 'v', 'm')
+  )
 \gexec
 SQL
 then

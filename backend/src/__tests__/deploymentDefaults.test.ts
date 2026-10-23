@@ -311,6 +311,11 @@ describe('the containers', () => {
       expect(uncommented).not.toContain('REASSIGN OWNED');
       expect(helper).toContain("ALTER %s %I.%I OWNER TO %I");
       expect(helper).toContain('\\gexec');
+      expect(helper).not.toMatch(/;\s*\\gexec/);
+      expect(helper).toContain('\\getenv app_password DATABASE_APP_PASSWORD');
+      expect(helper).not.toMatch(/-v ["']app_password=/);
+      expect(helper).toContain('pg_proc');
+      expect(helper).toContain('pg_type');
       expect(script).toContain('READY_USER="${DATABASE_USER:-$DB_USER}"');
       expect(helper).toContain('NOSUPERUSER');
       expect(helper).toContain('NOBYPASSRLS');
