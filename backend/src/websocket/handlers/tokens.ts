@@ -48,6 +48,17 @@ const moveRefusal = (role: string | undefined): string =>
  */
 export const DRAG_DECISION_MS = 1000;
 
+/** Per-socket put-back when authenticate leaves a campaign. Owned here because `drags` is. */
+const putBackDragsOnLeave = new WeakMap<AuthenticatedSocket, (leavingCampaignId: string) => void>();
+
+/**
+ * Snap open drags for `leavingCampaignId` back to their stored squares and
+ * cancel the frame throttle, so a queued frame cannot land after put-back.
+ */
+export function putBackDragsLeavingCampaign(socket: AuthenticatedSocket, leavingCampaignId: string): void {
+  putBackDragsOnLeave.get(socket)?.(leavingCampaignId);
+}
+
 export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
    * Who is sent a token's drag frames: the DM's sockets, and the players the
@@ -66,7 +77,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
    * which can change mid-drag without touching the token, so the decision is
    * made again at least every DRAG_DECISION_MS as well.
    */
-  const drags = new Map<string, { seenAs: string; at: number; deciding: Promise<DragAudience>; mapId: string }>();
+  const drags = new Map<string, { seenAs: string; at: number; deciding: Promise<DragAudience>; mapId: string; campaignId: string }>();
   const seenAs = (token: Pick<Token, 'visible' | 'layer'>) => `${token.visible !== false}|${token.layer}`;
   function dragAudienceFor(mapId: string, token: Token, campaignId: string): Promise<DragAudience> {
     const cached = drags.get(token.id);
@@ -84,7 +95,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       if (before) audience.holding = before.holding;
       return audience;
     });
-    drags.set(token.id, { seenAs: seenAs(token), at: now, deciding, mapId });
+    drags.set(token.id, { seenAs: seenAs(token), at: now, deciding, mapId, campaignId });
     return deciding;
   }
   async function decideDragAudience(mapId: string, tokenId: string, campaignId: string): Promise<DragAudience> {
@@ -217,12 +228,12 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
    * it is told it has gone, and sent nothing more until it comes back.
    */
   async function emitDragFrame(token: Token, mapId: string, x: number, y: number, campaignId: string): Promise<void> {
-    if (!socket.connected) return;
+    if (!socket.connected || socket.campaignId !== campaignId) return;
     const audience = await dragAudienceFor(mapId, token, campaignId);
-    if (!socket.connected) return;
+    if (!socket.connected || socket.campaignId !== campaignId) return;
     const there: Token = { ...token, position: { x, y } };
     const members = await campaignSockets(io, campaignId);
-    if (!socket.connected) return;
+    if (!socket.connected || socket.campaignId !== campaignId) return;
     for (const s of members) {
       const recipient = audience.recipients.get(s.id);
       if (!recipient) continue;
@@ -386,6 +397,8 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         return;
       }
 
+      if (!socket.connected || socket.campaignId !== campaignId) return;
+
       await emitDragStart(token, mapId, campaignId);
 
       logger.debug('token.move.start', { tokenId, userId: socket.userId, mapId });
@@ -406,6 +419,12 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       if (!campaignId) {
         return; // Silently ignore if not authenticated
       }
+      // Role for this frame only while the socket is still in the campaign
+      // this handler captured. authenticate is not serialized with frames:
+      // a player of A who joins B (as DM) mid-await must not keep moving
+      // A's tokens, including through a pause.
+      if (socket.campaignId !== campaignId) return;
+      const frameRole = socket.role;
 
       // Flood ceiling: drop excess frames silently — the 16ms throttle
       // already paces legitimate drags well under this limit. Frames have
@@ -424,7 +443,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       // cache reconfirms and disconnects on failure (ADR 0007). No extra map
       // fetch when the cache hits.
       if (!(await confirmDragFrameAuthorization(socket, campaignId))) return;
-      if (!socket.connected) return;
+      if (!socket.connected || socket.campaignId !== campaignId) return;
 
       // Single fetch covers bounds validation AND the spirit-layer check below
       // (this handler fires up to ~60×/s during a drag, so one query per frame
@@ -433,9 +452,9 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         where: { id: mapId },
         select: { width: true, height: true, campaignId: true, tokens: true, campaign: { select: { status: true, currentMapId: true } } },
       });
-      if (!socket.connected) return;
+      if (!socket.connected || socket.campaignId !== campaignId) return;
 
-      if (!map || map.campaignId !== campaignId || !canReadMap(socket.role, mapId, map.campaign.currentMapId)) {
+      if (!map || map.campaignId !== campaignId || !canReadMap(frameRole, mapId, map.campaign.currentMapId)) {
         return; // Silently ignore invalid map during rapid updates
       }
 
@@ -458,20 +477,20 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         return;
       }
 
-      if (!canControlToken(socket.role, movingToken.controlledBy, socket.userId)) {
+      if (!canControlToken(frameRole, movingToken.controlledBy, socket.userId)) {
         return;
       }
 
       // The plane rule, as on the start and the drop. It reads the database
       // only for a spirit-layer token moved by someone other than the DM.
-      if (!(await canActOnTokenPlane(socket.role, movingToken, campaignId, socket.userId!))) {
+      if (!(await canActOnTokenPlane(frameRole, movingToken, campaignId, socket.userId!))) {
         return;
       }
-      if (!socket.connected) return;
+      if (!socket.connected || socket.campaignId !== campaignId) return;
 
       // A player's frames are dropped through a pause too, or the token
       // would still wander on everyone else's screen.
-      if (!canMoveTokensNow(socket.role, map.campaign.status)) {
+      if (!canMoveTokensNow(frameRole, map.campaign.status)) {
         return;
       }
 
@@ -480,7 +499,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       // draws the token where it is being carried but leaves where it
       // stands, which decides sight and explored memory, until the drop, so
       // carrying a player's token about reveals nothing on the way.
-      if (!socket.connected) return;
+      if (!socket.connected || socket.campaignId !== campaignId) return;
       await emitDragFrame(movingToken, mapId, x, y, campaignId);
     } catch (error) {
       logger.error('token.move failed', { err: error });
@@ -732,23 +751,32 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
     }
   });
 
-  // Kick, role-change, monitor disconnect, and a client close mid-drag never
-  // reach token.move.end. Put each open drag back at its stored square so
-  // other clients do not keep heldAt.
-  socket.on('disconnect', () => {
+  // Kick, role-change, monitor disconnect, authenticate leaving a campaign,
+  // and a client close mid-drag never reach token.move.end. Put each open
+  // drag back at its stored square on the campaign the drag was started for,
+  // so other clients do not keep heldAt — and a switch-then-disconnect cannot
+  // skip the correction because live `socket.campaignId` is now B.
+  function abandonDrags(leavingCampaignId?: string): void {
     handleTokenMove.cancel();
-    const open = [...drags.entries()];
-    drags.clear();
-    const campaignId = socket.campaignId;
-    if (!campaignId || open.length === 0) return;
+    const open = leavingCampaignId
+      ? [...drags.entries()].filter(([, drag]) => drag.campaignId === leavingCampaignId)
+      : [...drags.entries()];
+    for (const [tokenId] of open) drags.delete(tokenId);
+    if (open.length === 0) return;
     void (async () => {
       for (const [tokenId, drag] of open) {
         try {
-          await putBackStored(campaignId, drag.mapId, tokenId, drag.deciding, false);
+          await putBackStored(drag.campaignId, drag.mapId, tokenId, drag.deciding, false);
         } catch (error) {
-          logger.error('token drag putBack on disconnect failed', { err: error });
+          logger.error('token drag putBack failed', { err: error });
         }
       }
     })();
+  }
+  putBackDragsOnLeave.set(socket, (leavingCampaignId) => {
+    abandonDrags(leavingCampaignId);
+  });
+  socket.on('disconnect', () => {
+    abandonDrags();
   });
 }

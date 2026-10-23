@@ -154,6 +154,37 @@ it('drops an older send that a send started by a token change overtakes', async 
   expect(seen[seen.length - 1]).toBe(3);
 });
 
+it('does not reseed combat with a token that was never in the order after the DM ends it', async () => {
+  setState(campaignId, { active: false, round: 0, currentTokenId: null, combatants: [entry(HERO, 'player')] });
+
+  const seen: Array<{ active: boolean; combatants: unknown[] }> = [];
+  dm.on('initiative.state', (state: { active: boolean; combatants: unknown[] }) => {
+    seen.push(state);
+  });
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let locked!: () => void;
+  const holding = new Promise<void>((resolve) => { locked = resolve; });
+  const holder = withMapsLocked([mapId], async () => { locked(); await gate; });
+  await holding;
+
+  dm.emit('initiative.roll', { tokenId: GOBLIN, mapId });
+  await rollWaitingForLock();
+  const ended = waitForEvent<{ combatants: unknown[]; active: boolean }>(dm, 'initiative.state');
+  dm.emit('initiative.end');
+  const endedState = await ended;
+  expect(endedState.combatants).toEqual([]);
+  expect(endedState.active).toBe(false);
+
+  const quiet = expectNoEvent(dm, 'dice.rolled', 1500);
+  release();
+  await holder;
+  await quiet;
+  expect(getState(campaignId)).toMatchObject({ combatants: [] });
+  expect(seen[seen.length - 1]).toMatchObject({ active: false, combatants: [] });
+});
+
 it('does not bring back a fight the DM ended while a roll was in progress', async () => {
   setState(campaignId, { active: false, round: 0, currentTokenId: null, combatants: [entry(HERO, 'player')] });
   const player = await server.connectAndAuth(await server.loginAs(playerId), campaignId);

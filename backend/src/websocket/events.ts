@@ -6,7 +6,7 @@ import { databaseBeingReplaced, RESTORING_MESSAGE } from '../services/restoreSta
 import { broadcastPresence, getOnlineUserIds } from './utils';
 import logger from '../utils/logger';
 import { stateRequestAllowed, withinCeiling, MAX_SOCKETS_PER_USER, TOO_MANY_SOCKETS } from './shared';
-import { registerTokenHandlers } from './handlers/tokens';
+import { putBackDragsLeavingCampaign, registerTokenHandlers } from './handlers/tokens';
 import { registerDiceHandlers } from './handlers/dice';
 import { registerChatHandlers } from './handlers/chat';
 import { registerSpiritHandlers } from './handlers/spirit';
@@ -118,6 +118,9 @@ export function registerEventHandlers(io: Server): void {
           return;
         }
 
+        const leavingCampaignId =
+          socket.campaignId && socket.campaignId !== data.campaignId ? socket.campaignId : undefined;
+
         // SECURITY: one campaign per socket. Leave every other campaign room
         // before taking the new campaign's role, or a role-filtered fan-out in
         // an old room would find this socket still there and answer it with
@@ -151,6 +154,9 @@ export function registerEventHandlers(io: Server): void {
         socket.role = result.role;
         markWriteAuthzConfirmed(socket);
         startWriteAuthzMonitor(socket);
+        if (leavingCampaignId) {
+          putBackDragsLeavingCampaign(socket, leavingCampaignId);
+        }
 
         // Notify the user they've been authenticated
         socket.emit('authenticated', {

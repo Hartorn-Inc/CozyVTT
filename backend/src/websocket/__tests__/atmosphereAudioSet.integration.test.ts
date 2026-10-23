@@ -22,6 +22,7 @@ import {
   expectNoEvent,
   WsTestServer,
 } from '../../__tests__/helpers/websocket-test-server';
+import * as writeAuthz from '../writeAuthz';
 
 jest.setTimeout(20000);
 
@@ -149,5 +150,44 @@ describe('atmosphere.audio.set', () => {
     dmClient.emit('atmosphere.audio.set', { assetId: null });
     expect((await updated).assetId).toBeNull();
     expect(await currentTrack()).toBeNull();
+  });
+
+  it('keeps a track that lands while atmosphere.effect.set is authorizing', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const original = writeAuthz.confirmWriteAuthorization.bind(writeAuthz);
+    const spy = jest.spyOn(writeAuthz, 'confirmWriteAuthorization').mockImplementationOnce(async (socket, options) => {
+      reached();
+      await gate;
+      return original(socket, options);
+    });
+
+    try {
+      dmClient.emit('atmosphere.effect.set', { effect: 'rain' });
+      await waiting;
+      const trackSet = waitForEvent<{ assetId: string }>(dmClient, 'atmosphere.audio.updated');
+      dmClient.emit('atmosphere.audio.set', { assetId: dmTrackId });
+      expect((await trackSet).assetId).toBe(dmTrackId);
+      expect(await currentTrack()).toBe(dmTrackId);
+
+      const effectSet = waitForEvent<{ effect: string }>(dmClient, 'atmosphere.effect.updated');
+      release();
+      expect((await effectSet).effect).toBe('rain');
+
+      const campaign = await prisma.campaign.findUniqueOrThrow({
+        where: { id: campaignId },
+        select: { vibeSettings: true },
+      });
+      const settings = campaign.vibeSettings as {
+        atmosphereEffect?: string | null;
+        atmosphereAudio?: { assetId?: string };
+      };
+      expect(settings.atmosphereEffect).toBe('rain');
+      expect(settings.atmosphereAudio?.assetId).toBe(dmTrackId);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

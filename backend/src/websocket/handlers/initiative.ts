@@ -422,6 +422,12 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       const token = tokens[tokenIndex];
       const state = getCombatState(campaignId);
       const existingIndex = state.combatants.findIndex((c) => c.tokenId === tokenId);
+      // Captured before the sheet / authz / persist awaits: after those, an
+      // emptied order is the default object `getCombatState` invents, and
+      // must not be stored with this roll's token. An order that was already
+      // empty at the start of the roll still accepts a DM add.
+      const orderHadCombatants = state.combatants.length > 0;
+      const orderWasActive = state.active;
 
       // Authorize. `controlledBy` is the same ownership field that decides who
       // may move a token (see handlers/tokens.ts), so a player can roll for
@@ -573,6 +579,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // have ended the fight, which writing the old copy back would undo.
       const current = getCombatState(campaignId);
       const combatantIndex = current.combatants.findIndex((c) => c.tokenId === tokenId);
+      let skippedClearedInsert = false;
       if (combatantIndex !== -1 && (persisted.role === 'DM' || !current.active)) {
         current.combatants[combatantIndex].initiative = rolledValue;
         current.combatants = sortCombatants(current.combatants);
@@ -580,58 +587,66 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       } else if (persisted.role === 'DM' && existingIndex === -1) {
         // The DM's roll adds a token that was not in the order when the roll
         // began. One that was, and is gone now, was removed meanwhile (or
-        // the fight ended), and stays out.
-        current.combatants.push({
-          tokenId,
-          mapId,
-          name: token.name,
-          imageUrl: token.imageUrl || '',
-          initiative: rolledValue,
-          hp: token.hp ?? null,
-          type: token.type ?? 'npc',
-          disposition: token.disposition ?? null,
-        });
-        current.combatants = sortCombatants(current.combatants);
-        setCombatState(campaignId, current);
+        // the fight ended), and stays out. Gone-now also covers an emptied
+        // or cleared fight for a token that was never in the order: writing
+        // the post-clear default back would reseed combat with this roll.
+        if ((orderHadCombatants || orderWasActive) && current.combatants.length === 0) {
+          skippedClearedInsert = true;
+        } else {
+          current.combatants.push({
+            tokenId,
+            mapId,
+            name: token.name,
+            imageUrl: token.imageUrl || '',
+            initiative: rolledValue,
+            hp: token.hp ?? null,
+            type: token.type ?? 'npc',
+            disposition: token.disposition ?? null,
+          });
+          current.combatants = sortCombatants(current.combatants);
+          setCombatState(campaignId, current);
+        }
       }
 
-      // Announce the roll in the dice log — but only when dice were actually
-      // thrown. A Call of Cthulhu investigator's initiative is simply their
-      // Dexterity, and a dice-log entry claiming otherwise would be a lie. The
-      // value still reaches everyone through the initiative broadcast below.
-      const roll = rollResult;
-      // The roll is stored and ordered by now: a failure to write its dice
-      // log entry is logged, and the new order below still goes out.
-      // TODO(play): this entry is only broadcast. Unlike a roll made in dice.ts
-      // it is never written to the diceRoll table, so it is gone from the dice
-      // log on reload. Store it as other rolls are stored.
-      if (roll) await bestEffort('initiative.roll dice log', async () => {
-        const user = await prisma.user.findUnique({ where: { id: socket.userId }, select: { displayName: true } });
-        // The server names the token; a name the client sends is not used.
-        // An obscured token is not named in the dice log even to the DM, since
-        // one entry reaches everyone who is sent the token.
-        // TODO(play): who rolled is not considered, so a player rolling for
-        // their own obscured token sees it logged as "Unknown creature", while
-        // a roll from their sheet names the character. Send the roller the
-        // token's name and everyone else the placeholder.
-        const publicName = token.obscured === true ? 'Unknown creature' : token.name;
-        const rollData = {
-          userId: socket.userId,
-          userName: user?.displayName ?? 'DM',
-          characterName: publicName,
-          expression: usedExpression,
-          result: rolledValue,
-          breakdown: roll,
-          purpose: `${publicName} Initiative`,
-          timestamp: new Date().toISOString(),
-          secret: false,
-        };
-        for (const r of await recipientsSentToken(io, campaignId, token, mapId)) {
-          r.emit('dice.rolled', rollData);
-        }
-      });
+      if (!skippedClearedInsert) {
+        // Announce the roll in the dice log — but only when dice were actually
+        // thrown. A Call of Cthulhu investigator's initiative is simply their
+        // Dexterity, and a dice-log entry claiming otherwise would be a lie. The
+        // value still reaches everyone through the initiative broadcast below.
+        const roll = rollResult;
+        // The roll is stored and ordered by now: a failure to write its dice
+        // log entry is logged, and the new order below still goes out.
+        // TODO(play): this entry is only broadcast. Unlike a roll made in dice.ts
+        // it is never written to the diceRoll table, so it is gone from the dice
+        // log on reload. Store it as other rolls are stored.
+        if (roll) await bestEffort('initiative.roll dice log', async () => {
+          const user = await prisma.user.findUnique({ where: { id: socket.userId }, select: { displayName: true } });
+          // The server names the token; a name the client sends is not used.
+          // An obscured token is not named in the dice log even to the DM, since
+          // one entry reaches everyone who is sent the token.
+          // TODO(play): who rolled is not considered, so a player rolling for
+          // their own obscured token sees it logged as "Unknown creature", while
+          // a roll from their sheet names the character. Send the roller the
+          // token's name and everyone else the placeholder.
+          const publicName = token.obscured === true ? 'Unknown creature' : token.name;
+          const rollData = {
+            userId: socket.userId,
+            userName: user?.displayName ?? 'DM',
+            characterName: publicName,
+            expression: usedExpression,
+            result: rolledValue,
+            breakdown: roll,
+            purpose: `${publicName} Initiative`,
+            timestamp: new Date().toISOString(),
+            secret: false,
+          };
+          for (const r of await recipientsSentToken(io, campaignId, token, mapId)) {
+            r.emit('dice.rolled', rollData);
+          }
+        });
 
-      await broadcastInitiativeState(campaignId);
+        await broadcastInitiativeState(campaignId);
+      }
       logger.debug('initiative.roll', {
         rolled: !!rollResult, result: rolledValue, name: token.name, campaignId,
       });

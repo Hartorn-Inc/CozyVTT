@@ -425,17 +425,87 @@ describe('a write for A while authenticate moves the socket into B', () => {
       return gate.then(() => findUnique(args));
     }) as never);
 
+    const movedOnA: Array<{ tokenId: string; x: number; y: number; dragging?: boolean }> = [];
+    host.on('token.moved', (d: { tokenId: string; x: number; y: number; dragging?: boolean }) => {
+      movedOnA.push(d);
+    });
+
     switcher.emit('token.move', { tokenId: playerToken, mapId: mapA, x: 6, y: 3 });
     await reached;
     await reauth(switcher, campaignB);
     const quietOnB = expectNoEvent(switcher, 'token.moved', 800);
-    const onA = waitForEvent<{ x: number; dragging?: boolean }>(host, 'token.moved');
     release();
-    expect(await onA).toMatchObject({ x: 6, dragging: true });
     await expect(quietOnB).resolves.toBeUndefined();
     held.mockRestore();
 
+    for (let tries = 0; tries < 40; tries++) {
+      const last = [...movedOnA].reverse().find((e) => e.tokenId === playerToken);
+      if (last && last.dragging !== true && last.x === 3 && last.y === 3) break;
+      await pause(50);
+    }
+    const last = [...movedOnA].reverse().find((e) => e.tokenId === playerToken);
+    expect(last).toMatchObject({ x: 3, y: 3 });
+    expect(last?.dragging).toBeUndefined();
+
     host.disconnect();
     switcher.disconnect();
+  });
+
+  it('does not send a dragging frame for an unowned token after authenticating to B while A is paused', async () => {
+    await prisma.map.update({
+      where: { id: mapA },
+      data: {
+        tokens: toJson([
+          { id: SEEN_TOKEN, name: 'Guard', imageUrl: '', size: { width: 1, height: 1 }, rotation: 0, conditions: [], metadata: {}, layer: 'token', controlledBy: null, visible: true, position: { x: 2, y: 2 } },
+          { id: HIDDEN_TOKEN, name: 'Assassin', imageUrl: '', size: { width: 1, height: 1 }, rotation: 0, conditions: [], metadata: {}, layer: 'token', controlledBy: null, visible: false, position: { x: 5, y: 5 }, notes: 'waiting in the rafters' },
+        ]),
+      },
+    });
+    await prisma.campaign.update({ where: { id: campaignA }, data: { status: 'PAUSED' } });
+
+    const host = await server.connectAndAuth(hostCookie, campaignA);
+    const switcher = await server.connectAndAuth(switcherCookie, campaignA);
+    const movedOnA: Array<{ tokenId: string; x: number; y: number; dragging?: boolean }> = [];
+    host.on('token.moved', (d: { tokenId: string; x: number; y: number; dragging?: boolean }) => {
+      movedOnA.push(d);
+    });
+
+    try {
+      switcher.emit('token.move.start', { tokenId: SEEN_TOKEN, mapId: mapA });
+      switcher.emit('token.move', { tokenId: SEEN_TOKEN, mapId: mapA, x: 4, y: 2 });
+      await pause(50);
+
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let reading!: () => void;
+      const reached = new Promise<void>((resolve) => { reading = resolve; });
+      const findUnique = prisma.map.findUnique.bind(prisma.map);
+      const held = jest.spyOn(prisma.map, 'findUnique').mockImplementationOnce(((args: never) => {
+        reading();
+        return gate.then(() => findUnique(args));
+      }) as never);
+
+      switcher.emit('token.move', { tokenId: SEEN_TOKEN, mapId: mapA, x: 7, y: 2 });
+      await reached;
+      await reauth(switcher, campaignB);
+      const quietOnB = expectNoEvent(switcher, 'token.moved', 800);
+      release();
+      await expect(quietOnB).resolves.toBeUndefined();
+      held.mockRestore();
+
+      await pause(300);
+      expect(movedOnA.some((e) => e.tokenId === SEEN_TOKEN && e.dragging === true)).toBe(false);
+      const last = [...movedOnA].reverse().find((e) => e.tokenId === SEEN_TOKEN);
+      if (last) {
+        expect(last.dragging).toBeUndefined();
+        expect(last).toMatchObject({ x: 2, y: 2 });
+      }
+      const stored = readTokens((await prisma.map.findUniqueOrThrow({ where: { id: mapA }, select: { tokens: true } })).tokens);
+      expect(stored.find((t) => t.id === SEEN_TOKEN)?.position).toEqual({ x: 2, y: 2 });
+    } finally {
+      await prisma.campaign.update({ where: { id: campaignA }, data: { status: 'PREPARATION' } });
+      host.disconnect();
+      switcher.disconnect();
+    }
   });
 });

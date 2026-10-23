@@ -331,7 +331,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       // narrow one of its own that nothing would listen to. No token art or
       // name changed, so nothing needs to repaint the map.
       // The sheet as each member may read it: the Keeper's Notes to the DM alone.
-      await emitCharacterUpdated(socket.campaignId, updated, {
+      await emitCharacterUpdated(campaignId, updated, {
         characterId,
         userId: socket.userId,
         tokensChanged: false,

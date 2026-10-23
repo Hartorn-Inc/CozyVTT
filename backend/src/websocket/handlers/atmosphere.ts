@@ -32,13 +32,6 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
         ? data.effect
         : null;
 
-      // Fetch existing vibeSettings so we preserve all other keys
-      const campaign = await prisma.campaign.findUnique({
-        where: { id: campaignId },
-        select: { vibeSettings: true },
-      });
-      const existing = readJsonObject(campaign?.vibeSettings) ?? {};
-
       const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') {
@@ -46,9 +39,19 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
         return;
       }
 
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { vibeSettings: toJson({ ...existing, atmosphereEffect: effect }) },
+      // Re-read vibeSettings in the same transaction as the write so a track
+      // (or settings save) that committed during authz is not overwritten.
+      await prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${campaignId} FOR UPDATE`;
+        const campaign = await tx.campaign.findUnique({
+          where: { id: campaignId },
+          select: { vibeSettings: true },
+        });
+        const existing = readJsonObject(campaign?.vibeSettings) ?? {};
+        await tx.campaign.update({
+          where: { id: campaignId },
+          data: { vibeSettings: toJson({ ...existing, atmosphereEffect: effect }) },
+        });
       });
 
       io.to(campaignId).emit('atmosphere.effect.updated', {
