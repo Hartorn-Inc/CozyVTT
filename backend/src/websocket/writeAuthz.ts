@@ -49,9 +49,21 @@ const SESSION_ENDED_MESSAGE = 'Your sign-in has ended. Sign in again.';
 
 type MembershipDb = Pick<Prisma.TransactionClient, 'campaignMembership'>;
 
-export type WriteAuthzResult = { ok: true; role: string } | { ok: false; dropCampaign?: true };
+export type WriteAuthzResult =
+  | { ok: true; role: string }
+  | { ok: false; dropCampaign?: true; campaignId?: string };
 
 export type WriteAuthzOptions = {
+  /**
+   * The campaign this write was captured for (`socket.campaignId` at handler
+   * start, before any await). `authenticate` is not serialized with handlers
+   * and can move the socket to another campaign while this write is in
+   * `confirmWriteAuthorization` or `withMapsLocked`. Membership lookup and
+   * `dropCampaign` use this id. If the socket is already in another campaign,
+   * the write is refused without dropping that other campaign, without
+   * assigning `socket.role`, and without emitting into the new room.
+   */
+  campaignId?: string;
   /**
    * Membership re-read through a held transaction (map lock / Character
    * `FOR UPDATE`). Skips the session store, MFA (global prisma), and socket
@@ -151,33 +163,40 @@ function writeAuthzCacheIsFresh(socket: AuthenticatedSocket, now = Date.now()): 
 
 /**
  * Kick those campaign sockets after a membership-only confirm that ran
- * inside a transaction. No-op unless `dropCampaign` is set.
+ * inside a transaction. No-op unless `dropCampaign` is set. Drops the
+ * campaign the write was captured for (`result.campaignId`), not whatever
+ * the socket holds now after a concurrent `authenticate`.
  */
 export async function applyWriteAuthzDrop(
   socket: AuthenticatedSocket,
-  result: { dropCampaign?: true } | { ok: false }
+  result: { dropCampaign?: true; campaignId?: string } | { ok: false }
 ): Promise<void> {
   if (!('dropCampaign' in result) || result.dropCampaign !== true) return;
   const userId = socket.userId;
-  const campaignId = socket.campaignId;
+  const campaignId = result.campaignId ?? socket.campaignId;
   if (!userId || !campaignId) return;
   await clearCampaignFromLiveSockets(userId, campaignId);
+}
+
+/** The socket joined another campaign while this write for `writeCampaignId` was in flight. */
+function liveCampaignDiffers(socket: AuthenticatedSocket, writeCampaignId: string): boolean {
+  return typeof socket.campaignId === 'string' && socket.campaignId !== writeCampaignId;
 }
 
 async function confirmMembershipThrough(
   socket: AuthenticatedSocket,
   db: MembershipDb,
   announceUnconfirmed: boolean,
-  onRoleChange: 'use-fresh' | 'disconnect'
+  onRoleChange: 'use-fresh' | 'disconnect',
+  writeCampaignId: string
 ): Promise<WriteAuthzResult> {
   const userId = socket.userId;
-  const campaignId = socket.campaignId;
-  if (!userId || !campaignId) return { ok: false };
+  if (!userId) return { ok: false };
 
   let membership: { role: string } | null;
   try {
     membership = await db.campaignMembership.findUnique({
-      where: { userId_campaignId: { userId, campaignId } },
+      where: { userId_campaignId: { userId, campaignId: writeCampaignId } },
       select: { role: true },
     });
   } catch (error) {
@@ -186,7 +205,11 @@ async function confirmMembershipThrough(
     return { ok: false };
   }
 
-  if (!membership) return { ok: false, dropCampaign: true };
+  if (!membership) return { ok: false, dropCampaign: true, campaignId: writeCampaignId };
+
+  // authenticate may have moved the socket during the membership read: do
+  // not stamp the captured campaign's role onto the campaign it is in now.
+  if (liveCampaignDiffers(socket, writeCampaignId)) return { ok: false };
 
   const previousRole = socket.role;
   if (onRoleChange === 'disconnect' && previousRole !== undefined && previousRole !== membership.role) {
@@ -220,11 +243,12 @@ export async function confirmWriteAuthorization(
   const dragDisconnect = onRoleChange === 'disconnect';
 
   const userId = socket.userId;
-  const campaignId = socket.campaignId;
-  if (!userId || !campaignId) return { ok: false };
+  const writeCampaignId = options.campaignId ?? socket.campaignId;
+  if (!userId || !writeCampaignId) return { ok: false };
+  if (liveCampaignDiffers(socket, writeCampaignId)) return { ok: false };
 
   if (options.db) {
-    return confirmMembershipThrough(socket, options.db, announceUnconfirmed, onRoleChange);
+    return confirmMembershipThrough(socket, options.db, announceUnconfirmed, onRoleChange, writeCampaignId);
   }
 
   const stored = await readLoginSession(socket);
@@ -275,7 +299,7 @@ export async function confirmWriteAuthorization(
   let membership: { role: string } | null;
   try {
     membership = await prisma.campaignMembership.findUnique({
-      where: { userId_campaignId: { userId, campaignId } },
+      where: { userId_campaignId: { userId, campaignId: writeCampaignId } },
       select: { role: true },
     });
   } catch (error) {
@@ -285,9 +309,11 @@ export async function confirmWriteAuthorization(
   }
 
   if (!membership) {
-    await clearCampaignFromLiveSockets(userId, campaignId);
+    await clearCampaignFromLiveSockets(userId, writeCampaignId);
     return { ok: false };
   }
+
+  if (liveCampaignDiffers(socket, writeCampaignId)) return { ok: false };
 
   const previousRole = socket.role;
   if (dragDisconnect && previousRole !== undefined && previousRole !== membership.role) {
@@ -306,10 +332,16 @@ export async function confirmWriteAuthorization(
  * and map/token checks still run. On a stale cache, reconfirm; failure
  * disconnects (kick / signed-out / role-change).
  */
-export async function confirmDragFrameAuthorization(socket: AuthenticatedSocket): Promise<boolean> {
-  if (!socket.campaignId || !socket.userId) return false;
+export async function confirmDragFrameAuthorization(
+  socket: AuthenticatedSocket,
+  campaignId?: string
+): Promise<boolean> {
+  const writeCampaignId = campaignId ?? socket.campaignId;
+  if (!writeCampaignId || !socket.userId) return false;
+  if (liveCampaignDiffers(socket, writeCampaignId)) return false;
   if (writeAuthzCacheIsFresh(socket)) return true;
   const result = await confirmWriteAuthorization(socket, {
+    campaignId: writeCampaignId,
     onRoleChange: 'disconnect',
     announceUnconfirmed: false,
   });

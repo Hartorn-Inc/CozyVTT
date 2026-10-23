@@ -49,11 +49,11 @@ export function registerFogHandlers(io: Server, socket: AuthenticatedSocket): vo
       // writing the earlier one's cells away.
       const campaignId = socket.campaignId;
       const op = parsed.data;
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { fog: FogState } | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { fog: FogState } | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (authz.role !== 'DM') return { refused: 'Only DMs can modify fog of war' };
         const map = await tx.map.findUnique({
           where: { id: mapId },

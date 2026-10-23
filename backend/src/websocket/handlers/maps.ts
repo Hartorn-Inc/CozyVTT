@@ -19,6 +19,7 @@ export function registerMapHandlers(io: Server, socket: AuthenticatedSocket): vo
   socket.on('map.change', async (data: { mapId: string }) => {
     try {
       if (!socket.campaignId) return;
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'map.change')) return;
 
       // DM only
@@ -35,7 +36,7 @@ export function registerMapHandlers(io: Server, socket: AuthenticatedSocket): vo
 
       // Verify map belongs to this campaign
       const map = await prisma.map.findUnique({ where: { id: mapId } });
-      if (!map || map.campaignId !== socket.campaignId) {
+      if (!map || map.campaignId !== campaignId) {
         socket.emit('error', { message: 'Map not found' });
         return;
       }
@@ -43,13 +44,13 @@ export function registerMapHandlers(io: Server, socket: AuthenticatedSocket): vo
       // map.changed puts every client onto the map it carries, so only the
       // map the campaign is showing may be sent: a token moved to another
       // map used to switch the whole table onto that map.
-      const campaign = await prisma.campaign.findUnique({ where: { id: socket.campaignId }, select: { currentMapId: true } });
+      const campaign = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { currentMapId: true } });
       if (campaign?.currentMapId !== mapId) {
         socket.emit('error', { message: 'Only the current map can be sent to the table; set it current first' });
         return;
       }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') {
         socket.emit('error', { message: 'Only DMs can change the map' });
@@ -60,21 +61,26 @@ export function registerMapHandlers(io: Server, socket: AuthenticatedSocket): vo
       // broadcasts map.changed for the new map. Sending this pre-await object
       // would put every client back onto the previous one.
       const stillShowing = await prisma.campaign.findUnique({
-        where: { id: socket.campaignId },
+        where: { id: campaignId },
         select: { currentMapId: true },
       });
       if (stillShowing?.currentMapId !== mapId) return;
 
+      // Broadcast a freshly loaded row: a token write during authz would
+      // otherwise overwrite every client with this pre-authz object.
+      const fresh = await prisma.map.findUnique({ where: { id: mapId } });
+      if (!fresh || fresh.campaignId !== campaignId) return;
+
       // Each member gets the map as they may see it; the payload says whether
       // the spirit overlay applies to that viewer.
-      await broadcastMapData(io, socket.campaignId, map);
+      await broadcastMapData(io, campaignId, fresh);
       // The plane each player is on follows the current map, and with it
       // which combatants they are sent.
-      if (getCombatState(socket.campaignId).combatants.length > 0) {
-        await resendInitiativeState(io, socket.campaignId);
+      if (getCombatState(campaignId).combatants.length > 0) {
+        await resendInitiativeState(io, campaignId);
       }
 
-      logger.info('map.change', { mapId, userId: socket.userId, campaignId: socket.campaignId });
+      logger.info('map.change', { mapId, userId: socket.userId, campaignId });
     } catch (error) {
       logger.error('map.change failed', { err: error });
       socket.emit('error', { message: 'Failed to broadcast map change' });

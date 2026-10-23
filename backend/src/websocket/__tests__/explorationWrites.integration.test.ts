@@ -183,6 +183,29 @@ describe('exploration:reveal', () => {
     dm.disconnect();
   });
 
+  it("keeps a player's queued reveal when a DM preview in the same window is kicked", async () => {
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const first = waitForEvent<StateEvent>(player, 'exploration:state');
+    player.emit('exploration:reveal', { mapId, cells: [30] });
+    expect((await first).cells).toContain(30);
+
+    player.emit('exploration:reveal', { mapId, cells: [31] });
+    dm.emit('exploration:reveal', { mapId, cells: [32], userId: playerId });
+    await sleep(150);
+    await prisma.campaignMembership.delete({
+      where: { userId_campaignId: { userId: dmId, campaignId } },
+    });
+    await clearCampaignFromLiveSockets(dmId, campaignId);
+    await sleep(1100);
+
+    const cells = await remembered();
+    expect(cells).toContain(31);
+    expect(cells).not.toContain(32);
+    player.disconnect();
+    dm.disconnect();
+  });
+
   it("does not write a DM's previewed reveal after the DM is demoted", async () => {
     const player = await server.connectAndAuth(playerCookie, campaignId);
     const dm = await server.connectAndAuth(dmCookie, campaignId);

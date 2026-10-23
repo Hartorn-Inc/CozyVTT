@@ -27,6 +27,7 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'spirit_layer.toggle')) return;
 
       // DM only
@@ -42,7 +43,7 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
         return;
       }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') {
         socket.emit('error', { message: 'Only the DM can toggle the spirit layer' });
@@ -51,12 +52,12 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
 
       // Update campaign in database
       await prisma.campaign.update({
-        where: { id: socket.campaignId },
+        where: { id: campaignId },
         data: { spiritLayerEnabled: visible },
       });
 
       // Broadcast to all campaign members (including sender for confirmation)
-      io.to(socket.campaignId).emit('spirit_layer.toggled', {
+      io.to(campaignId).emit('spirit_layer.toggled', {
         visible,
         toggledBy: socket.userId,
         timestamp: new Date().toISOString(),
@@ -65,7 +66,6 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
       // Also broadcast updated filtered map data so clients update their spirit layer rendering.
       // The change is saved by now: a failure to tell the table is logged,
       // and the chat notice below still goes out.
-      const campaignId = socket.campaignId;
       await bestEffort('spirit_layer.toggle re-send', async () => {
         const campaignForMap = await prisma.campaign.findUnique({
           where: { id: campaignId },
@@ -82,14 +82,14 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
 
       // Send system message
       await sendSystemMessage(
-        socket.campaignId,
+        campaignId,
         visible
           ? 'The spirit layer has been revealed...'
           : 'The spirit layer has been hidden.',
         { userId: socket.userId, action: 'spirit_layer.toggle', visible }
       );
 
-      logger.info('spirit_layer.toggle', { visible, userId: socket.userId, campaignId: socket.campaignId });
+      logger.info('spirit_layer.toggle', { visible, userId: socket.userId, campaignId });
     } catch (error) {
       logger.error('spirit_layer.toggle failed', { err: error });
       socket.emit('error', { message: 'Failed to toggle spirit layer' });
@@ -102,6 +102,7 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
    */
   socket.on('spirit_layer.style_change', async (data: { style: string }) => {
     if (!socket.campaignId) return;
+    const campaignId = socket.campaignId;
     if (!withinCeiling(socket, 'spirit_layer.style_change')) return;
     if (socket.role !== 'DM') {
       socket.emit('error', { message: 'Only DMs can change spirit layer style' });
@@ -113,13 +114,13 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
       socket.emit('error', { message: 'Invalid spirit layer style' });
       return;
     }
-    const authz = await confirmWriteAuthorization(socket);
+    const authz = await confirmWriteAuthorization(socket, { campaignId });
     if (!authz.ok) return;
     if (authz.role !== 'DM') {
       socket.emit('error', { message: 'Only DMs can change spirit layer style' });
       return;
     }
-    io.to(socket.campaignId).emit('spirit_layer.style_changed', { style: data.style });
+    io.to(campaignId).emit('spirit_layer.style_changed', { style: data.style });
   });
 
   /**
@@ -132,6 +133,7 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'spirit_layer.token.toggle')) return;
 
       // DM only
@@ -152,7 +154,7 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
         where: { id: mapId },
       });
 
-      if (!map || map.campaignId !== socket.campaignId) {
+      if (!map || map.campaignId !== campaignId) {
         socket.emit('error', { message: 'Map not found' });
         return;
       }
@@ -160,11 +162,11 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
       // Find and update the token, in the list as it is under the map's
       // lock, like every other write to a map's tokens: a move or an add
       // landing meanwhile used to be written away.
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
       const updatedTokens = await withMapsLocked([mapId], async (tx) => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign } as const;
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId } as const;
         if (authz.role !== 'DM') return { refused: 'Only the DM can toggle token visibility' } as const;
         const fresh = await tx.map.findUniqueOrThrow({ where: { id: mapId }, select: { tokens: true } });
         const tokens = readTokens(fresh.tokens);
@@ -196,7 +198,6 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
       // their plane, in their sight on a lit map), and never with the DM's
       // notes. This used to hand every player the whole token.
       const toggled = { mapId, tokenId, visible, token, toggledBy: socket.userId, timestamp: new Date().toISOString() };
-      const campaignId = socket.campaignId;
       // The token is saved by now: a failure to tell the table is logged,
       // not reported to the DM as a failed toggle.
       await bestEffort('spirit_layer.token.toggle re-send', async () => {

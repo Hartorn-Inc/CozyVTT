@@ -172,25 +172,27 @@ export async function resendInitiative(campaignId: string, options: { evenWhenEm
  */
 async function setTokenInitiative(
   socket: AuthenticatedSocket,
+  campaignId: string,
   mapId: string,
   tokenId: string,
   value: number | null,
   allowed: (role: string, freshToken: Token, currentMapId: string | null) => true | string,
 ): Promise<{ ok: true; role: string; written: boolean } | { ok: false; denied?: true; message?: string }> {
-  const pre = await confirmWriteAuthorization(socket);
+  const pre = await confirmWriteAuthorization(socket, { campaignId });
   if (!pre.ok) return { ok: false, denied: true };
 
   type Locked =
     | { ok: true; role: string; written: boolean }
-    | { ok: false; denied: true; dropCampaign?: true }
+    | { ok: false; denied: true; dropCampaign?: true; campaignId?: string }
     | { ok: false; message: string };
   const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked> => {
-    const authz = await confirmWriteAuthorization(socket, { db: tx });
-    if (!authz.ok) return { ok: false, denied: true, dropCampaign: authz.dropCampaign };
-    const fresh = await tx.map.findUniqueOrThrow({
+    const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+    if (!authz.ok) return { ok: false, denied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
+    const fresh = await tx.map.findUnique({
       where: { id: mapId },
-      select: { tokens: true, campaign: { select: { currentMapId: true } } },
+      select: { tokens: true, campaignId: true, campaign: { select: { currentMapId: true } } },
     });
+    if (!fresh || fresh.campaignId !== campaignId) return { ok: false, message: 'Map not found' };
     const tokens = readTokens(fresh.tokens);
     const index = tokens.findIndex((t) => t.id === tokenId);
     if (index === -1) return { ok: true, role: authz.role, written: false };
@@ -220,6 +222,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
   socket.on('initiative.add', async (data: { tokenId: string; mapId: string }) => {
     try {
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'initiative.add')) return;
       if (socket.role !== 'DM') { socket.emit('error', { message: 'Only the DM can modify initiative' }); return; }
 
@@ -227,17 +230,17 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       if (!tokenId || !mapId) { socket.emit('error', { message: 'tokenId and mapId required' }); return; }
 
       const map = await prisma.map.findUnique({ where: { id: mapId } });
-      if (!map || map.campaignId !== socket.campaignId) { socket.emit('error', { message: 'Map not found' }); return; }
+      if (!map || map.campaignId !== campaignId) { socket.emit('error', { message: 'Map not found' }); return; }
 
       const tokens = readTokens(map.tokens);
       const token = tokens.find((t) => t.id === tokenId);
       if (!token) { socket.emit('error', { message: 'Token not found' }); return; }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can modify initiative' }); return; }
 
-      const state = getCombatState(socket.campaignId);
+      const state = getCombatState(campaignId);
 
       // Idempotent — don't add duplicates
       if (state.combatants.some((c) => c.tokenId === tokenId)) {
@@ -267,9 +270,9 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       };
 
       state.combatants = sortCombatants([...state.combatants, entry]);
-      setCombatState(socket.campaignId, state);
-      await broadcastInitiativeState(socket.campaignId);
-      logger.debug('initiative.add', { name: token.name, campaignId: socket.campaignId });
+      setCombatState(campaignId, state);
+      await broadcastInitiativeState(campaignId);
+      logger.debug('initiative.add', { name: token.name, campaignId });
     } catch (error) {
       logger.error('initiative.add failed', { err: error });
       socket.emit('error', { message: 'Failed to add to initiative' });
@@ -282,21 +285,22 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
   socket.on('initiative.remove', async (data: { tokenId: string }) => {
     try {
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'initiative.remove')) return;
       if (socket.role !== 'DM') { socket.emit('error', { message: 'Only the DM can modify initiative' }); return; }
 
       const { tokenId } = data;
       if (!tokenId) { socket.emit('error', { message: 'tokenId required' }); return; }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can modify initiative' }); return; }
 
       // The turn passes on, and an emptied order ends the fight, as when a
       // combatant's token is deleted (withoutCombatants).
-      const next = withoutCombatants(getCombatState(socket.campaignId), (c) => c.tokenId === tokenId);
-      if (next) setCombatState(socket.campaignId, next);
-      await broadcastInitiativeState(socket.campaignId);
+      const next = withoutCombatants(getCombatState(campaignId), (c) => c.tokenId === tokenId);
+      if (next) setCombatState(campaignId, next);
+      await broadcastInitiativeState(campaignId);
     } catch (error) {
       logger.error('initiative.remove failed', { err: error });
       socket.emit('error', { message: 'Failed to remove from initiative' });
@@ -309,6 +313,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
   socket.on('initiative.set', async (data: { tokenId: string; mapId: string; value: number | null }) => {
     try {
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'initiative.set')) return;
       if (socket.role !== 'DM') { socket.emit('error', { message: 'Only the DM can modify initiative' }); return; }
 
@@ -318,9 +323,9 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
 
       // Persist to DB token record
       const map = await prisma.map.findUnique({ where: { id: mapId } });
-      if (!map || map.campaignId !== socket.campaignId) { socket.emit('error', { message: 'Map not found' }); return; }
+      if (!map || map.campaignId !== campaignId) { socket.emit('error', { message: 'Map not found' }); return; }
 
-      const persisted = await setTokenInitiative(socket, mapId, tokenId, value, (role) =>
+      const persisted = await setTokenInitiative(socket, campaignId, mapId, tokenId, value, (role) =>
         role === 'DM' ? true : 'Only the DM can modify initiative'
       );
       if (!persisted.ok) {
@@ -330,16 +335,16 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       if (!persisted.written) return;
 
       // Update in-memory combat state
-      const state = getCombatState(socket.campaignId);
+      const state = getCombatState(campaignId);
       const combatantIndex = state.combatants.findIndex((c) => c.tokenId === tokenId);
       if (combatantIndex !== -1) {
         state.combatants[combatantIndex].initiative = value;
         state.combatants = sortCombatants(state.combatants);
-        setCombatState(socket.campaignId, state);
+        setCombatState(campaignId, state);
       }
 
-      await broadcastInitiativeState(socket.campaignId);
-      logger.debug('initiative.set', { tokenId, value, campaignId: socket.campaignId });
+      await broadcastInitiativeState(campaignId);
+      logger.debug('initiative.set', { tokenId, value, campaignId });
     } catch (error) {
       logger.error('initiative.set failed', { err: error });
       socket.emit('error', { message: 'Failed to set initiative value' });
@@ -362,6 +367,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
     // `characterName` is what older clients sent along; the server names the token itself now.
     try {
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
+      const campaignId = socket.campaignId;
       // The DM rolls for a whole encounter, so the DM's rolls have a ceiling
       // of their own; everyone else's count as dice rolls, below.
       if (socket.role === 'DM' && !withinCeiling(socket, 'initiative.roll')) return;
@@ -404,7 +410,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // Fetch token name from DB for logging, with the campaign's current map:
       // a prepared map is the DM's until they switch to it (canReadMap).
       const map = await prisma.map.findUnique({ where: { id: mapId }, include: { campaign: { select: { currentMapId: true } } } });
-      if (!map || map.campaignId !== socket.campaignId || !canReadMap(socket.role, mapId, map.campaign.currentMapId)) {
+      if (!map || map.campaignId !== campaignId || !canReadMap(socket.role, mapId, map.campaign.currentMapId)) {
         socket.emit('error', { message: 'Map not found' });
         return;
       }
@@ -414,7 +420,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       if (tokenIndex === -1) { socket.emit('error', { message: 'Token not found' }); return; }
 
       const token = tokens[tokenIndex];
-      const state = getCombatState(socket.campaignId);
+      const state = getCombatState(campaignId);
       const existingIndex = state.combatants.findIndex((c) => c.tokenId === tokenId);
 
       // Authorize. `controlledBy` is the same ownership field that decides who
@@ -462,7 +468,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         // campaign they create, so a token bound to someone else's character
         // must not read that sheet.
         const character = await prisma.character.findFirst({
-          where: { id: token.characterId, campaignId: socket.campaignId },
+          where: { id: token.characterId, campaignId },
           select: { gameSystem: true, data: true },
         });
         if (character) {
@@ -474,7 +480,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       }
       if (!resolution && token.statBlock) {
         const campaign = await prisma.campaign.findUnique({
-          where: { id: socket.campaignId },
+          where: { id: campaignId },
           select: { gameSystem: true },
         });
         resolution = resolveStatBlockInitiative(campaign?.gameSystem ?? null, token.statBlock);
@@ -487,7 +493,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // always gets the default: they may control a token with no sheet and no
       // stat block (a DM can assign one to them), and without this they could
       // send `1d20+9999` and hand themselves the top of the order.
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
       if (!canRollDice(pre.role)) {
         socket.emit('error', { message: 'Spectators cannot roll initiative' });
@@ -511,7 +517,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
           // A derived expression that will not parse is a bug on our side, not
           // the caller's — fall back rather than failing the player's roll.
           logger.warn('initiative.roll derived an unparseable expression', {
-            usedExpression, campaignId: socket.campaignId,
+            usedExpression, campaignId,
           });
           usedExpression = DEFAULT_INITIATIVE_EXPRESSION;
         }
@@ -528,6 +534,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // that left).
       const persisted = await setTokenInitiative(
         socket,
+        campaignId,
         mapId,
         tokenId,
         rolledValue,
@@ -538,7 +545,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
           if (!canControlToken(role, freshToken.controlledBy, socket.userId)) {
             return 'You can only roll initiative for your own token';
           }
-          if (getCombatState(socket.campaignId!).active) {
+          if (getCombatState(campaignId).active) {
             return 'Combat has started — ask your DM to change your initiative';
           }
           return true;
@@ -564,12 +571,12 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // The order as it is now, not the copy read before the awaits above:
       // a concurrent roll re-sorts it, a remove shortens it, and the DM may
       // have ended the fight, which writing the old copy back would undo.
-      const current = getCombatState(socket.campaignId);
+      const current = getCombatState(campaignId);
       const combatantIndex = current.combatants.findIndex((c) => c.tokenId === tokenId);
       if (combatantIndex !== -1 && (persisted.role === 'DM' || !current.active)) {
         current.combatants[combatantIndex].initiative = rolledValue;
         current.combatants = sortCombatants(current.combatants);
-        setCombatState(socket.campaignId, current);
+        setCombatState(campaignId, current);
       } else if (persisted.role === 'DM' && existingIndex === -1) {
         // The DM's roll adds a token that was not in the order when the roll
         // began. One that was, and is gone now, was removed meanwhile (or
@@ -585,14 +592,13 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
           disposition: token.disposition ?? null,
         });
         current.combatants = sortCombatants(current.combatants);
-        setCombatState(socket.campaignId, current);
+        setCombatState(campaignId, current);
       }
 
       // Announce the roll in the dice log — but only when dice were actually
       // thrown. A Call of Cthulhu investigator's initiative is simply their
       // Dexterity, and a dice-log entry claiming otherwise would be a lie. The
       // value still reaches everyone through the initiative broadcast below.
-      const campaignId = socket.campaignId;
       const roll = rollResult;
       // The roll is stored and ordered by now: a failure to write its dice
       // log entry is logged, and the new order below still goes out.
@@ -627,7 +633,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
 
       await broadcastInitiativeState(campaignId);
       logger.debug('initiative.roll', {
-        rolled: !!rollResult, result: rolledValue, name: token.name, campaignId: socket.campaignId,
+        rolled: !!rollResult, result: rolledValue, name: token.name, campaignId,
       });
     } catch (error) {
       logger.error('initiative.roll failed', { err: error });
@@ -641,17 +647,18 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
   socket.on('initiative.reorder', async (data: { orderedTokenIds: string[] }) => {
     try {
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'initiative.reorder')) return;
       if (socket.role !== 'DM') { socket.emit('error', { message: 'Only the DM can reorder initiative' }); return; }
 
       const { orderedTokenIds } = data;
       if (!Array.isArray(orderedTokenIds)) { socket.emit('error', { message: 'orderedTokenIds must be an array' }); return; }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can reorder initiative' }); return; }
 
-      const state = getCombatState(socket.campaignId);
+      const state = getCombatState(campaignId);
       const combatantMap = new Map(state.combatants.map((c) => [c.tokenId, c]));
       const reordered: CombatantEntry[] = [];
       for (const id of orderedTokenIds) {
@@ -663,8 +670,8 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         if (!reordered.includes(c)) reordered.push(c);
       }
       state.combatants = reordered;
-      setCombatState(socket.campaignId, state);
-      await broadcastInitiativeState(socket.campaignId);
+      setCombatState(campaignId, state);
+      await broadcastInitiativeState(campaignId);
     } catch (error) {
       logger.error('initiative.reorder failed', { err: error });
       socket.emit('error', { message: 'Failed to reorder initiative' });
@@ -677,22 +684,23 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
   socket.on('initiative.start', async () => {
     try {
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'initiative.start')) return;
       if (socket.role !== 'DM') { socket.emit('error', { message: 'Only the DM can start combat' }); return; }
 
-      const state = getCombatState(socket.campaignId);
+      const state = getCombatState(campaignId);
       if (state.combatants.length === 0) { socket.emit('error', { message: 'Add combatants before starting combat' }); return; }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can start combat' }); return; }
 
       state.active = true;
       state.round = 1;
       state.currentTokenId = state.combatants[0].tokenId;
-      setCombatState(socket.campaignId, state);
-      await broadcastInitiativeState(socket.campaignId);
-      logger.info('initiative.start', { campaignId: socket.campaignId, first: state.combatants[0].name });
+      setCombatState(campaignId, state);
+      await broadcastInitiativeState(campaignId);
+      logger.info('initiative.start', { campaignId, first: state.combatants[0].name });
     } catch (error) {
       logger.error('initiative.start failed', { err: error });
       socket.emit('error', { message: 'Failed to start combat' });
@@ -705,13 +713,14 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
   socket.on('initiative.next', async () => {
     try {
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'initiative.next')) return;
       if (socket.role !== 'DM') { socket.emit('error', { message: 'Only the DM can advance the turn' }); return; }
 
-      const state = getCombatState(socket.campaignId);
+      const state = getCombatState(campaignId);
       if (!state.active || state.combatants.length === 0) { socket.emit('error', { message: 'Combat is not active' }); return; }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can advance the turn' }); return; }
 
@@ -726,9 +735,9 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         state.currentTokenId = state.combatants[nextIndex].tokenId;
       }
 
-      setCombatState(socket.campaignId, state);
-      await broadcastInitiativeState(socket.campaignId);
-      logger.debug('initiative.next', { round: state.round, current: state.currentTokenId, campaignId: socket.campaignId });
+      setCombatState(campaignId, state);
+      await broadcastInitiativeState(campaignId);
+      logger.debug('initiative.next', { round: state.round, current: state.currentTokenId, campaignId });
     } catch (error) {
       logger.error('initiative.next failed', { err: error });
       socket.emit('error', { message: 'Failed to advance initiative' });
@@ -741,16 +750,17 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
   socket.on('initiative.end', async () => {
     try {
       if (!socket.campaignId) { socket.emit('error', { message: 'Not authenticated to a campaign' }); return; }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'initiative.end')) return;
       if (socket.role !== 'DM') { socket.emit('error', { message: 'Only the DM can end combat' }); return; }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can end combat' }); return; }
 
-      clearCombatState(socket.campaignId);
-      await broadcastInitiativeState(socket.campaignId);
-      logger.info('initiative.end', { campaignId: socket.campaignId });
+      clearCombatState(campaignId);
+      await broadcastInitiativeState(campaignId);
+      logger.info('initiative.end', { campaignId });
     } catch (error) {
       logger.error('initiative.end failed', { err: error });
       socket.emit('error', { message: 'Failed to end combat' });

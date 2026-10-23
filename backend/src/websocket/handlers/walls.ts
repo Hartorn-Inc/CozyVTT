@@ -89,11 +89,11 @@ export function registerWallHandlers(io: Server, socket: AuthenticatedSocket): v
 
       const campaignId = socket.campaignId;
       const added = parsed.data;
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked<null> | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked<null> | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (authz.role !== 'DM') return { refused: 'Only DMs can add wall segments' };
         const map = await tx.map.findUnique({ where: { id: mapId }, select: { ...EXTENT, wallSegments: true } });
         if (!map || map.campaignId !== campaignId) return { refused: 'Map not found' };
@@ -141,11 +141,11 @@ export function registerWallHandlers(io: Server, socket: AuthenticatedSocket): v
       if (!mapId || !segmentId) { socket.emit('error', { message: 'mapId and segmentId required' }); return; }
 
       const campaignId = socket.campaignId;
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked<null> | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked<null> | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (authz.role !== 'DM') return { refused: 'Only DMs can remove wall segments' };
         const map = await tx.map.findUnique({ where: { id: mapId }, select: { campaignId: true, wallSegments: true } });
         if (!map || map.campaignId !== campaignId) return { refused: 'Map not found' };
@@ -202,11 +202,11 @@ export function registerWallHandlers(io: Server, socket: AuthenticatedSocket): v
       // so no edit of this map waits on it; the door is judged against it
       // under the lock, where it is and as it is then.
       const sight = role === 'DM' ? null : await doorSightFor(mapId, campaignId, role, userId);
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked<{ before: WallSegment; after: WallSegment }> | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked<{ before: WallSegment; after: WallSegment }> | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (!canToggleDoor(authz.role)) return { refused: 'Spectators cannot open or close doors' };
         const commitRole = authz.role;
         // A player may toggle doors only on the map the campaign is showing;
@@ -318,11 +318,11 @@ export function registerWallHandlers(io: Server, socket: AuthenticatedSocket): v
       const campaignId = socket.campaignId;
       const next = parsed.data;
       // Answers the list it replaced, so each member is told only of a change to their copy.
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked<unknown> | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked<unknown> | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (authz.role !== 'DM') return { refused: 'Only DMs can replace wall segments' };
         const map = await tx.map.findUnique({ where: { id: mapId }, select: { ...EXTENT, wallSegments: true } });
         if (!map || map.campaignId !== campaignId) return { refused: 'Map not found' };

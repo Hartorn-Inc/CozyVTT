@@ -22,6 +22,7 @@ import {
   waitForEvent,
   WsTestServer,
 } from '../../__tests__/helpers/websocket-test-server';
+import { applyRoleToLiveSockets, clearCampaignFromLiveSockets } from '../utils';
 
 jest.setTimeout(20000);
 
@@ -173,6 +174,75 @@ describe('token-drag authorization after DRAG_AUTH_STALE_MS (ADR 0007)', () => {
     expect(revoked).toEqual([]);
     expect(await home).toEqual({ tokenId: OWN, mapId, x: 5, y: 5, movedBy: null });
 
+    dm.disconnect();
+  });
+});
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+describe('token-drag frames in flight when access is taken away immediately', () => {
+  it('ends on the stored square after an immediate kick, not a late dragging frame', async () => {
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+
+    const moved: Array<{ tokenId: string; x: number; y: number; dragging?: boolean; movedBy: string | null }> = [];
+    dm.on('token.moved', (d: { tokenId: string; x: number; y: number; dragging?: boolean; movedBy: string | null }) => {
+      moved.push(d);
+    });
+
+    const frame = waitForEvent<{ tokenId: string; dragging?: boolean }>(dm, 'token.moved');
+    player.emit('token.move.start', { tokenId: OWN, mapId });
+    player.emit('token.move', { tokenId: OWN, mapId, x: 6, y: 5 });
+    expect(await frame).toMatchObject({ tokenId: OWN, dragging: true });
+
+    const pumping = setInterval(() => {
+      player.emit('token.move', { tokenId: OWN, mapId, x: 7, y: 5 });
+    }, 16);
+
+    const dropped = waitDisconnect(player);
+    await prisma.campaignMembership.delete({
+      where: { userId_campaignId: { userId: playerId, campaignId } },
+    });
+    await clearCampaignFromLiveSockets(playerId, campaignId);
+    clearInterval(pumping);
+
+    await expect(dropped).resolves.toBe('io server disconnect');
+    await sleep(400);
+
+    expect(moved.at(-1)).toEqual({ tokenId: OWN, mapId, x: 5, y: 5, movedBy: null });
+    dm.disconnect();
+  });
+
+  it('ends on the stored square after an immediate spectator demotion, not a late dragging frame', async () => {
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+
+    const moved: Array<{ tokenId: string; x: number; y: number; dragging?: boolean; movedBy: string | null }> = [];
+    dm.on('token.moved', (d: { tokenId: string; x: number; y: number; dragging?: boolean; movedBy: string | null }) => {
+      moved.push(d);
+    });
+
+    const frame = waitForEvent<{ tokenId: string; dragging?: boolean }>(dm, 'token.moved');
+    player.emit('token.move.start', { tokenId: OWN, mapId });
+    player.emit('token.move', { tokenId: OWN, mapId, x: 6, y: 5 });
+    expect(await frame).toMatchObject({ tokenId: OWN, dragging: true });
+
+    const pumping = setInterval(() => {
+      player.emit('token.move', { tokenId: OWN, mapId, x: 7, y: 5 });
+    }, 16);
+
+    const dropped = waitDisconnect(player);
+    await prisma.campaignMembership.update({
+      where: { userId_campaignId: { userId: playerId, campaignId } },
+      data: { role: 'SPECTATOR' },
+    });
+    await applyRoleToLiveSockets(playerId, campaignId, 'SPECTATOR');
+    clearInterval(pumping);
+
+    await expect(dropped).resolves.toBe('io server disconnect');
+    await sleep(400);
+
+    expect(moved.at(-1)).toEqual({ tokenId: OWN, mapId, x: 5, y: 5, movedBy: null });
     dm.disconnect();
   });
 });

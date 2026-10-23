@@ -109,6 +109,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
 
       // Each change holds the character's row for a transaction, so a burst
       // of them would hold every database connection the instance has.
@@ -133,7 +134,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
 
       // Verify character belongs to this campaign
       const membership = await prisma.campaignMembership.findFirst({
-        where: { campaignId: socket.campaignId, characterIds: { has: characterId } },
+        where: { campaignId, characterIds: { has: characterId } },
       });
 
       if (!membership) {
@@ -168,12 +169,12 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       // between; a save arriving now waits for this one instead. Session and
       // MFA are confirmed before the lock; membership is re-read through the
       // transaction so a kick or demotion cannot persist HP (ADR 0007).
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
       const outcome = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Character" WHERE id = ${characterId} FOR UPDATE`;
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign } as const;
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId } as const;
         if (authz.role === 'SPECTATOR') return { error: 'Spectators cannot change a character' } as const;
         const fresh = await tx.character.findUnique({
           where: { id: characterId },
@@ -208,7 +209,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       const { current, max, temp } = outcome.hp;
 
       // Broadcast updated HP to all campaign members
-      io.to(socket.campaignId!).emit('character.hp.updated', {
+      io.to(campaignId).emit('character.hp.updated', {
         characterId,
         hp: { current, max, temp },
       });
@@ -234,6 +235,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
 
       if (!withinCeiling(socket, 'character.hitdice.spend')) return;
 
@@ -251,7 +253,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       }
 
       const membership = await prisma.campaignMembership.findFirst({
-        where: { campaignId: socket.campaignId, characterIds: { has: characterId } },
+        where: { campaignId, characterIds: { has: characterId } },
       });
       if (!membership) {
         socket.emit('error', { message: 'Character is not in this campaign' });
@@ -283,12 +285,12 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       // points above. Session and MFA are confirmed before the lock;
       // membership is re-read through the transaction so a PLAYER demoted
       // to SPECTATOR mid-write cannot land a hit die.
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
       const outcome = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Character" WHERE id = ${characterId} FOR UPDATE`;
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign } as const;
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId } as const;
         if (authz.role === 'SPECTATOR') return { error: 'Spectators cannot change a character' } as const;
         const fresh = await tx.character.findUnique({
           where: { id: characterId },

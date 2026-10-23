@@ -19,6 +19,7 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
   socket.on('atmosphere.effect.set', async (data: { effect: string | null }) => {
     try {
       if (!socket.campaignId) return;
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'atmosphere.effect.set')) return;
 
       if (socket.role !== 'DM') {
@@ -33,12 +34,12 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
 
       // Fetch existing vibeSettings so we preserve all other keys
       const campaign = await prisma.campaign.findUnique({
-        where: { id: socket.campaignId },
+        where: { id: campaignId },
         select: { vibeSettings: true },
       });
       const existing = readJsonObject(campaign?.vibeSettings) ?? {};
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') {
         socket.emit('error', { message: 'Only the DM can set atmosphere effects' });
@@ -46,17 +47,17 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
       }
 
       await prisma.campaign.update({
-        where: { id: socket.campaignId },
+        where: { id: campaignId },
         data: { vibeSettings: toJson({ ...existing, atmosphereEffect: effect }) },
       });
 
-      io.to(socket.campaignId).emit('atmosphere.effect.updated', {
+      io.to(campaignId).emit('atmosphere.effect.updated', {
         effect,
         setBy: socket.userId,
         timestamp: new Date().toISOString(),
       });
 
-      logger.info('atmosphere.effect.set', { effect: effect ?? 'none', userId: socket.userId, campaignId: socket.campaignId });
+      logger.info('atmosphere.effect.set', { effect: effect ?? 'none', userId: socket.userId, campaignId });
     } catch (error) {
       logger.error('atmosphere.effect.set failed', { err: error });
       socket.emit('error', { message: 'Failed to set atmosphere effect' });
@@ -77,6 +78,7 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
   socket.on('atmosphere.audio.set', async (data: { assetId: string | null; volume?: number; loop?: boolean }) => {
     try {
       if (!socket.campaignId || !socket.userId) return;
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'atmosphere.audio.set')) return;
 
       if (socket.role !== 'DM') {
@@ -84,14 +86,14 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
         return;
       }
 
-      const authz = await confirmWriteAuthorization(socket);
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
       if (!authz.ok) return;
       if (authz.role !== 'DM') {
         socket.emit('error', { message: 'Only the DM can control ambient audio' });
         return;
       }
 
-      const result = await setCampaignAmbientAudio(io, socket.campaignId, socket.userId, data.assetId ?? null, {
+      const result = await setCampaignAmbientAudio(io, campaignId, socket.userId, data.assetId ?? null, {
         volume: data.volume,
         loop: data.loop,
       });

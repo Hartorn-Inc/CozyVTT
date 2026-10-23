@@ -18,7 +18,8 @@
 import { randomUUID } from 'crypto';
 import type { Socket as ClientSocket } from 'socket.io-client';
 import { prisma } from '../../config/database';
-import { toJson } from '../../utils/prisma-json';
+import { toJson, readTokens } from '../../utils/prisma-json';
+import { withMapsLocked } from '../../utils/mapTokens';
 import { setState, clearState } from '../initiativeState';
 import {
   createWsTestServer,
@@ -298,6 +299,143 @@ describe('authenticating into another campaign on the same socket', () => {
     switcher.emit('authenticate', { campaignId: campaignB });
     expect((await refused).message).toBe('Unauthorized');
     await expect(joined).resolves.toBeUndefined();
+    switcher.disconnect();
+  });
+});
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Until a map write is waiting for the advisory lock the test holds. Same
+ * key withMapsLocked takes, scoped to this database so a parallel suite's
+ * waiters are not mistaken for ours.
+ */
+async function writeWaitingForLock(): Promise<void> {
+  for (let tries = 0; tries < 100; tries++) {
+    const [{ n }] = await prisma.$queryRaw<Array<{ n: number }>>`
+      SELECT count(*)::int AS n FROM pg_locks
+      WHERE locktype = 'advisory' AND NOT granted
+        AND database = (SELECT oid FROM pg_database WHERE datname = current_database())
+        AND classid = ((hashtext(${mapA})::bigint >> 32) & 4294967295)::oid
+        AND objid = (hashtext(${mapA})::bigint & 4294967295)::oid
+        AND objsubid = 1`;
+    if (n > 0) return;
+    await pause(50);
+  }
+  throw new Error('the write never reached the map lock');
+}
+
+describe('a write for A while authenticate moves the socket into B', () => {
+  it('does not persist token.move.end on A as DM of B', async () => {
+    await prisma.map.update({
+      where: { id: mapA },
+      data: { tokens: toJson([
+        { id: SEEN_TOKEN, name: 'Guard', imageUrl: '', size: { width: 1, height: 1 }, rotation: 0, conditions: [], metadata: {}, layer: 'token', controlledBy: null, visible: true, position: { x: 2, y: 2 } },
+        { id: HIDDEN_TOKEN, name: 'Assassin', imageUrl: '', size: { width: 1, height: 1 }, rotation: 0, conditions: [], metadata: {}, layer: 'token', controlledBy: null, visible: false, position: { x: 5, y: 5 }, notes: 'waiting in the rafters' },
+      ]) },
+    });
+    const host = await server.connectAndAuth(hostCookie, campaignA);
+    const switcher = await server.connectAndAuth(switcherCookie, campaignA);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let locked!: () => void;
+    const holding = new Promise<void>((resolve) => { locked = resolve; });
+    const holder = withMapsLocked([mapA], async () => { locked(); await gate; });
+    await holding;
+
+    switcher.emit('token.move.end', { tokenId: SEEN_TOKEN, mapId: mapA, x: 8, y: 8 });
+    await writeWaitingForLock();
+    await reauth(switcher, campaignB);
+    const quietOnB = expectNoEvent(switcher, 'token.moved', 800);
+    release();
+    await holder;
+    await quietOnB;
+
+    const stored = readTokens((await prisma.map.findUniqueOrThrow({ where: { id: mapA }, select: { tokens: true } })).tokens);
+    expect(stored.find((t) => t.id === SEEN_TOKEN)?.position).toEqual({ x: 2, y: 2 });
+
+    host.disconnect();
+    switcher.disconnect();
+  });
+
+  it('does not persist a client-supplied wall:update on A as DM of B', async () => {
+    const doorId = randomUUID();
+    const original = { id: doorId, x1: 0, y1: 0, x2: 50, y2: 0, type: 'door-closed' as const };
+    const sent = { id: doorId, x1: 0, y1: 100, x2: 50, y2: 100, type: 'door-open' as const };
+    await prisma.map.update({ where: { id: mapA }, data: { wallSegments: toJson([original]) } });
+
+    const host = await server.connectAndAuth(hostCookie, campaignA);
+    const switcher = await server.connectAndAuth(switcherCookie, campaignA);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let locked!: () => void;
+    const holding = new Promise<void>((resolve) => { locked = resolve; });
+    const holder = withMapsLocked([mapA], async () => { locked(); await gate; });
+    await holding;
+
+    switcher.emit('wall:update', { mapId: mapA, segment: sent });
+    await writeWaitingForLock();
+    await reauth(switcher, campaignB);
+    const quietOnB = expectNoEvent(switcher, 'wall:updated', 800);
+    release();
+    await holder;
+    await quietOnB;
+
+    const stored = (await prisma.map.findUniqueOrThrow({ where: { id: mapA }, select: { wallSegments: true } })).wallSegments;
+    expect(stored).toEqual([original]);
+
+    await prisma.map.update({ where: { id: mapA }, data: { wallSegments: toJson([]) } });
+    host.disconnect();
+    switcher.disconnect();
+  });
+
+  it('does not send a drag frame into B after the mover authenticates there mid-frame', async () => {
+    const playerToken = randomUUID();
+    const base = { imageUrl: '', size: { width: 1, height: 1 }, rotation: 0, conditions: [] as string[], metadata: {} as Record<string, unknown>, layer: 'token' };
+    await prisma.map.update({
+      where: { id: mapA },
+      data: {
+        tokens: toJson([
+          { ...base, id: SEEN_TOKEN, name: 'Guard', visible: true, position: { x: 2, y: 2 }, controlledBy: null },
+          { ...base, id: HIDDEN_TOKEN, name: 'Assassin', visible: false, position: { x: 5, y: 5 }, controlledBy: null, notes: 'waiting in the rafters' },
+          { ...base, id: playerToken, name: 'Hero', visible: true, position: { x: 3, y: 3 }, controlledBy: switcherId },
+        ]),
+      },
+    });
+
+    const host = await server.connectAndAuth(hostCookie, campaignA);
+    const switcher = await server.connectAndAuth(switcherCookie, campaignA);
+    const started = waitForEvent(host, 'token.move.start');
+    switcher.emit('token.move.start', { tokenId: playerToken, mapId: mapA });
+    await started;
+    const first = waitForEvent<{ x: number; dragging?: boolean }>(host, 'token.moved');
+    switcher.emit('token.move', { tokenId: playerToken, mapId: mapA, x: 4, y: 3 });
+    expect(await first).toMatchObject({ x: 4, dragging: true });
+    await pause(20);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reading!: () => void;
+    const reached = new Promise<void>((resolve) => { reading = resolve; });
+    const findUnique = prisma.map.findUnique.bind(prisma.map);
+    const held = jest.spyOn(prisma.map, 'findUnique').mockImplementationOnce(((args: never) => {
+      reading();
+      return gate.then(() => findUnique(args));
+    }) as never);
+
+    switcher.emit('token.move', { tokenId: playerToken, mapId: mapA, x: 6, y: 3 });
+    await reached;
+    await reauth(switcher, campaignB);
+    const quietOnB = expectNoEvent(switcher, 'token.moved', 800);
+    const onA = waitForEvent<{ x: number; dragging?: boolean }>(host, 'token.moved');
+    release();
+    expect(await onA).toMatchObject({ x: 6, dragging: true });
+    await expect(quietOnB).resolves.toBeUndefined();
+    held.mockRestore();
+
+    host.disconnect();
     switcher.disconnect();
   });
 });

@@ -12,7 +12,9 @@
 
 import { randomUUID } from 'crypto';
 import { prisma } from '../../config/database';
+import { toJson } from '../../utils/prisma-json';
 import { createWsTestServer, expectNoEvent, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
+import * as writeAuthz from '../writeAuthz';
 
 jest.setTimeout(20000);
 
@@ -71,6 +73,35 @@ describe('map.change', () => {
     expect((await changed).mapId).toBe(shownId);
     dm.disconnect();
     player.disconnect();
+  });
+
+  it('broadcasts the map row loaded after authorization, not the one loaded before it', async () => {
+    const tokenId = randomUUID();
+    const tokenAt = (x: number) => ({
+      id: tokenId, name: 'Marker', imageUrl: '', position: { x, y: 1 }, size: { width: 1, height: 1 },
+      layer: 'token', visible: true, controlledBy: null, rotation: 0, conditions: [], metadata: {},
+    });
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    await prisma.map.update({ where: { id: shownId }, data: { tokens: toJson([tokenAt(1)]) } });
+
+    const original = writeAuthz.confirmWriteAuthorization.bind(writeAuthz);
+    const spy = jest.spyOn(writeAuthz, 'confirmWriteAuthorization').mockImplementationOnce(async (socket, options) => {
+      await prisma.map.update({ where: { id: shownId }, data: { tokens: toJson([tokenAt(9)]) } });
+      return original(socket, options);
+    });
+
+    try {
+      const changed = waitForEvent<{ mapData: { tokens: Array<{ id: string; position: { x: number } }> } }>(player, 'map.changed');
+      dm.emit('map.change', { mapId: shownId });
+      const payload = await changed;
+      expect(payload.mapData.tokens.find((t) => t.id === tokenId)?.position.x).toBe(9);
+    } finally {
+      spy.mockRestore();
+      await prisma.map.update({ where: { id: shownId }, data: { tokens: toJson([]) } });
+      dm.disconnect();
+      player.disconnect();
+    }
   });
 
   it('sends nothing for another map of the campaign, and tells the DM why', async () => {

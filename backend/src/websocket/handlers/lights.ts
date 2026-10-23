@@ -57,11 +57,11 @@ export function registerLightHandlers(io: Server, socket: AuthenticatedSocket): 
 
       const campaignId = socket.campaignId;
       const added = parsed.data;
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (authz.role !== 'DM') return { refused: 'Only DMs can add light sources' };
         const map = await tx.map.findUnique({ where: { id: mapId }, select: { ...EXTENT, lights: true } });
         if (!map || map.campaignId !== campaignId) return { refused: 'Map not found' };
@@ -111,11 +111,11 @@ export function registerLightHandlers(io: Server, socket: AuthenticatedSocket): 
       if (!mapId || !lightId) { socket.emit('error', { message: 'mapId and lightId required' }); return; }
 
       const campaignId = socket.campaignId;
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { done: LightSource | undefined } | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { done: LightSource | undefined } | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (authz.role !== 'DM') return { refused: 'Only DMs can remove light sources' };
         const map = await tx.map.findUnique({ where: { id: mapId }, select: { campaignId: true, lights: true } });
         if (!map || map.campaignId !== campaignId) return { refused: 'Map not found' };
@@ -169,11 +169,11 @@ export function registerLightHandlers(io: Server, socket: AuthenticatedSocket): 
 
       const campaignId = socket.campaignId;
       const updated = parsed.data;
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { done: LightSource } | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { done: LightSource } | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (authz.role !== 'DM') return { refused: 'Only DMs can update light sources' };
         const map = await tx.map.findUnique({ where: { id: mapId }, select: { ...EXTENT, lights: true } });
         if (!map || map.campaignId !== campaignId) return { refused: 'Map not found' };
@@ -237,11 +237,11 @@ export function registerLightHandlers(io: Server, socket: AuthenticatedSocket): 
       const campaignId = socket.campaignId;
       const next = parsed.data;
       // Answers the list it replaced, so each member is told only of a change to their copy.
-      const pre = await confirmWriteAuthorization(socket);
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) return;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { done: unknown } | { authzDenied: true; dropCampaign?: true }> => {
-        const authz = await confirmWriteAuthorization(socket, { db: tx });
-        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign };
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { done: unknown } | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
         if (authz.role !== 'DM') return { refused: 'Only DMs can replace light sources' };
         const map = await tx.map.findUnique({ where: { id: mapId }, select: { ...EXTENT, lights: true } });
         if (!map || map.campaignId !== campaignId) return { refused: 'Map not found' };
