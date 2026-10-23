@@ -207,7 +207,8 @@ describe('enqueueAll', () => {
       'hide_all',
       'reveal',
     ]);
-    expect(q.overlayOps().at(-1)).toEqual(op([42]));
+    const overlay = q.overlayOps();
+    expect(overlay[overlay.length - 1]).toEqual(op([42]));
 
     advance(150);
     expect(s.emitted[10]).toEqual({ mapId: 'map-1', operation: { op: 'hide_all' } });
