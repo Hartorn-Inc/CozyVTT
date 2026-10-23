@@ -123,7 +123,7 @@ export default function CampaignSettingsModal({
     }
     setSavingGeneral(true);
     try {
-      await campaignService.updateCampaign(campaign.id, {
+      const updated = await campaignService.updateCampaign(campaign.id, {
         name: trimmedName,
         // TODO(ui): an emptied box sends undefined, which leaves the field out
         // of the request, so the server keeps the old description while this
@@ -131,7 +131,7 @@ export default function CampaignSettingsModal({
         // server accepts it and clears the description.
         description: description.trim() || undefined,
       });
-      await refreshCampaign();
+      await refreshCampaign(updated);
       showToast('Campaign settings saved', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err) ?? 'Failed to save settings', 'error');
@@ -143,11 +143,11 @@ export default function CampaignSettingsModal({
   const handleSaveChat = async () => {
     setSavingChat(true);
     try {
-      await campaignService.updateCampaign(campaign.id, {
+      const updated = await campaignService.updateCampaign(campaign.id, {
         chatCooldownEnabled,
         chatCooldownSeconds,
       });
-      await refreshCampaign();
+      await refreshCampaign(updated);
       showToast('Chat settings saved', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err) ?? 'Failed to save chat settings', 'error');

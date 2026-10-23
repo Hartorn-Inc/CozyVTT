@@ -9,15 +9,20 @@
  * to its first tab.
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { Campaign } from '@/types';
 
+const refreshCampaign = vi.fn();
+const updateCampaign = vi.fn();
 let current: Campaign;
-vi.mock('@/contexts/CampaignContext', () => ({ useCampaign: () => ({ campaign: current, refreshCampaign: vi.fn(), userRole: 'DM' }) }));
+vi.mock('@/contexts/CampaignContext', () => ({ useCampaign: () => ({ campaign: current, refreshCampaign, userRole: 'DM' }) }));
 vi.mock('@/contexts/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'dm', platformRole: 'USER' } }) }));
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('@/services/campaign.service', () => ({
+  default: { updateCampaign: (...a: unknown[]) => updateCampaign(...a) },
+}));
 
 import CampaignSettingsModal from '../CampaignSettingsModal';
 
@@ -25,6 +30,11 @@ const campaign = (): Campaign => ({
   id: 'c1', name: 'The Keep', description: 'Saved words', chatCooldownEnabled: false, chatCooldownSeconds: 0,
   memberships: [], userRole: 'DM', ownerId: 'dm',
 }) as unknown as Campaign;
+
+beforeEach(() => {
+  refreshCampaign.mockReset();
+  updateCampaign.mockReset();
+});
 
 describe('CampaignSettingsModal', () => {
   it('keeps an unsaved description when the campaign is fetched again', () => {
@@ -38,5 +48,20 @@ describe('CampaignSettingsModal', () => {
     rerender(<CampaignSettingsModal isOpen onClose={() => undefined} />);
 
     expect((screen.getByPlaceholderText('Describe your campaign…') as HTMLTextAreaElement).value).toBe('Half-written notes');
+  });
+
+  it('patches Context from the campaign the settings PUT returned', async () => {
+    current = campaign();
+    const saved = { ...campaign(), name: 'The Keep Renamed', description: 'Saved words' };
+    updateCampaign.mockResolvedValue(saved);
+    render(<CampaignSettingsModal isOpen onClose={() => undefined} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(updateCampaign).toHaveBeenCalledWith('c1', {
+      name: 'The Keep',
+      description: 'Saved words',
+    }));
+    expect(refreshCampaign).toHaveBeenCalledWith(saved);
   });
 });

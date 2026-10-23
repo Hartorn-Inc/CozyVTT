@@ -69,6 +69,8 @@ import { useExploredMemory } from './map/useExploredMemory';
 import { useFogStateRequest } from './map/useFogStateRequest';
 import { useWallLightRequest } from './map/useWallLightRequest';
 import { releaseHeldToken } from './map/tokenHold';
+import { shouldApplySocketDelta } from './map/socketDelta';
+import { applyLocalTokenDrop } from './map/tokenDrop';
 import { offeredDoorAt, type DoorViewer } from './map/doorAccess';
 import { distToSegment, translateWallSegments, gridSquaresToPx } from './map/mapGeometry';
 import { fogCellIndex, gridXToFogCol, gridYToFogRow } from './map/coords';
@@ -102,7 +104,8 @@ import DmWallControls, { type WallToolMode } from '@/components/campaign/DmWallC
 import DmLightControls, { type LightToolMode, type LightPlacementDefaults } from '@/components/campaign/DmLightControls';
 import DmToolPanelContainer from '@/components/campaign/DmToolPanelContainer';
 import { useWallHistory } from '@/hooks/useWallHistory';
-import Toast, { useToast } from '@/components/Toast';
+import Toast, { useToast as useLocalToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 import Button from '@/components/ui/Button';
 import '@/styles/spirit-effects.css';
 import { mapImageState } from './map/mapImageState';
@@ -307,7 +310,8 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
   const wallBrushActiveRef = useRef(false);
   const wallBrushPointsRef = useRef<Array<{ x: number; y: number }>>([]);
   const [nearEndpoint, setNearEndpoint] = useState(false);
-  const { toast, showToast, hideToast } = useToast();
+  const { toast, showToast, hideToast } = useLocalToast();
+  const { showToast: showTableToast } = useToast();
   /** DM "Preview player view" toggle — when true, DM sees lighting as players do. */
   const [dmPreviewPlayerView, setDmPreviewPlayerView] = useState(false);
   const [previewSelection, setPreviewSelection] = useState<PreviewSelection | null>(null);
@@ -447,10 +451,12 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
   // ============================================
 
   /**
-   * Safely check if socket is connected and can emit events
+   * Safely check if socket is connected and can emit events.
+   * A held socket.io instance is not enough: a disconnected socket must not
+   * look writable, or a drop would commit locally while the table never heard it.
    */
   const canEmit = (): boolean => {
-    return socket !== null && socket !== undefined && socket.getSocket() !== null;
+    return socket?.getSocket()?.connected === true;
   };
 
   // Put a held token back where it was picked up. The per-frame moves told
@@ -966,13 +972,30 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
   // WebSocket Event Listeners
   // ============================================
 
+  // Current map and join, read from refs so a handler bound with `[socket]`
+  // (or rebound only on join) still sees the map showing and discards a
+  // delta from another map or an older join. Rapid `token.moved` frames
+  // must not close over a stale `currentMap`.
+  const currentMapIdRef = useRef(currentMap?.id);
+  currentMapIdRef.current = currentMap?.id;
+  const joinedEpochRef = useRef(joinedEpoch);
+  joinedEpochRef.current = joinedEpoch;
+
   /**
    * Listen for token.moved events from other clients
    */
   useEffect(() => {
     if (!socket) return;
 
+    const boundJoin = joinedEpoch;
     const handleTokenMoved = (event: TokenMovedEvent) => {
+      if (!shouldApplySocketDelta({
+        eventMapId: event.mapId,
+        currentMapId: currentMapIdRef.current,
+        boundJoinEpoch: boundJoin,
+        currentJoinEpoch: joinedEpochRef.current,
+      })) return;
+
       // Read from the store (not a render closure) so rapid events that arrive
       // in the same macro-task all see the most recently mutated state.
       const store = useGameStore.getState();
@@ -1017,7 +1040,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     return () => {
       socket.off('token.moved', handleTokenMoved);
     };
-  }, [socket]); // handler reads/writes via the store, no reactive deps needed
+  }, [socket, joinedEpoch]); // rebound on join so boundJoin matches this connection
 
   // ============================================
   // Map Change
@@ -1054,7 +1077,13 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
   useEffect(() => {
     if (!socket) return;
 
+    const boundJoin = joinedEpoch;
     const handleMapChanged = ({ mapData, spiritVisible: sv }: { mapId: string; mapData: CampaignMap; spiritVisible?: boolean }) => {
+      // map.changed is how the table switches maps — do not discard it for
+      // another map. Ignore it only before this connection has joined, or
+      // when this handler belongs to an older join.
+      if (joinedEpochRef.current === 0) return;
+      if (boundJoin !== joinedEpochRef.current) return;
       setCurrentMap(mapData);
       useGameStore.getState().setTokens(mapData.tokens || []);
 
@@ -1078,7 +1107,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     return () => {
       socket.off('map.changed', handleMapChanged);
     };
-  }, [socket, setCurrentMap]);
+  }, [socket, setCurrentMap, joinedEpoch]);
 
   // ============================================
   // Spirit Layer WebSocket Listeners
@@ -1098,7 +1127,14 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
       }, 500);
     };
 
+    const boundJoin = joinedEpoch;
     const handleSpiritTokenToggled = (data: SpiritLayerTokenToggledBroadcast) => {
+      if (!shouldApplySocketDelta({
+        eventMapId: data.mapId,
+        currentMapId: currentMapIdRef.current,
+        boundJoinEpoch: boundJoin,
+        currentJoinEpoch: joinedEpochRef.current,
+      })) return;
       // Update the token's visible flag in the live token store
       useGameStore.getState().patchToken(data.tokenId, { visible: data.visible });
     };
@@ -1118,7 +1154,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
       socket.off('spirit_layer.token.toggled', handleSpiritTokenToggled);
       socket.off('spirit_layer.style_changed', handleSpiritStyleChanged);
     };
-  }, [socket, updateCampaignSpiritLayer, campaign?.spiritLayerEnabled, playEtherealTransition]);
+  }, [socket, updateCampaignSpiritLayer, campaign?.spiritLayerEnabled, playEtherealTransition, joinedEpoch]);
 
   // ============================================
   // Vibe Tracker WebSocket Listener
@@ -1285,14 +1321,25 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     // visible). Store writes are synchronous, so if token:appeared fires for
     // multiple tokens in the same macro-task (server re-sync after player
     // move), each call builds on the previous result.
+    const boundJoin = joinedEpoch;
     const handleTokenAppeared = (data: { token: Token; mapId: string }) => {
-      if (!currentMap || data.mapId !== currentMap.id) return;
+      if (!shouldApplySocketDelta({
+        eventMapId: data.mapId,
+        currentMapId: currentMapIdRef.current,
+        boundJoinEpoch: boundJoin,
+        currentJoinEpoch: joinedEpochRef.current,
+      })) return;
       useGameStore.getState().revealToken(data.token);
     };
 
     // Dynamic lighting: token left this player's view
     const handleTokenDisappeared = (data: { tokenId: string; mapId: string }) => {
-      if (!currentMap || data.mapId !== currentMap.id) return;
+      if (!shouldApplySocketDelta({
+        eventMapId: data.mapId,
+        currentMapId: currentMapIdRef.current,
+        boundJoinEpoch: boundJoin,
+        currentJoinEpoch: joinedEpochRef.current,
+      })) return;
       useGameStore.getState().removeToken(data.tokenId);
     };
 
@@ -2590,29 +2637,38 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
         }
       }
 
-      // Emit token.move.end event
-      if (canEmit() && currentMap.id) {
-        const event: TokenMoveEndEvent = {
-          tokenId: draggedToken.id,
-          mapId: currentMap.id,
-          x: Math.floor(finalX),
-          y: Math.floor(finalY),
-        };
-        socket!.emitTokenMoveEnd(event);
-      } else {
-        console.warn('⚠️ Cannot emit token.move.end - socket not connected');
-      }
-
-      // Update local token position
-      useGameStore.getState().applyTokenMove(draggedToken.id, {
-        x: Math.floor(finalX),
-        y: Math.floor(finalY),
+      // Emit token.move.end only when the socket can send it. A drop that
+      // cannot be sent must not keep the new cell — leave the token on its
+      // last confirmed square and say so. Spectators never reach this path
+      // (they cannot pick a token up).
+      const dropX = Math.floor(finalX);
+      const dropY = Math.floor(finalY);
+      const dropResult = applyLocalTokenDrop({
+        canSend: canEmit() && Boolean(currentMap.id),
+        apply: () => {
+          const event: TokenMoveEndEvent = {
+            tokenId: draggedToken.id,
+            mapId: currentMap.id,
+            x: dropX,
+            y: dropY,
+          };
+          socket!.emitTokenMoveEnd(event);
+          useGameStore.getState().applyTokenMove(draggedToken.id, {
+            x: dropX,
+            y: dropY,
+          });
+          setDraggedToken(null);
+          setDragOffset(null);
+          console.log('✅ Token placed, state cleared');
+        },
+        revert: () => {
+          cancelHold();
+          markDirty('tokens');
+        },
       });
-
-      // Clear drag state
-      setDraggedToken(null);
-      setDragOffset(null);
-      console.log('✅ Token placed, state cleared');
+      if (dropResult === 'revert') {
+        showTableToast('Failed to move the token', 'error');
+      }
       return;
     }
 
@@ -4277,12 +4333,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
                     try {
                       await setTokenFlag(campaign.id, currentMap.id, token, 'visible', !token.visible, socket);
                     } catch (err) {
-                      // TODO(ui): this failure, and those of Obscure, Send to
-                      // Spirit Realm and Return to Material Plane below, go only
-                      // to the console, so the DM sees the menu close and nothing
-                      // change. Show them in a toast with apiErrorMessage(err),
-                      // as Save as Template above does.
-                      console.error('Failed to toggle token visibility:', err);
+                      showTableToast(apiErrorMessage(err) || 'Failed to change whether players can see the token', 'error');
                     }
                   }}
                 >
@@ -4301,7 +4352,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
                     try {
                       await setTokenFlag(campaign.id, currentMap.id, token, 'obscured', !token.obscured, socket);
                     } catch (err) {
-                      console.error('Failed to toggle token identity:', err);
+                      showTableToast(apiErrorMessage(err) || 'Failed to change whether the token\'s identity is hidden', 'error');
                     }
                   }}
                 >
@@ -4325,7 +4376,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
                         useGameStore.getState().patchToken(token.id, { layer: TokenLayer.SPIRIT });
                         socket?.emitMapChange(currentMap.id);
                       } catch (err) {
-                        console.error('Failed to move token to spirit realm:', err);
+                        showTableToast(apiErrorMessage(err) || 'Failed to move token to spirit realm', 'error');
                       } finally {
                         setIsMovingTokenLayer(false);
                       }
@@ -4347,7 +4398,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
                         useGameStore.getState().patchToken(token.id, { layer: TokenLayer.TOKEN });
                         socket?.emitMapChange(currentMap.id);
                       } catch (err) {
-                        console.error('Failed to return token to material plane:', err);
+                        showTableToast(apiErrorMessage(err) || 'Failed to return token to material plane', 'error');
                       } finally {
                         setIsMovingTokenLayer(false);
                       }

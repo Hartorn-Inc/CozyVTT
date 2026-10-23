@@ -21,7 +21,7 @@ const tokens = vi.hoisted(() => ({
   b: { id: 'tok-b', name: 'Goblin B' },
 }));
 
-vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('react-router', () => ({ useNavigate: () => vi.fn(), useParams: () => ({ id: 'campaign-1' }) }));
 vi.mock('react-resizable-panels', () => {
   const Box = ({ children }: { children?: unknown }) => <div>{children as never}</div>;
   return {
@@ -45,6 +45,11 @@ vi.mock('@/contexts/CampaignContext', () => ({
     setActiveSession: vi.fn(),
     refreshCurrentMap: vi.fn(),
     catchUpAfterReconnect: vi.fn(),
+    loadCampaign: vi.fn(),
+    retryMapLoad: vi.fn(),
+    errorRetryable: false,
+    mapLoadError: null,
+    syncError: null,
   }),
 }));
 vi.mock('@/contexts/WebSocketContext', () => ({

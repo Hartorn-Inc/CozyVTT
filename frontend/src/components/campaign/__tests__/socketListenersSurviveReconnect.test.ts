@@ -115,6 +115,7 @@ vi.mock('@/contexts/CampaignContext', () => {
   return { useCampaign: () => value };
 });
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'me', displayName: 'Me' } }) }));
+vi.mock('@/contexts/ToastContext', () => ({ useToast: () => ({ showToast: () => undefined }) }));
 vi.mock('@/services/dice.service', () => ({ getDiceRolls: vi.fn().mockResolvedValue([]) }));
 vi.mock('@/services/message.service', () => ({
   getMessages: vi.fn().mockResolvedValue({ messages: [], pagination: { hasMore: false } }),

@@ -32,6 +32,7 @@ const h = vi.hoisted(() => {
   const deleteToken = vi.fn();
   const getCharacter = vi.fn();
   const raw = {
+    connected: true,
     on(event: string, fn: (data: never) => void) {
       if (!handlers.has(event)) handlers.set(event, new Set());
       handlers.get(event)!.add(fn);
@@ -100,6 +101,7 @@ vi.mock('@/contexts/WebSocketContext', async () => {
   const client = new Proxy({
     getSocket: () => h.raw,
     onMapChanged: (cb: (data: never) => void) => { h.raw.on('map.changed', cb); },
+    onTokenMoved: (cb: (data: never) => void) => { h.raw.on('token.moved', cb); },
     off: (event: string, cb: (data: never) => void) => { h.raw.off(event, cb); },
   } as Record<string, unknown>, {
     get(target, prop: string) {
@@ -114,6 +116,10 @@ vi.mock('@/contexts/WebSocketContext', async () => {
     },
   };
 });
+
+vi.mock('@/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}));
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'dm-user', displayName: 'The DM' } }),
@@ -498,6 +504,46 @@ describe('map settings broadcast', () => {
     render(<MapCanvas />);
     fire('map:settings:updated', { mapId: 'map-b', lightingEnabled: true, fogEnabled: true, globalIllumination: false, explorationEnabled: true });
     expect(h.state.currentMap).toMatchObject({ id: 'map-a', lightingEnabled: false, fogEnabled: false });
+  });
+});
+
+describe('token.moved from another map or an older join', () => {
+  const goblin = {
+    id: 'tok-1', name: 'Goblin Scout', imageUrl: '', position: { x: 2, y: 3 }, size: { width: 1, height: 1 },
+    layer: 'material', visible: true, type: 'npc', conditions: [],
+  } as unknown as Token;
+
+  function showGoblin() {
+    act(() => { useGameStore.getState().setTokens([goblin]); });
+  }
+
+  it('applies a move for this map on this join', () => {
+    render(<MapCanvas />);
+    showGoblin();
+    fire('token.moved', { tokenId: 'tok-1', mapId: 'map-a', x: 8, y: 4, movedBy: 'dm-user' });
+    expect(useGameStore.getState().tokens['tok-1'].position).toEqual({ x: 8, y: 4 });
+  });
+
+  it('discards a move for another map', () => {
+    render(<MapCanvas />);
+    showGoblin();
+    fire('token.moved', { tokenId: 'tok-1', mapId: 'map-b', x: 8, y: 4, movedBy: 'dm-user' });
+    expect(useGameStore.getState().tokens['tok-1'].position).toEqual({ x: 2, y: 3 });
+  });
+
+  it('discards a move with no map id', () => {
+    render(<MapCanvas />);
+    showGoblin();
+    fire('token.moved', { tokenId: 'tok-1', x: 8, y: 4, movedBy: 'dm-user' });
+    expect(useGameStore.getState().tokens['tok-1'].position).toEqual({ x: 2, y: 3 });
+  });
+
+  it('discards a move before the connection has joined', () => {
+    h.set({ joinedEpoch: 0 });
+    render(<MapCanvas />);
+    showGoblin();
+    fire('token.moved', { tokenId: 'tok-1', mapId: 'map-a', x: 8, y: 4, movedBy: 'dm-user' });
+    expect(useGameStore.getState().tokens['tok-1'].position).toEqual({ x: 2, y: 3 });
   });
 });
 

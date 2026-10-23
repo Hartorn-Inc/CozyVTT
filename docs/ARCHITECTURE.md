@@ -302,7 +302,7 @@ CozyVTT uses three complementary state layers, each with a clear boundary. The r
 
 | Layer | Owns | Examples |
 |-------|------|----------|
-| **React Query** (`@tanstack/react-query`) | Server resources fetched over REST | Campaign lists/detail, characters, assets, map metadata |
+| **React Query** (`@tanstack/react-query`) | Server resources fetched over REST | Campaign lists, characters, assets. Live-table campaign row and current-map metadata are fetched by CampaignContext (not a React Query copy of that document). |
 | **Zustand** (`stores/gameStore.ts`) | Live, high-frequency state fed by WebSocket events | Token positions and list, combat/initiative, hover cross-highlight (walls, fog and lights are still MapCanvas-local; walls additionally keep their own undo/redo history) |
 | **React Context** | App/session wiring and metadata | Auth state, socket connection, campaign metadata + vibe/session status |
 
@@ -352,12 +352,14 @@ graph LR
     API["REST API\nresponse"]
     RQ["React Query\ncache"]
     GS["Zustand\ngameStore"]
-    CC["CampaignContext\n(metadata)"]
+    CC["CampaignContext\n(identity and clocks)"]
     Canvas["MapCanvas"]
     Roster["Roster / Sidebar"]
+    Dash["Dashboard lists"]
 
+    API --> CC
     API --> RQ
-    RQ --> CC
+    RQ --> Dash
     WS --> GS
     WS --> CC
     GS --> Canvas
@@ -365,6 +367,8 @@ graph LR
     CC --> Roster
     GS -. "token subscribers only" .-> Roster
 ```
+
+On the live table, CampaignContext fetches the campaign row and current map over REST itself (not a React Query copy of that document) and tags each apply with a load generation plus campaign id, and map id for map replies. A reply whose generation or campaign (or map) no longer matches is discarded. A socket delta for another map or an older join is discarded. A failed first map load or a failed catch-up stays on screen with Retry rather than writing an empty table; a failed write stays on the table and says so; disconnect keeps the last frame until catch-up. Saving campaign settings patches the Context document and does not remount the table.
 
 ---
 
