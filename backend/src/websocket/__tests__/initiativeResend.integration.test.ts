@@ -21,6 +21,7 @@ import { prisma } from '../../config/database';
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import { createWsTestServer, expectNoEvent, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
 import { clearState, getState } from '../initiativeState';
+import * as writeAuthz from '../writeAuthz';
 import { createTestUser, TEST_PASSWORD } from '../../__tests__/helpers/db';
 
 jest.setTimeout(30000);
@@ -146,6 +147,47 @@ describe('ending a fight', () => {
     expect(seen[seen.length - 1]).toMatchObject({ active: false, combatants: [] });
     dm.disconnect();
     player.disconnect();
+  });
+
+  // next awaits membership before it writes. Hold that confirm so end can
+  // clear first; writing the object next read before the await would put
+  // the fight back, and overtaken() would drop end's empty send.
+  it("does not write next back after end has cleared the fight during next's authz", async () => {
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    await addAll(dm, [HERO, HIDDEN]);
+    const started = waitForEvent<State>(dm, 'initiative.state');
+    dm.emit('initiative.start');
+    await started;
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const original = writeAuthz.confirmWriteAuthorization.bind(writeAuthz);
+    const spy = jest.spyOn(writeAuthz, 'confirmWriteAuthorization').mockImplementationOnce(async (socket, options) => {
+      reached();
+      await gate;
+      return original(socket, options);
+    });
+
+    const seen: State[] = [];
+    player.on('initiative.state', (s: State) => { seen.push(s); });
+    try {
+      dm.emit('initiative.next');
+      await waiting;
+      const ended = waitForEvent<State>(player, 'initiative.state');
+      dm.emit('initiative.end');
+      expect(await ended).toMatchObject({ active: false, combatants: [] });
+      release();
+      await sleep(200);
+      expect(getState(campaignId)).toMatchObject({ active: false, combatants: [] });
+      expect(seen[seen.length - 1]).toMatchObject({ active: false, combatants: [] });
+    } finally {
+      spy.mockRestore();
+      dm.disconnect();
+      player.disconnect();
+    }
   });
 });
 

@@ -695,12 +695,18 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can start combat' }); return; }
 
-      state.active = true;
-      state.round = 1;
-      state.currentTokenId = state.combatants[0].tokenId;
-      setCombatState(campaignId, state);
+      // The order as it is now, not the copy read before the await above:
+      // end (or a last remove) may have cleared it, and writing the old
+      // copy back would put those combatants into an active fight again.
+      const current = getCombatState(campaignId);
+      if (current.combatants.length === 0) return;
+
+      current.active = true;
+      current.round = 1;
+      current.currentTokenId = current.combatants[0].tokenId;
+      setCombatState(campaignId, current);
       await broadcastInitiativeState(campaignId);
-      logger.info('initiative.start', { campaignId, first: state.combatants[0].name });
+      logger.info('initiative.start', { campaignId, first: current.combatants[0].name });
     } catch (error) {
       logger.error('initiative.start failed', { err: error });
       socket.emit('error', { message: 'Failed to start combat' });
@@ -724,20 +730,26 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can advance the turn' }); return; }
 
-      const currentIndex = state.combatants.findIndex((c) => c.tokenId === state.currentTokenId);
+      // The order as it is now, not the copy read before the await above:
+      // the DM may have ended the fight, which writing the old copy back
+      // would undo. End has already told everyone.
+      const current = getCombatState(campaignId);
+      if (!current.active || current.combatants.length === 0) return;
+
+      const currentIndex = current.combatants.findIndex((c) => c.tokenId === current.currentTokenId);
       const nextIndex = currentIndex + 1;
 
-      if (nextIndex >= state.combatants.length) {
+      if (nextIndex >= current.combatants.length) {
         // Wrap around — new round
-        state.round += 1;
-        state.currentTokenId = state.combatants[0].tokenId;
+        current.round += 1;
+        current.currentTokenId = current.combatants[0].tokenId;
       } else {
-        state.currentTokenId = state.combatants[nextIndex].tokenId;
+        current.currentTokenId = current.combatants[nextIndex].tokenId;
       }
 
-      setCombatState(campaignId, state);
+      setCombatState(campaignId, current);
       await broadcastInitiativeState(campaignId);
-      logger.debug('initiative.next', { round: state.round, current: state.currentTokenId, campaignId });
+      logger.debug('initiative.next', { round: current.round, current: current.currentTokenId, campaignId });
     } catch (error) {
       logger.error('initiative.next failed', { err: error });
       socket.emit('error', { message: 'Failed to advance initiative' });
