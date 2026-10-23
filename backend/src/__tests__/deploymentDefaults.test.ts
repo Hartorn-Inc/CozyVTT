@@ -294,6 +294,24 @@ describe('the containers', () => {
       expect(script).toMatch(/^if \.\/node_modules\/\.bin\/prisma migrate deploy; then$/m);
     });
 
+    it('ensures the schema owner after the database is ready and before migrate deploy', () => {
+      const helper = read('backend/scripts/ensure-schema-owner.sh');
+      expect(script.indexOf('ensure-schema-owner.sh')).toBeGreaterThan(script.indexOf('pg_isready'));
+      expect(script.indexOf('ensure-schema-owner.sh')).toBeGreaterThan(-1);
+      expect(script.indexOf('ensure-schema-owner.sh')).toBeLessThan(script.indexOf('prisma migrate deploy'));
+      expect(helper).toMatch(/❌ Error:/);
+      expect(helper).toContain('docs/DEPLOYMENT.md');
+      expect(helper).toContain("format('CREATE ROLE %I'");
+      expect(helper).toContain('WHERE NOT EXISTS');
+      expect(helper).not.toContain('CREATE ROLE IF NOT EXISTS');
+      expect(helper).toContain('\\gexec');
+      expect(script).toContain('READY_USER="${DATABASE_USER:-$DB_USER}"');
+      expect(helper).toContain('NOSUPERUSER');
+      expect(helper).toContain('NOBYPASSRLS');
+      expect(helper).toMatch(/rolsuper/);
+      expect(helper.split('\n').filter((line) => !line.trimStart().startsWith('#') && /\bnpx\b/.test(line))).toEqual([]);
+    });
+
     it('removes the dumps a stopped backup or restore left in /tmp, which outlives the container, before the app starts', () => {
       // On the backend_tmp volume they would survive an upgrade, and each is a
       // copy of every credential on the instance.
@@ -312,6 +330,54 @@ describe('the containers', () => {
       expect(commands.filter((command) => /\bnpx\b/.test(command.split('`')[0]))).toEqual([]);
     }
   );
+
+  it.each(['backend/Dockerfile', 'backend/Dockerfile.prod'])(
+    '%s copies the schema owner helper next to start.sh',
+    (file) => {
+      const dockerfile = read(file);
+      expect(dockerfile).toContain('COPY scripts/ensure-schema-owner.sh /usr/local/bin/ensure-schema-owner.sh');
+      expect(dockerfile).toMatch(/chmod \+x .*ensure-schema-owner\.sh/);
+    }
+  );
+
+  it.each(['docker-compose.yml', 'docker-compose.dev.yml'])(
+    '%s points DATABASE_URL at the schema owner and keeps POSTGRES_USER as the bootstrap role',
+    (file) => {
+      const backend = service(file, 'backend');
+      const database = service(file, 'database');
+      expect(backend).toMatch(/DATABASE_URL: postgresql:\/\/\$\{DATABASE_APP_USER/);
+      expect(backend).not.toMatch(/DATABASE_URL: postgresql:\/\/\$\{DATABASE_USER/);
+      expect(database).toMatch(/POSTGRES_USER: \$\{DATABASE_USER/);
+      for (const key of ['DATABASE_USER', 'DATABASE_PASSWORD', 'DATABASE_APP_USER', 'DATABASE_APP_PASSWORD', 'DATABASE_NAME']) {
+        expect(backend).toMatch(new RegExp(`\\n {6}${key}: `));
+      }
+    }
+  );
+
+  it('offers DATABASE_APP_USER and DATABASE_APP_PASSWORD in .env.example', () => {
+    const offeredKeys = offered('.env.example');
+    expect(offeredKeys).toEqual(expect.arrayContaining(['DATABASE_APP_USER', 'DATABASE_APP_PASSWORD']));
+  });
+
+  it('documents schema-owner ensure before migrate in DATABASE_MIGRATIONS.md', () => {
+    const guide = read('backend/DATABASE_MIGRATIONS.md');
+    expect(guide).toMatch(/schema owner/i);
+    expect(guide.indexOf('schema owner')).toBeLessThan(guide.indexOf('prisma migrate deploy'));
+  });
+
+  it('names both database roles and fail-closed boot in the deployment guide', () => {
+    const guide = read('docs/DEPLOYMENT.md');
+    expect(guide).toMatch(/bootstrap superuser/i);
+    expect(guide).toMatch(/schema owner/i);
+    expect(guide).toMatch(/refuses to start/);
+    expect(guide).toContain('DATABASE_APP_USER');
+  });
+
+  it('no longer records the non-superuser database role for later', () => {
+    expect(read('SECURITY.md')).not.toMatch(/recorded for later/i);
+    expect(read('SECURITY.md')).toMatch(/schema owner/i);
+    expect(read('docs/FUTURE_FEATURES.md')).not.toMatch(/A database role that is not a superuser/);
+  });
 
   it('are described in the README as they run: only the backend is said to drop to an unprivileged user', () => {
     const readme = read('README.md');

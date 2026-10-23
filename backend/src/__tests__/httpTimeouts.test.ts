@@ -29,11 +29,12 @@ describe('the request timeout', () => {
 
   it('is applied to the server the backend listens on, before it listens', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../server.ts'), 'utf8');
+    const listen = source.indexOf('httpServer.listen(');
     const applied = source.indexOf('applyRequestTimeouts(httpServer);');
     expect(applied).toBeGreaterThan(-1);
-    expect(applied).toBeLessThan(source.indexOf('httpServer.listen('));
-    const guard = source.indexOf('loginSessionRevocationGuard.then(');
-    expect(guard).toBeGreaterThan(-1);
-    expect(guard).toBeLessThan(source.indexOf('httpServer.listen('));
+    expect(applied).toBeLessThan(listen);
+    const composed = source.indexOf('Promise.all([loginSessionRevocationGuard, enforceDatabaseRole()])');
+    expect(composed).toBeGreaterThan(-1);
+    expect(composed).toBeLessThan(listen);
   });
 });

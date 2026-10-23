@@ -65,7 +65,7 @@ cozyvtt/
 │   │   ├── migrations/    Migration history
 │   │   └── seed.ts        Placeholder for development seed data (creates nothing yet)
 │   ├── scripts/           start.sh (the images' entrypoint: waits for the database,
-│   │                      applies migrations), backup.sh and restore.sh
+│   │                      ensures the schema owner, applies migrations), backup.sh and restore.sh
 │   └── docs/              Backend-specific docs (OpenAPI YAML, WS docs)
 │
 ├── frontend/              React + Vite client
@@ -191,6 +191,18 @@ with `openssl rand -hex 32` and place it only in `.env`; Make rejects the
 known placeholder, blank values, equal production values, and exported
 overrides without printing secrets.
 
+Docker Compose (production and this development stack) also reads these
+database-role settings from the root `.env`. The Node process does not; `start.sh`
+uses them to create the schema owner before it migrates.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_NAME` | Yes for Compose | `cozyvtt` in production Compose | Database name (`POSTGRES_DB`) |
+| `DATABASE_USER` | Yes for Compose | `cozyvtt` in production Compose | Bootstrap superuser (`POSTGRES_USER`). The app does not connect as this role |
+| `DATABASE_PASSWORD` | Yes | — | Bootstrap superuser password; letters and digits only (hex) |
+| `DATABASE_APP_USER` | No | `cozyvtt_app` | Schema owner: owns the database and `public`, runs migrations, backend `DATABASE_URL` user. Must not equal `DATABASE_USER` |
+| `DATABASE_APP_PASSWORD` | No | `DATABASE_PASSWORD` | Schema owner password; same letters-and-digits-only rule. Unset, first start after upgrade needs no new secret |
+
 ---
 
 ## Local Setup (Without Docker)
@@ -232,10 +244,13 @@ CREATE USER cozyvtt WITH PASSWORD 'cozyvtt' CREATEDB;
 CREATE DATABASE cozyvtt OWNER cozyvtt;
 ```
 
-The user owns the database so the migrations can create tables in its `public`
-schema, which PostgreSQL 15 and later no longer lets every user do, and
-`CREATEDB` lets `prisma migrate dev` make the scratch database it compares the
-schema in.
+This local `cozyvtt` role is the schema owner for non-Docker: it owns the
+database so the migrations can create tables in its `public` schema, which
+PostgreSQL 15 and later no longer lets every user do, and `CREATEDB` lets
+`prisma migrate dev` make the scratch database it compares the schema in.
+Docker Compose uses two roles instead: a bootstrap superuser (`DATABASE_USER`)
+and a non-superuser schema owner (`DATABASE_APP_USER`, default `cozyvtt_app`)
+that migrates. `CREATEDB` is not needed on that Docker schema owner.
 
 ### 3. Configure environment
 
@@ -390,7 +405,7 @@ docker compose --project-name "$(make print-project)" --project-directory . --en
 Then open `http://mybox.local:3001` on the other device. Anyone on that
 network can reach it too, so do this only on a network you trust.
 
-The backend container runs `npm run dev`, which restarts the backend when a file it has loaded changes (`node --watch`, below). The frontend container runs `vite` with hot module replacement. The backend's start script (`backend/scripts/start.sh`) applies any pending migrations with `prisma migrate deploy` each time the container starts.
+The backend container runs `npm run dev`, which restarts the backend when a file it has loaded changes (`node --watch`, below). The frontend container runs `vite` with hot module replacement. The backend's start script (`backend/scripts/start.sh`) ensures the schema owner, then applies any pending migrations with `prisma migrate deploy` as that role each time the container starts.
 
 **Each container has its own `node_modules` and its own generated Prisma client.** Source is bind-mounted, `node_modules` is not, so after adding a dependency or changing `schema.prisma` the running container does not see it until you tell it to. Vite answers a missing package with a 500 and the app shows "Something went wrong"; the backend throws on the first query that touches a new table:
 

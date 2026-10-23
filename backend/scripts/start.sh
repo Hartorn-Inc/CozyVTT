@@ -53,16 +53,20 @@ DB_NAME=$(echo "$DATABASE_URL" | sed -E 's|.*/([^?]+).*|\1|')
 
 echo "   Host: $DB_HOST  Port: $DB_PORT  User: $DB_USER  DB: $DB_NAME"
 
+# Wait as the bootstrap superuser: DATABASE_URL is the schema owner, which
+# does not exist until ensure-schema-owner.sh runs after this wait.
+READY_USER="${DATABASE_USER:-$DB_USER}"
+
 # Wait for database to be ready (max 60 seconds)
 MAX_RETRIES=30
 RETRY_COUNT=0
 
-until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -q; do
+until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$READY_USER" -d "$DB_NAME" -q; do
   RETRY_COUNT=$((RETRY_COUNT + 1))
   if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
     echo "❌ Error: Database connection failed after $MAX_RETRIES attempts"
     echo "   Please check your DATABASE_URL and ensure PostgreSQL is running"
-    pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME"
+    pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$READY_USER" -d "$DB_NAME"
     exit 1
   fi
   echo "⏳ Waiting for database to be ready... (attempt $RETRY_COUNT/$MAX_RETRIES)"
@@ -70,6 +74,26 @@ until pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -q; do
 done
 
 echo "✅ Database connection successful"
+
+# The image still creates DATABASE_USER as a superuser on an empty volume.
+# Migrations and the app must use the non-superuser schema owner instead:
+# this step creates that role on first start after upgrade, or refuses to boot.
+echo ""
+echo "🔐 Ensuring the schema owner..."
+HELPER="$(dirname "$0")/ensure-schema-owner.sh"
+if [ ! -x "$HELPER" ]; then
+  echo "❌ Error: schema owner helper is missing at $HELPER"
+  echo "   See docs/DEPLOYMENT.md"
+  exit 1
+fi
+DATABASE_NAME="${DATABASE_NAME:-$DB_NAME}"
+DATABASE_APP_USER="${DATABASE_APP_USER:-cozyvtt_app}"
+DATABASE_APP_PASSWORD="${DATABASE_APP_PASSWORD:-${DATABASE_PASSWORD:-}}"
+export DB_HOST DB_PORT DB_USER
+export DATABASE_USER DATABASE_PASSWORD DATABASE_APP_USER DATABASE_APP_PASSWORD DATABASE_NAME
+if ! "$HELPER"; then
+  exit 1
+fi
 
 echo ""
 echo "🔄 Running database migrations..."

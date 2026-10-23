@@ -275,7 +275,7 @@ report_failure() {
 if [[ -z "${DATABASE_URL:-}" ]] && command -v docker >/dev/null 2>&1; then
   DB_SERVICE="${DB_SERVICE:-database}"
   if docker compose ps --status running --services 2>/dev/null | grep -qx "$DB_SERVICE"; then
-    DB_USER="${DATABASE_USER:-cozyvtt}"
+    DB_USER="${DATABASE_APP_USER:-cozyvtt_app}"
     DB_NAME="${DATABASE_NAME:-cozyvtt}"
 
     echo "================================================"

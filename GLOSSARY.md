@@ -16,6 +16,14 @@ _Avoid_: Admin (unqualified), platform admin, root, owner
 The person who runs the host: Compose, the tunnel, volumes, and off-host backup copies. Distinct from Administrator, campaign owner, and DM.
 _Avoid_: Self-hoster, sysadmin, admin (unqualified), host (for this role)
 
+**Bootstrap superuser**:
+The PostgreSQL role Compose creates from `DATABASE_USER` on an empty volume. First start after upgrade uses it to create the schema owner. The app does not connect as this role.
+_Avoid_: database admin, postgres user (unqualified)
+
+**Schema owner**:
+The non-superuser PostgreSQL role (`DATABASE_APP_USER`, default `cozyvtt_app`) that owns the Instance database and `public` schema, runs migrations, and is the backend `DATABASE_URL` user. Distinct from the bootstrap superuser.
+_Avoid_: database admin, postgres user (unqualified)
+
 **Instance backup**:
 An encrypted archive of the Instance's database and uploads, enough to restore that Instance.
 _Avoid_: Backup (unqualified), snapshot, dump (for this object)

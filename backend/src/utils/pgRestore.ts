@@ -202,8 +202,9 @@ const COPY_END = '\\.';
  * of a line only, and the COPY one is case-sensitive, so a lowercase `copy
  * ... to program`, an indented statement, a second statement on the same
  * line, or a DO block that EXECUTEs one all get through. The SQL runs with
- * the database owner's full rights, which on the Docker setup is a superuser
- * that can run programs in the database container. A restore is only as safe
+ * the database owner's full rights, which on the Docker setup is the
+ * non-superuser schema owner. COPY ... PROGRAM still runs a program in the
+ * database container, but no longer as a superuser. A restore is only as safe
  * as the file, which is why the restore screen and the deployment guide say
  * to restore only backups this dashboard or the backup script made, on an
  * instance you trust.

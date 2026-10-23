@@ -98,6 +98,30 @@ class DevelopmentCompose(unittest.TestCase):
         database_healthcheck = self.dev['services']['database']['healthcheck']['test']
         self.assertIn('-d ${DATABASE_NAME:-cozyvtt}', database_healthcheck[1])
 
+    def test_backend_database_url_uses_the_schema_owner(self):
+        for name, compose in (('dev', self.dev), ('prod', self.prod)):
+            backend = compose['services']['backend']['environment']
+            database = compose['services']['database']['environment']
+            url = backend['DATABASE_URL']
+            self.assertIn('${DATABASE_APP_USER', url, name)
+            self.assertNotIn('postgresql://${DATABASE_USER', url, name)
+            self.assertIn('${DATABASE_APP_PASSWORD:-${DATABASE_PASSWORD}}', url, name)
+            self.assertIn('${DATABASE_USER', database['POSTGRES_USER'], name)
+            for key in (
+                'DATABASE_USER',
+                'DATABASE_PASSWORD',
+                'DATABASE_APP_USER',
+                'DATABASE_APP_PASSWORD',
+                'DATABASE_NAME',
+            ):
+                self.assertIn(key, backend, (name, key))
+
+    def test_database_healthcheck_stays_on_the_bootstrap_user(self):
+        for name, compose in (('dev', self.dev), ('prod', self.prod)):
+            check = compose['services']['database']['healthcheck']['test'][1]
+            self.assertIn('${DATABASE_USER:-cozyvtt}', check, name)
+            self.assertNotIn('DATABASE_APP_USER', check, name)
+
 
 class MakefileSetup(unittest.TestCase):
     @classmethod
@@ -130,6 +154,9 @@ class MakefileSetup(unittest.TestCase):
         self.assertIn('uploads-dev/', self.dockerignore)
         self.assertIn('backups-dev/', self.dockerignore)
         self.assertIn('COPY scripts/permissions-check.sh /usr/local/bin/permissions-check.sh', self.dockerfile)
+        self.assertIn('COPY scripts/ensure-schema-owner.sh /usr/local/bin/ensure-schema-owner.sh', self.dockerfile)
+        self.assertIn('DATABASE_APP_USER=', self.env_example)
+        self.assertIn('DATABASE_APP_PASSWORD', self.env_example)
 
     def test_setup_and_lifecycle_safety_contract_is_present(self):
         self.assertIn('ENV_FILE := $(REPO_DIR)/.env', self.makefile)

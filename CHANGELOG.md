@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 ### Security
 
 - **Login-session revocation is fail-closed on HTTP.** After a password change, MFA change, administrator password reset, administrator MFA reset, or platform-role change, the next HTTP request with a revoked cookie is 401. Self-service password and MFA keep the initiating login session and revoke the others; an administrator reset kills every login session for that user. If the login-session store cannot be confirmed, the mutation answers 503 `{ error: 'Service Unavailable', message }` and does not persist. The backend starts listening only after the revocation guard is installed. A concurrent session-store write cannot recreate a revoked cookie. A login-session row committed after a SERIALIZABLE account-deletion or USER-demotion snapshot is still revoked; the next HTTP request with that cookie is 401. Expired `revoked_login_session` rows are purged when login sessions are revoked. Two administrators deleting their own accounts at once still leave one administrator (409), including when PostgreSQL refuses the overlapping revoke as 40001. Serializable account deletion and USER demotion revoke session rows on the session-store pool, so they succeed at Prisma `connection_limit=1`. A last-admin 409 after a fail-closed Read Committed revoke ends that user's live sockets.
+- **Production Postgres uses a bootstrap superuser only, then a non-superuser schema owner that also migrates.** Compose still creates `DATABASE_USER` (default `cozyvtt`) as the image superuser on an empty volume. The backend `DATABASE_URL` is `DATABASE_APP_USER` (default `cozyvtt_app`), which owns the database and `public` schema and runs `prisma migrate deploy`. First start after upgrade creates that role or refuses to boot with a log line pointing at [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). There is no dual-mode stay-superuser path and no third migrator role. Unset, `DATABASE_APP_PASSWORD` uses `DATABASE_PASSWORD`, so no new required secret.
 
 ### Fixed
 
@@ -37,6 +38,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 A leftover PostgreSQL 15 `postgres_data` volume will not start. Remove it (`docker volume rm` the compose project volume) before `docker compose up`. That drops the old cluster; there is no in-container migrator.
 
 If this instance stored sign-ins in `public.session` while Prisma used another schema, everyone is signed out once after this takes effect; they sign in again.
+
+First start after this upgrade creates `cozyvtt_app` (or `DATABASE_APP_USER`) from the bootstrap superuser, then migrates and runs as that role. If it cannot, the backend refuses to start with a log line pointing at [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). There is no dual-mode stay-superuser path. No new required secret if you keep using `DATABASE_PASSWORD` for both roles.
 
 ---
 
