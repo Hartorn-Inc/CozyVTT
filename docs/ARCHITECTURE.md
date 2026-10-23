@@ -76,7 +76,7 @@ Every service in `docker-compose.yml` runs with `no-new-privileges`, drops every
 | `frontend` | `CHOWN`, `SETUID`, `SETGID`, `NET_BIND_SERVICE` | nginx's master process, which gives its scratch folders to the nginx user, listens on port 80 and starts its workers as that user | Read-only; `/run`, `/var/cache/nginx` and `/tmp` are held in memory (`tmpfs`) |
 | `nginx` | As `frontend`, and `DAC_READ_SEARCH` | The same, on ports 80 and 443, and reading a file only its owner may read, such as a TLS key in `nginx/certs` | Read-only; `/run`, `/tmp` and `/etc/nginx/conf.d` (where the entrypoint renders `nginx.conf`) in memory, and `/var/cache/nginx`, where bodies too large to hold in memory wait, on the `nginx_temp` volume |
 
-The two volumes keep large scratch files out of memory, where they would count against the container's memory limit (512 MB for the backend, 64 MB for nginx). Root in the backend container cannot write `appuser`'s files without first taking them over, so a command run there runs as `appuser` (`docker compose exec -u appuser backend ...`). Once `start.sh` runs as `appuser`, it removes any folder a stopped backup or restore left in `/tmp` (see File Storage), waits for the database, and applies the migrations with `./node_modules/.bin/prisma migrate deploy`, the project's own Prisma, since `npx` writes to the home folder, which is read-only. Then it starts `node dist/server.js`.
+The two volumes keep large scratch files out of memory, where they would count against the container's memory limit (512 MB for the backend, 64 MB for nginx). Root in the backend container cannot write `appuser`'s files without first taking them over, so a command run there runs as `appuser` (`docker compose exec -u appuser backend ...`). Once `start.sh` runs as `appuser`, it removes any folder a stopped backup or restore left in `/tmp` (see File Storage), waits for the database, ensures the non-superuser schema owner (creating `DATABASE_APP_USER` from the bootstrap superuser on first start after upgrade, or refusing to boot), and applies the migrations with `./node_modules/.bin/prisma migrate deploy` as that role, the project's own Prisma, since `npx` writes to the home folder, which is read-only. Then it starts `node dist/server.js`.
 
 ---
 
@@ -860,16 +860,20 @@ uploads/
 `Asset.filePath` and `Asset.thumbnailPath` record where each file is. Nothing
 else refers to a file on disk.
 
-Instance backups (`backup-{timestamp}.zip`) are kept outside this tree, in
-`backend/backups/` or `BACKUP_DIR`, which may not point inside the uploads
-directory (`backend/src/utils/backupDir.ts`). A backup is written as
-`<name>.partial` and renamed once complete; the backup list removes a partial
-file that no backup is writing. Its database dump waits in a folder of its own
-in the system's temporary directory (`cozyvtt-db-…`, made by `mkdtemp`, so only
-the backend's user can open it), and a restore unpacks the archive into another
-(`cozyvtt-restore-…`). Each is removed when its work ends. Under Docker that
-directory is `/tmp`, the `backend_tmp` volume, which outlives the container, so
-`scripts/start.sh` also removes any that a stopped backend left.
+Instance backups are kept outside this tree, in `backend/backups/` or
+`BACKUP_DIR`, which may not point inside the uploads directory
+(`backend/src/utils/backupDir.ts`). The filename is still
+`backup-{timestamp}.zip`; on-disk bytes are AES-256-GCM (magic `CVTTBK01`)
+encrypted with `BACKUP_ENCRYPTION_KEY`. A missing key still boots the
+Instance and refuses new backups. A backup is written as `<name>.partial`
+and renamed once complete; the backup list removes a partial file that no
+backup is writing. Its database dump waits in a folder of its own in the
+system's temporary directory (`cozyvtt-db-…`, made by `mkdtemp`, so only
+the backend's user can open it), and a restore unpacks a decrypted or
+legacy plaintext ZIP into another (`cozyvtt-restore-…`). Each is removed
+when its work ends. Under Docker that directory is `/tmp`, the
+`backend_tmp` volume, which outlives the container, so `scripts/start.sh`
+also removes any that a stopped backend left.
 
 A restore runs one at a time, and `services/restoreState.ts` knows whether
 one is running and whether it has started replacing the database. From then

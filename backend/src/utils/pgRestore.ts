@@ -143,6 +143,31 @@ export function isSettingUnknownToServer(line: string): boolean {
 }
 
 /**
+ * `pg_dump` writes `SET row_security = off` so the restore session dumps every
+ * row. That SET is allowed only for a superuser or BYPASSRLS; the schema owner
+ * is neither. Dropping the line leaves row security at its session default.
+ * CozyVTT does not enable RLS, and the schema owner already owns the tables.
+ */
+const ROW_SECURITY_OFF = /^SET row_security = off/;
+
+/** Whether `line` is `SET row_security = off`, which the schema owner cannot run. */
+export function isRowSecurityOff(line: string): boolean {
+  return ROW_SECURITY_OFF.test(line);
+}
+
+/**
+ * Statements on an extension in pg_catalog. `COMMENT ON EXTENSION plpgsql` is
+ * in every plain dump of template1's language; only the extension owner or a
+ * superuser may run it. ALTER/DROP EXTENSION are the same. Table comments stay.
+ */
+const CATALOG_EXTENSION_STATEMENT = /^(?:COMMENT ON EXTENSION|ALTER EXTENSION|DROP EXTENSION) /;
+
+/** Whether `line` is an extension catalog statement the schema owner cannot run. */
+export function isCatalogExtensionStatement(line: string): boolean {
+  return CATALOG_EXTENSION_STATEMENT.test(line);
+}
+
+/**
  * Ownership and privilege statements name the database user of the instance
  * the backup came from. A backup made under one user name and restored on an
  * instance whose `.env` names another, which is what moving to a new machine
@@ -202,8 +227,9 @@ const COPY_END = '\\.';
  * of a line only, and the COPY one is case-sensitive, so a lowercase `copy
  * ... to program`, an indented statement, a second statement on the same
  * line, or a DO block that EXECUTEs one all get through. The SQL runs with
- * the database owner's full rights, which on the Docker setup is a superuser
- * that can run programs in the database container. A restore is only as safe
+ * the database owner's full rights, which on the Docker setup is the
+ * non-superuser schema owner. COPY ... PROGRAM still runs a program in the
+ * database container, but no longer as a superuser. A restore is only as safe
  * as the file, which is why the restore screen and the deployment guide say
  * to restore only backups this dashboard or the backup script made, on an
  * instance you trust.
@@ -213,6 +239,36 @@ const RESTRICTED_MODE_LINE = /^\\(?:un)?restrict /;
 const CREATE_TABLE = /^CREATE TABLE (?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*))\.(?:"([^"]+)"|([A-Za-z_][A-Za-z0-9_]*)) \($/;
 const TRANSACTION_CONTROL =
   /^(?:BEGIN|START TRANSACTION|COMMIT|END|ROLLBACK|ABORT|SAVEPOINT|RELEASE|PREPARE TRANSACTION)\b/i;
+
+/** pg_dump function/procedure bodies: a line that is `AS $tag$` (often `AS $$`). */
+const FUNCTION_BODY_OPEN = /^\s*AS\s+\$([A-Za-z0-9_]*)\$/;
+
+/**
+ * Walk `line` updating whether we are inside a dollar-quoted function body
+ * (`tag` is the quote's tag, or null outside). pg_dump writes plpgsql as
+ * `AS $$\nBEGIN`; BEGIN/END there are not transaction control. Only `AS $tag$`
+ * opens a quote, so `SELECT '$$'` or `-- $$` cannot hide a following COMMIT.
+ */
+export function nextDollarQuoteTag(line: string, tag: string | null): string | null {
+  let i = 0;
+  let current = tag;
+  while (i < line.length) {
+    if (current !== null) {
+      const close = `$${current}$`;
+      const at = line.indexOf(close, i);
+      if (at === -1) return current;
+      i = at + close.length;
+      current = null;
+      continue;
+    }
+    const rest = line.slice(i);
+    const open = FUNCTION_BODY_OPEN.exec(rest);
+    if (!open) return null;
+    current = open[1];
+    i += open.index + open[0].length;
+  }
+  return current;
+}
 
 /** Tables every CozyVTT database has in the instance schema; a dump that does not create them there is not a backup of one. */
 export const REQUIRED_TABLES = ['User', '_prisma_migrations'];
@@ -295,6 +351,7 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
     if (!out.write(text, 'latin1')) await once(out, 'drain');
   };
   let inCopy = false;
+  let dollarTag: string | null = null;
   let endedWithNewline = true;
   try {
     await write(`\\restrict ${randomBytes(32).toString('hex')}\n`);
@@ -304,6 +361,8 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
       let keep = true;
       if (inCopy) {
         if (statement === COPY_END) inCopy = false;
+      } else if (dollarTag !== null) {
+        dollarTag = nextDollarQuoteTag(statement, dollarTag);
       } else if (COPY_START.test(statement)) {
         inCopy = true;
       } else if (statement.startsWith('COPY ')) {
@@ -316,8 +375,10 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
         refused ??= `it takes control of the transaction the restore runs in: ${excerpt(statement)}`;
       } else if (statement === DUMP_COMPLETE) {
         complete = true;
-      } else if (isSettingUnknownToServer(statement)) {
+      } else if (isSettingUnknownToServer(statement) || isRowSecurityOff(statement)) {
         skipped.settings.push(statement);
+        keep = false;
+      } else if (isCatalogExtensionStatement(statement)) {
         keep = false;
       } else if (isOwnershipStatement(statement)) {
         skipped.ownership++;
@@ -334,6 +395,7 @@ export async function prepareDumpForRestore(sqlPath: string, outPath: string): P
           const name = table[3] ?? table[4];
           if (name && dumpSchema === schema) tables.add(name);
         }
+        dollarTag = nextDollarQuoteTag(statement, dollarTag);
       }
       if (keep) {
         await write(newline ? raw + '\n' : raw);
@@ -425,6 +487,10 @@ export function buildDumpArgs(dbUrl: string, sqlPath: string): string[] {
     '--if-exists',
     '--no-owner',
     '--no-privileges',
+    // Schema owner is NOSUPERUSER NOBYPASSRLS. pg_dump's default session
+    // SET row_security = off is refused for that role; this dumps the rows
+    // the owner can already see (every row: CozyVTT does not enable RLS).
+    '--enable-row-security',
     // The login sessions: a backup that carried them would sign every
     // sign-in of the day back in when restored (see RESTORE_TRAILER).
     '--exclude-table-data=public.session',

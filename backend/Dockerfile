@@ -22,11 +22,12 @@ COPY . .
 # Generate Prisma client
 RUN npx prisma generate
 
-# Copy and fix startup script
+# Copy and fix startup scripts
 COPY scripts/start.sh /usr/local/bin/start.sh
+COPY scripts/ensure-schema-owner.sh /usr/local/bin/ensure-schema-owner.sh
 COPY scripts/permissions-check.sh /usr/local/bin/permissions-check.sh
-RUN sed -i 's/\r$//' /usr/local/bin/start.sh /usr/local/bin/permissions-check.sh \
-  && chmod +x /usr/local/bin/start.sh /usr/local/bin/permissions-check.sh
+RUN sed -i 's/\r$//' /usr/local/bin/start.sh /usr/local/bin/ensure-schema-owner.sh /usr/local/bin/permissions-check.sh \
+  && chmod +x /usr/local/bin/start.sh /usr/local/bin/ensure-schema-owner.sh /usr/local/bin/permissions-check.sh
 
 # Create uploads and logs dirs, hand ownership to appuser
 RUN mkdir -p /app/uploads /app/logs /app/backups && chown -R appuser:appgroup /app

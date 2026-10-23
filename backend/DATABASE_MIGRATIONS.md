@@ -14,9 +14,10 @@ Docker). The app itself connects through the `pg` driver, with the same
 
 When you start CozyVTT with Docker Compose, the backend container will automatically:
 
-1. Wait for the PostgreSQL database to be ready
-2. Run all pending migrations with `prisma migrate deploy`
-3. Start the application
+1. Wait for the PostgreSQL database to be ready (as the bootstrap superuser, `DATABASE_USER`)
+2. Create or update the non-superuser schema owner (`DATABASE_APP_USER`, default `cozyvtt_app`) from that bootstrap role, or refuse to boot
+3. Run all pending migrations with `prisma migrate deploy` as the schema owner
+4. Start the application
 
 This ensures that your database schema is always up-to-date.
 

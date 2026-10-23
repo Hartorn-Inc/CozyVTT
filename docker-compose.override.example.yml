@@ -19,6 +19,8 @@
 #
 # WHAT BELONGS HERE
 #   Only the settings you are changing — not a copy of docker-compose.yml.
+#   Ports, volumes, and the bundled nginx (disable or replace it) belong here.
+#   Do not set `image:`: the repository owns the stack tags and digests.
 #   Adding or changing settings works naturally. REMOVING a service does not:
 #   Compose can only add or change, never delete. See the nginx example below.
 #

@@ -46,7 +46,12 @@ services:
       database:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${DATABASE_USER}:${DATABASE_PASSWORD}@database:5432/${DATABASE_NAME}
+      DATABASE_URL: postgresql://${DATABASE_APP_USER:-cozyvtt_app}:${DATABASE_APP_PASSWORD:-${DATABASE_PASSWORD}}@database:5432/${DATABASE_NAME}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_APP_USER: ${DATABASE_APP_USER:-cozyvtt_app}
+      DATABASE_APP_PASSWORD: ${DATABASE_APP_PASSWORD:-${DATABASE_PASSWORD}}
+      DATABASE_NAME: ${DATABASE_NAME}
       # Development whatever .env says: .env.example sets production, for the
       # production stack, and in production mode the backend refuses the
       # example secrets, logs as JSON and hides error details.
@@ -55,6 +60,12 @@ services:
       # Dev must use its own secret; the production SESSION_SECRET is ignored.
       SESSION_SECRET: ${DEV_SESSION_SECRET:-}
       SETUP_TOKEN: ${DEV_SETUP_TOKEN:-}
+      # Same names as production: the development stack does not split a
+      # DEV_ backup key the way it splits DEV_SESSION_SECRET. Empty: the
+      # Instance still boots; Create Backup is refused so a plaintext archive
+      # is not written. Never SESSION_SECRET.
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_ENCRYPTION_PREVIOUS_KEYS: ${BACKUP_ENCRYPTION_PREVIOUS_KEYS:-}
       # Dev defaults to the Vite address. Set DEV_CORS_ORIGIN for a custom
       # host or port; production continues to use CORS_ORIGIN.
       CORS_ORIGIN: ${DEV_CORS_ORIGIN:-http://localhost:3000}

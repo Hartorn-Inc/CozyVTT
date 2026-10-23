@@ -3,7 +3,7 @@ import './config/loadEnvFile';
 
 import { createServer } from 'http';
 import { sessionConfig, sessionPool, loginSessionRevocationGuard } from './config/session';
-import { enforceDatabaseCredential } from './config/databaseGuard';
+import { enforceDatabaseCredential, enforceDatabaseRole } from './config/databaseGuard';
 import { createApp } from './app';
 import { initializeWebSocket } from './websocket';
 import logger from './utils/logger';
@@ -15,6 +15,7 @@ import { createShutdown, onShutdownSignals, onProcessFailure } from './utils/shu
 import { setupState } from './services/systemSettings';
 import { removeLeftoverRestoreUploads } from './services/restoreState';
 import { resolveBackupDir } from './utils/backupDir';
+import { warnIfBackupEncryptionKeyUnusable } from './config/backupEncryptionKey';
 import { setupTokenHint } from './services/setupToken';
 import { backupsInProgress } from './services/backupsInProgress';
 import { personalFilesBeingRemoved } from './services/accountDeletion';
@@ -63,7 +64,9 @@ onShutdownSignals(createShutdown({
 // Node's default five minutes to arrive; see config/httpServer.ts.
 applyRequestTimeouts(httpServer);
 
-void loginSessionRevocationGuard.then(() => {
+// Login-session revocation must exist, and production must not be connected
+// as a PostgreSQL superuser, before the process accepts HTTP.
+void Promise.all([loginSessionRevocationGuard, enforceDatabaseRole()]).then(() => {
   httpServer.listen(PORT, () => {
     logger.info(`CozyVTT Backend running on port ${PORT}`);
     logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -80,6 +83,11 @@ void loginSessionRevocationGuard.then(() => {
     for (const warning of getProxyLimitWarnings()) {
       logger.warn(warning);
     }
+
+    // A missing backup key still boots; creating a new Instance backup is
+    // refused so a plaintext archive is not written. Never fatal, including
+    // in production — unlike SESSION_SECRET.
+    warnIfBackupEncryptionKeyUnusable();
 
     // A backend stopped mid-restore left the uploaded backup in the backups
     // folder; nothing can finish restoring it now.

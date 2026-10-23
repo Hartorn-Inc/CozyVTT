@@ -9,6 +9,9 @@
 #
 # The backup file is written to ./backups/ (created if it doesn't exist).
 # Filename format: cozyvtt_YYYYMMDD_HHMMSS.sql.gz
+#
+# This is a database dump, not an Admin Dashboard Instance backup. Instance
+# backups are encrypted with BACKUP_ENCRYPTION_KEY; these sql.gz dumps are not.
 
 set -euo pipefail
 
@@ -49,7 +52,7 @@ fi
 if [[ -z "${DATABASE_URL:-}" ]] && command -v docker >/dev/null 2>&1; then
   DB_SERVICE="${DB_SERVICE:-database}"
   if docker compose ps --status running --services 2>/dev/null | grep -qx "$DB_SERVICE"; then
-    DB_USER="${DATABASE_USER:-cozyvtt}"
+    DB_USER="${DATABASE_APP_USER:-cozyvtt_app}"
     DB_NAME="${DATABASE_NAME:-cozyvtt}"
 
     echo "================================================"
@@ -65,6 +68,7 @@ if [[ -z "${DATABASE_URL:-}" ]] && command -v docker >/dev/null 2>&1; then
     # public.session and public.revoked_login_session only.
     if docker compose exec -T "$DB_SERVICE" \
         pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges \
+          --enable-row-security \
           --exclude-table-data=public.session \
           --exclude-table-data=public.revoked_login_session \
         | gzip > "$BACKUP_FILE"; then
@@ -192,6 +196,8 @@ echo ""
 # Run pg_dump
 # --no-owner --no-privileges: the dump then restores under whatever database
 # user the instance it lands on has, instead of insisting on the name used here.
+# --enable-row-security: the schema owner is NOSUPERUSER NOBYPASSRLS, so
+# pg_dump cannot SET row_security = off for its own session.
 # --exclude-table-data for public.session and public.revoked_login_session
 # (and the same tables in DATABASE_URL's ?schema= when that is not public):
 # login-session rows stay out, so a restore cannot sign back in a device that
@@ -209,6 +215,7 @@ if [[ "$APP_SCHEMA" != "public" ]]; then
 fi
 if PGPASSWORD="$DB_PASS" pg_dump \
     --no-owner --no-privileges \
+    --enable-row-security \
     "${EXCLUDE_SESSION_DATA[@]}" \
     -h "$DB_HOST" \
     -p "$DB_PORT" \

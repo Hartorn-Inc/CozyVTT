@@ -65,7 +65,7 @@ cozyvtt/
 │   │   ├── migrations/    Migration history
 │   │   └── seed.ts        Placeholder for development seed data (creates nothing yet)
 │   ├── scripts/           start.sh (the images' entrypoint: waits for the database,
-│   │                      applies migrations), backup.sh and restore.sh
+│   │                      ensures the schema owner, applies migrations), backup.sh and restore.sh
 │   └── docs/              Backend-specific docs (OpenAPI YAML, WS docs)
 │
 ├── frontend/              React + Vite client
@@ -125,6 +125,8 @@ Copy `backend/.env.example` to `backend/.env` and fill in the values.
 | `SETUP_TOKEN` | No | — | The token the setup wizard asks for; unset, the backend makes one and prints it in its log until setup has run |
 | `UPLOAD_DIR` | No | `uploads` | Where uploaded files are stored, relative to the backend folder |
 | `BACKUP_DIR` | No | `backups` | Where the Admin Dashboard writes backups; must not be inside the uploads folder |
+| `BACKUP_ENCRYPTION_KEY` | For new Instance backups | — | 64 hex characters (`openssl rand -hex 32`). Encrypts Admin Dashboard Instance backups. Missing or unusable (including equal to `SESSION_SECRET`): the Instance still boots; creating a new backup is refused so a plaintext archive is not written |
+| `BACKUP_ENCRYPTION_PREVIOUS_KEYS` | No | — | Previous backup keys, comma and/or whitespace separated, same 64-hex format. Restore tries the current key then these. Never `SESSION_SECRET` |
 | `SESSION_MAX_AGE` | No | `3600000` | Milliseconds a sign-in lasts without a request |
 | `REMEMBER_ME_MAX_AGE` | No | `2592000000` | Milliseconds a **Remember me** sign-in lasts, and the longest any sign-in lasts |
 | `RATE_LIMIT_MAX_REQUESTS` | No | `300` | Requests per minute to `/api` from one address |
@@ -185,11 +187,25 @@ These variables belong in the root `.env` used by Docker Compose, not in
 | `DEV_SMTP_SECURE` | No | — | `true` for TLS SMTP in development |
 
 The development Compose file ignores the production `SESSION_SECRET`,
-`SETUP_TOKEN`, `APP_URL`, and `SMTP_*` values. Email remains disabled unless
+`SETUP_TOKEN`, `APP_URL`, and `SMTP_*` values. `BACKUP_ENCRYPTION_KEY` and
+`BACKUP_ENCRYPTION_PREVIOUS_KEYS` use those production names from `.env`;
+there is no `DEV_` split. Email remains disabled unless
 the development SMTP settings are supplied. Generate `DEV_SESSION_SECRET`
 with `openssl rand -hex 32` and place it only in `.env`; Make rejects the
 known placeholder, blank values, equal production values, and exported
 overrides without printing secrets.
+
+Docker Compose (production and this development stack) also reads these
+database-role settings from the root `.env`. The Node process does not; `start.sh`
+uses them to create the schema owner before it migrates.
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `DATABASE_NAME` | Yes for Compose | `cozyvtt` in production Compose | Database name (`POSTGRES_DB`) |
+| `DATABASE_USER` | Yes for Compose | `cozyvtt` in production Compose | Bootstrap superuser (`POSTGRES_USER`). The app does not connect as this role |
+| `DATABASE_PASSWORD` | Yes | — | Bootstrap superuser password; letters and digits only (hex) |
+| `DATABASE_APP_USER` | No | `cozyvtt_app` | Schema owner: owns the database and `public`, runs migrations, backend `DATABASE_URL` user. Must not equal `DATABASE_USER` |
+| `DATABASE_APP_PASSWORD` | No | `DATABASE_PASSWORD` | Schema owner password; same letters-and-digits-only rule. Unset, first start after upgrade needs no new secret |
 
 ---
 
@@ -232,10 +248,13 @@ CREATE USER cozyvtt WITH PASSWORD 'cozyvtt' CREATEDB;
 CREATE DATABASE cozyvtt OWNER cozyvtt;
 ```
 
-The user owns the database so the migrations can create tables in its `public`
-schema, which PostgreSQL 15 and later no longer lets every user do, and
-`CREATEDB` lets `prisma migrate dev` make the scratch database it compares the
-schema in.
+This local `cozyvtt` role is the schema owner for non-Docker: it owns the
+database so the migrations can create tables in its `public` schema, which
+PostgreSQL 15 and later no longer lets every user do, and `CREATEDB` lets
+`prisma migrate dev` make the scratch database it compares the schema in.
+Docker Compose uses two roles instead: a bootstrap superuser (`DATABASE_USER`)
+and a non-superuser schema owner (`DATABASE_APP_USER`, default `cozyvtt_app`)
+that migrates. `CREATEDB` is not needed on that Docker schema owner.
 
 ### 3. Configure environment
 
@@ -390,7 +409,7 @@ docker compose --project-name "$(make print-project)" --project-directory . --en
 Then open `http://mybox.local:3001` on the other device. Anyone on that
 network can reach it too, so do this only on a network you trust.
 
-The backend container runs `npm run dev`, which restarts the backend when a file it has loaded changes (`node --watch`, below). The frontend container runs `vite` with hot module replacement. The backend's start script (`backend/scripts/start.sh`) applies any pending migrations with `prisma migrate deploy` each time the container starts.
+The backend container runs `npm run dev`, which restarts the backend when a file it has loaded changes (`node --watch`, below). The frontend container runs `vite` with hot module replacement. The backend's start script (`backend/scripts/start.sh`) ensures the schema owner, then applies any pending migrations with `prisma migrate deploy` as that role each time the container starts.
 
 **Each container has its own `node_modules` and its own generated Prisma client.** Source is bind-mounted, `node_modules` is not, so after adding a dependency or changing `schema.prisma` the running container does not see it until you tell it to. Vite answers a missing package with a 500 and the app shows "Something went wrong"; the backend throws on the first query that touches a new table:
 
@@ -858,7 +877,8 @@ also does what self-hosters run and a developer usually does not:
 - **Collects test coverage** in both projects and shows it in the job
   summary, per folder under `src/`. A report only: no threshold fails yet.
 - **Builds both production images** with `docker compose build`, after
-  reading `docker-compose.yml` with the example settings, then starts the
+  reading `docker-compose.yml` with the example settings and pulling the
+  pinned database and nginx images, then starts the
   stack and runs the browser smoke tests against it (see Browser smoke tests
   above).
 - **Checks the bundled nginx's configuration** with
@@ -885,6 +905,17 @@ also does what self-hosters run and a developer usually does not:
   naming the package that asks for it. `keepInStep.test.ts`
   fails once an update of that package asks for the held version or a newer
   one, which is when the override has to go.
+- **Scans the runtime images** an Instance starts (the production compose
+  PostgreSQL and nginx digests, and the built `cozyvtt-backend:latest` and
+  `cozyvtt-frontend:latest`) with Trivy (`trivy image --scanners vuln
+  --pkg-types os --severity HIGH,CRITICAL --exit-code 1 --platform linux/amd64`): a high or critical advisory
+  fails the images job. The scan is OS packages in the linux/amd64 image
+  Compose pulled or built, not the multi-arch index string.
+  JavaScript stays on the npm audit above, and Trivy does not scan nested
+  `package.json` files or helper binaries such as postgres's `gosu`. The
+  scan runs after those images are pulled or built, and before the stack
+  is started. Unfixed OS advisories are not ignored. GitHub CI is the
+  merge gate.
 
 Every action the workflow uses is pinned to a commit, with its version in a
 comment, and `.github/dependabot.yml` asks for a weekly pull request into

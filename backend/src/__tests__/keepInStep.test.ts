@@ -57,6 +57,12 @@
  * to generate one; the guide's example was once changed without the list of
  * refused values, and the new example line started a server.
  *
+ * The Instance backup on-disk format. backend/scripts/unlock-instance-backup.mjs
+ * duplicates BACKUP_ARCHIVE_MAGIC, BACKUP_NONCE_LENGTH and BACKUP_AUTH_TAG_LENGTH
+ * from utils/backupEncryption.ts because the production image runs the helper
+ * as plain Node, not TypeScript. A length change in one file alone would leave
+ * Operators unable to unlock a new archive from the command line.
+ *
  * The database address in the backup and restore scripts. Each reads
  * DATABASE_URL in its own copy of the same block; a fix to one (decoding the
  * password, the default port) has to reach the other.
@@ -300,6 +306,18 @@ describe('backend/scripts/restore.sh', () => {
     // every line of the dump has gone through, and only once it has passed
     // the checks. Anywhere else, the sessions are emptied before the dump
     // brings them back, or not at all.
+    expect(program).toMatch(/SET row_security = off/);
+    expect(program).toMatch(/COMMENT ON EXTENSION/);
+    expect(program).toMatch(/ALTER EXTENSION/);
+    expect(program).toMatch(/DROP EXTENSION/);
+    expect(read('backend/src/utils/pgRestore.ts')).toMatch(/SET row_security = off/);
+    expect(read('backend/src/utils/pgRestore.ts')).toMatch(/COMMENT ON EXTENSION/);
+    expect(read('backend/src/utils/pgRestore.ts')).toMatch(/ALTER EXTENSION/);
+    expect(read('backend/src/utils/pgRestore.ts')).toMatch(/DROP EXTENSION/);
+    expect(read('backend/scripts/backup.sh')).toContain('--enable-row-security');
+    expect(read('backend/src/utils/pgRestore.ts')).toContain('--enable-row-security');
+    expect(read('docs/DEPLOYMENT.md')).toContain('--enable-row-security');
+
     expect(program.match(/\bprint trailer\b/g) ?? []).toHaveLength(1);
     const end = /\n\s*END \{\n([\s\S]*)\n\s*\}\s*$/.exec(program);
     if (!end) throw new Error("restore.sh's awk step no longer ends with an END block; update this test with the script");
@@ -432,6 +450,34 @@ describe('the socket flood ceilings in the WebSocket guide', () => {
 
   it.each(Object.entries(SOCKET_CEILINGS))('%s is stated as the server applies it', (event, ceiling) => {
     expect(stated(event)).toBe(inWords(ceiling.windows));
+  });
+});
+
+describe('the Instance backup on-disk format', () => {
+  const format = (rel: string) => {
+    const source = read(rel);
+    const magic = /BACKUP_ARCHIVE_MAGIC = Buffer\.from\('([^']+)', 'ascii'\)/.exec(source)?.[1];
+    const nonce = /BACKUP_NONCE_LENGTH = (\d+)/.exec(source)?.[1];
+    const tag = /BACKUP_AUTH_TAG_LENGTH = (\d+)/.exec(source)?.[1];
+    if (!magic || !nonce || !tag) {
+      throw new Error(`${rel} no longer declares BACKUP_ARCHIVE_MAGIC / BACKUP_NONCE_LENGTH / BACKUP_AUTH_TAG_LENGTH; update this test with the file`);
+    }
+    return { magic, nonce: Number(nonce), tag: Number(tag) };
+  };
+
+  it('is the same in the TypeScript module and the unlock helper', () => {
+    expect(format('backend/scripts/unlock-instance-backup.mjs')).toEqual(
+      format('backend/src/utils/backupEncryption.ts')
+    );
+  });
+
+  it('is copied into the production image, and the deployment guide names that command', () => {
+    expect(read('backend/Dockerfile.prod')).toMatch(
+      /COPY scripts\/unlock-instance-backup\.mjs \.\/scripts\/unlock-instance-backup\.mjs/
+    );
+    expect(read('docs/DEPLOYMENT.md')).toContain(
+      'node scripts/unlock-instance-backup.mjs'
+    );
   });
 });
 
