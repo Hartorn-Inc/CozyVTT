@@ -13,6 +13,7 @@ import { toJson } from '../../utils/prisma-json';
 import { canReadMap } from '../../services/permissions';
 import { bestEffort } from '../utils';
 import { withMapsLocked } from '../../utils/mapTokens';
+import { applyWriteAuthzDrop, confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerFogHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -48,7 +49,12 @@ export function registerFogHandlers(io: Server, socket: AuthenticatedSocket): vo
       // writing the earlier one's cells away.
       const campaignId = socket.campaignId;
       const op = parsed.data;
-      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { fog: FogState }> => {
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
+      if (!pre.ok) return;
+      const outcome = await withMapsLocked([mapId], async (tx): Promise<{ refused: string } | { fog: FogState } | { authzDenied: true; dropCampaign?: true; campaignId?: string }> => {
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { authzDenied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId };
+        if (authz.role !== 'DM') return { refused: 'Only DMs can modify fog of war' };
         const map = await tx.map.findUnique({
           where: { id: mapId },
           select: { campaignId: true, fogData: true, fogEnabled: true, width: true, height: true, gridSize: true },
@@ -62,6 +68,10 @@ export function registerFogHandlers(io: Server, socket: AuthenticatedSocket): vo
         await tx.map.update({ where: { id: mapId }, data: { fogData: toJson(fog) } });
         return { fog };
       });
+      if ('authzDenied' in outcome) {
+        await applyWriteAuthzDrop(socket, outcome);
+        return;
+      }
       if ('refused' in outcome) {
         socket.emit('error', { message: outcome.refused });
         return;

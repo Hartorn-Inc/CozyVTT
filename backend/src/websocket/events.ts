@@ -1,11 +1,12 @@
 import { types } from 'util';
 import { Server } from 'socket.io';
 import { AuthenticatedSocket, authenticateSocket, authenticateCampaign, socketSessionIsLive } from './auth';
+import { markWriteAuthzConfirmed, startWriteAuthzMonitor, stopWriteAuthzMonitor } from './writeAuthz';
 import { databaseBeingReplaced, RESTORING_MESSAGE } from '../services/restoreState';
 import { broadcastPresence, getOnlineUserIds } from './utils';
 import logger from '../utils/logger';
 import { stateRequestAllowed, withinCeiling, MAX_SOCKETS_PER_USER, TOO_MANY_SOCKETS } from './shared';
-import { registerTokenHandlers } from './handlers/tokens';
+import { putBackDragsLeavingCampaign, registerTokenHandlers } from './handlers/tokens';
 import { registerDiceHandlers } from './handlers/dice';
 import { registerChatHandlers } from './handlers/chat';
 import { registerSpiritHandlers } from './handlers/spirit';
@@ -117,6 +118,9 @@ export function registerEventHandlers(io: Server): void {
           return;
         }
 
+        const leavingCampaignId =
+          socket.campaignId && socket.campaignId !== data.campaignId ? socket.campaignId : undefined;
+
         // SECURITY: one campaign per socket. Leave every other campaign room
         // before taking the new campaign's role, or a role-filtered fan-out in
         // an old room would find this socket still there and answer it with
@@ -148,6 +152,11 @@ export function registerEventHandlers(io: Server): void {
         socket.join(data.campaignId);
         socket.campaignId = data.campaignId;
         socket.role = result.role;
+        markWriteAuthzConfirmed(socket);
+        startWriteAuthzMonitor(socket);
+        if (leavingCampaignId) {
+          putBackDragsLeavingCampaign(socket, leavingCampaignId);
+        }
 
         // Notify the user they've been authenticated
         socket.emit('authenticated', {
@@ -224,6 +233,7 @@ export function registerEventHandlers(io: Server): void {
     // Clean up when user disconnects
     // ============================================
     socket.on('disconnect', async (reason: string) => {
+      stopWriteAuthzMonitor(socket);
       logger.debug('ws disconnected', { socketId: socket.id, reason });
 
       // Notify campaign members if user was in a campaign

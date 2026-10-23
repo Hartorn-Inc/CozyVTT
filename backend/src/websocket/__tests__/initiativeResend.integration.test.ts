@@ -19,8 +19,9 @@ import { randomUUID } from 'crypto';
 import request from 'supertest';
 import { prisma } from '../../config/database';
 import { createTestApp } from '../../__tests__/helpers/test-app';
-import { createWsTestServer, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
+import { createWsTestServer, expectNoEvent, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
 import { clearState, getState } from '../initiativeState';
+import * as writeAuthz from '../writeAuthz';
 import { createTestUser, TEST_PASSWORD } from '../../__tests__/helpers/db';
 
 jest.setTimeout(30000);
@@ -106,6 +107,16 @@ afterAll(async () => {
 
 type Client = Awaited<ReturnType<WsTestServer['connectAndAuth']>>;
 
+function waitDisconnect(client: Client): Promise<string> {
+  return new Promise((resolve) => {
+    if (!client.connected) {
+      resolve('already');
+      return;
+    }
+    client.once('disconnect', (reason: string) => resolve(reason));
+  });
+}
+
 /** Add combatants as the DM, waiting for each broadcast, then let the players' copies land. */
 async function addAll(dm: Client, tokenIds: string[], mapId = mapA) {
   for (const tokenId of tokenIds) {
@@ -136,6 +147,47 @@ describe('ending a fight', () => {
     expect(seen[seen.length - 1]).toMatchObject({ active: false, combatants: [] });
     dm.disconnect();
     player.disconnect();
+  });
+
+  // next awaits membership before it writes. Hold that confirm so end can
+  // clear first; writing the object next read before the await would put
+  // the fight back, and overtaken() would drop end's empty send.
+  it("does not write next back after end has cleared the fight during next's authz", async () => {
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    await addAll(dm, [HERO, HIDDEN]);
+    const started = waitForEvent<State>(dm, 'initiative.state');
+    dm.emit('initiative.start');
+    await started;
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const original = writeAuthz.confirmWriteAuthorization.bind(writeAuthz);
+    const spy = jest.spyOn(writeAuthz, 'confirmWriteAuthorization').mockImplementationOnce(async (socket, options) => {
+      reached();
+      await gate;
+      return original(socket, options);
+    });
+
+    const seen: State[] = [];
+    player.on('initiative.state', (s: State) => { seen.push(s); });
+    try {
+      dm.emit('initiative.next');
+      await waiting;
+      const ended = waitForEvent<State>(player, 'initiative.state');
+      dm.emit('initiative.end');
+      expect(await ended).toMatchObject({ active: false, combatants: [] });
+      release();
+      await sleep(200);
+      expect(getState(campaignId)).toMatchObject({ active: false, combatants: [] });
+      expect(seen[seen.length - 1]).toMatchObject({ active: false, combatants: [] });
+    } finally {
+      spy.mockRestore();
+      dm.disconnect();
+      player.disconnect();
+    }
   });
 });
 
@@ -189,13 +241,22 @@ describe('the order is sent again when a member\'s view of it changes', () => {
     const player = await server.connectAndAuth(playerCookie, campaignId);
     await addAll(dm, [HERO]);
 
-    const demoted = waitForEvent<State>(player, 'initiative.state');
+    const notRevoked = expectNoEvent(player, 'campaign.access.revoked', 500);
+    const dropped = waitDisconnect(player);
     expect((await dmRest.put(`/api/campaigns/${campaignId}/members/${playerId}/role`).send({ role: 'SPECTATOR' })).status).toBe(200);
-    const seen = await demoted;
-    expect(ids(seen)).toEqual([HERO]);
-    expect(seen.combatants[0].hp).toBeNull();
+    await expect(dropped).resolves.toBe('io server disconnect');
+    await expect(notRevoked).resolves.toBeUndefined();
+
+    // Authenticate does not auto-send initiative.state; ask after reconnecting
+    // as SPECTATOR (the old player socket was dropped by the role change).
+    const spectator = await server.connectAndAuth(playerCookie, campaignId);
+    const seen = waitForEvent<State>(spectator, 'initiative.state');
+    spectator.emit('initiative.request_state');
+    const state = await seen;
+    expect(ids(state)).toEqual([HERO]);
+    expect(state.combatants[0].hp).toBeNull();
     dm.disconnect();
-    player.disconnect();
+    spectator.disconnect();
   });
 
   it("through a bound character's new picture", async () => {

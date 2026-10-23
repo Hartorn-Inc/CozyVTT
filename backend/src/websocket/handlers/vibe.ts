@@ -11,6 +11,7 @@ import { lastAmbientVolume, setCampaignAmbientAudio } from '../../services/atmos
 import { sendSystemMessage } from '../utils';
 import { withinCeiling } from '../shared';
 import logger from '../../utils/logger';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -24,6 +25,7 @@ export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): v
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'vibe.update')) return;
 
       // DM only
@@ -41,7 +43,7 @@ export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): v
 
       // Fetch campaign vibe settings
       const campaign = await prisma.campaign.findUnique({
-        where: { id: socket.campaignId },
+        where: { id: campaignId },
         select: { vibeSettings: true, currentVibe: true },
       });
 
@@ -70,14 +72,21 @@ export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): v
         return;
       }
 
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
+        socket.emit('error', { message: 'Only the DM can change the vibe' });
+        return;
+      }
+
       // Update campaign currentVibe
       await prisma.campaign.update({
-        where: { id: socket.campaignId },
+        where: { id: campaignId },
         data: { currentVibe: vibePeriod.name },
       });
 
       // Broadcast to all campaign members (including sender for confirmation)
-      io.to(socket.campaignId).emit('vibe.updated', {
+      io.to(campaignId).emit('vibe.updated', {
         period: vibePeriod.name,
         hue: vibePeriod.hue,
         filter: vibePeriod.filter,
@@ -91,10 +100,10 @@ export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): v
       // notes in this field; those count as no track. A dead or forbidden id
       // silences the table and tells the DM, but never blocks the switch.
       const requestedAudio = vibePeriodAudioAssetId(vibePeriod.audio);
-      const volume = await lastAmbientVolume(socket.campaignId);
-      const audioResult = await setCampaignAmbientAudio(io, socket.campaignId, socket.userId, requestedAudio, { volume });
+      const volume = await lastAmbientVolume(campaignId);
+      const audioResult = await setCampaignAmbientAudio(io, campaignId, socket.userId, requestedAudio, { volume });
       if (!audioResult.ok) {
-        await setCampaignAmbientAudio(io, socket.campaignId, socket.userId, null, { volume });
+        await setCampaignAmbientAudio(io, campaignId, socket.userId, null, { volume });
         socket.emit('error', {
           message: `The "${vibePeriod.name}" period's audio track is unavailable, so the vibe changed without audio`,
         });
@@ -103,12 +112,12 @@ export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): v
       // Send system message
       const periodDisplayName = vibePeriod.name.charAt(0).toUpperCase() + vibePeriod.name.slice(1);
       await sendSystemMessage(
-        socket.campaignId,
+        campaignId,
         `Time advances to ${periodDisplayName}.`,
         { userId: socket.userId, action: 'vibe.update', period: vibePeriod.name }
       );
 
-      logger.info('vibe.update', { period: vibePeriod.name, userId: socket.userId, campaignId: socket.campaignId });
+      logger.info('vibe.update', { period: vibePeriod.name, userId: socket.userId, campaignId });
     } catch (error) {
       logger.error('vibe.update failed', { err: error });
       socket.emit('error', { message: 'Failed to update vibe' });

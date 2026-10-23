@@ -12,6 +12,7 @@ import { toJson } from '../../utils/prisma-json';
 import { canRollDice } from '../../services/permissions';
 import { campaignSockets } from '../utils';
 import { DiceRollSchema } from '../../validators/dice';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -26,6 +27,7 @@ export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): v
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
 
       // Counted before anything else is checked, so a flood of rolls that
       // would be refused (malformed, or from a spectator) is held to the
@@ -72,11 +74,18 @@ export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): v
         return;
       }
 
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
+      if (!authz.ok) return;
+      if (!canRollDice(authz.role)) {
+        socket.emit('error', { message: 'Spectators cannot roll dice' });
+        return;
+      }
+
       // SECURITY: Save ALL rolls to database (including secret rolls for audit)
       // Secret rolls are marked but still saved for DM oversight and dispute resolution
       const diceRoll = await prisma.diceRoll.create({
         data: {
-          campaignId: socket.campaignId,
+          campaignId,
           userId: socket.userId!,
           expression,
           result: rollResult.total,
@@ -126,7 +135,7 @@ export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): v
 
         // SECURITY: Also send to DM(s) for audit/oversight
         // Follows Spirit Layer pattern: DMs see everything, players see filtered
-        for (const s of await campaignSockets(io, socket.campaignId)) {
+        for (const s of await campaignSockets(io, campaignId)) {
           const authedSocket = s as unknown as AuthenticatedSocket;
           // Send to DMs only (excluding the original roller if they're DM)
           if (authedSocket.role === 'DM' && authedSocket.userId !== socket.userId) {
@@ -139,10 +148,10 @@ export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): v
         }
       } else {
         // Normal roll - broadcast to all campaign members
-        io.to(socket.campaignId).emit('dice.rolled', rollData);
+        io.to(campaignId).emit('dice.rolled', rollData);
       }
 
-      logger.debug('dice.roll', { expression, result: rollResult.total, userId: socket.userId, secret: secret || false, campaignId: socket.campaignId });
+      logger.debug('dice.roll', { expression, result: rollResult.total, userId: socket.userId, secret: secret || false, campaignId });
     } catch (error) {
       logger.error('dice.roll failed', { err: error });
       if (error instanceof DiceParserError) {
@@ -162,14 +171,18 @@ export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): v
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
       if (!withinCeiling(socket, 'dice.clearHistory')) return;
 
       // Who is running the game, not who owns the campaign. These are separate
       // facts — `Campaign.ownerId` never moves, while the DM seat can — and they
       // only coincide in a campaign whose creator still runs it. Reading
       // ownership here refused the actual DM after a handover and let the former
-      // DM, now a player, keep clearing the panel for everyone.
-      if (socket.role !== 'DM') {
+      // DM, now a player, keep clearing the panel for everyone. Rechecked at
+      // commit so a demotion that landed on this socket cannot clear (ADR 0007).
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
+      if (!authz.ok) return;
+      if (authz.role !== 'DM') {
         socket.emit('error', { message: 'Only the DM can clear roll history' });
         return;
       }
@@ -182,14 +195,14 @@ export function registerDiceHandlers(io: Server, socket: AuthenticatedSocket): v
       // A watermark, not a delete: secret rolls are stored deliberately for
       // audit, and clearing the panel should not destroy that record.
       await prisma.campaign.update({
-        where: { id: socket.campaignId },
+        where: { id: campaignId },
         data: { rollHistoryClearedAt: new Date() },
       });
 
       // Broadcast to all campaign members (including DM)
-      io.to(socket.campaignId).emit('dice.historyCleared');
+      io.to(campaignId).emit('dice.historyCleared');
 
-      logger.info('dice.clearHistory', { campaignId: socket.campaignId, userId: socket.userId });
+      logger.info('dice.clearHistory', { campaignId, userId: socket.userId });
     } catch (error) {
       logger.error('dice.clearHistory failed', { err: error });
       socket.emit('error', { message: 'Failed to clear dice history' });

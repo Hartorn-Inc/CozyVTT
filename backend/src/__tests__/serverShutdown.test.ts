@@ -31,25 +31,22 @@ interface Ended {
 }
 
 /**
- * Env for a real server process. Jest workers cap Prisma at five connections;
- * that cap is for the suite, not for the spawned backend.
+ * Env for a real server process. Keep the suite's connection_limit so the
+ * spawned process does not blow the Postgres ceiling the suite already
+ * protects against. Five is enough to listen: the revocation guard uses
+ * sessionPool, and setupState uses Prisma after listen; they are separate
+ * pools.
  */
 function serverEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'test', PORT: '0', LOG_LEVEL: 'info' };
-  const url = env.DATABASE_URL;
-  if (!url) return env;
-  try {
-    const parsed = new URL(url);
-    parsed.searchParams.delete('connection_limit');
-    env.DATABASE_URL = parsed.toString();
-  } catch {
-    // Unusual addresses still reach the server as they were.
-  }
-  return env;
+  return { ...process.env, NODE_ENV: 'test', PORT: '0', LOG_LEVEL: 'info' };
 }
 
-/** Starts the server, waits until it listens, sends the signal, and reports how it ended. */
-function startAndStop(signal: NodeJS.Signals): Promise<Ended> {
+/**
+ * One spawn: wait until it listens, send the signal, and report how it ended.
+ * `ms` is -1 when the child exited before listen, so a retry can tell that
+ * apart from a listen that then shut down with a non-zero code.
+ */
+function startAndStopOnce(signal: NodeJS.Signals): Promise<Ended> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ['-r', 'ts-node/register/transpile-only', 'src/server.ts'], {
       cwd: backend,
@@ -76,6 +73,18 @@ function startAndStop(signal: NodeJS.Signals): Promise<Ended> {
       resolve({ code, signal: endedBy, output, ms: sentAt ? Date.now() - sentAt : -1 });
     });
   });
+}
+
+/**
+ * Starts the server, waits until it listens, sends the signal, and reports
+ * how it ended. A child that FATAL-exits before listen (the session pool
+ * waiting on a connection while the suite holds the rest) is started once
+ * more. A listen that then shuts down with a non-zero code is not retried.
+ */
+async function startAndStop(signal: NodeJS.Signals): Promise<Ended> {
+  const first = await startAndStopOnce(signal);
+  if (first.ms >= 0) return first;
+  return startAndStopOnce(signal);
 }
 
 it.each(['SIGTERM', 'SIGINT'] as const)('%s closes everything and exits 0 within a few seconds', async (signal) => {

@@ -111,7 +111,14 @@ it('a roll stands, and the new order goes out, when the dice log entry cannot be
     active: true, round: 1, currentTokenId: null,
     combatants: [{ tokenId: ORC, mapId, name: 'Orc', imageUrl: '', initiative: null, hp: null, type: 'npc', disposition: null }],
   });
-  jest.spyOn(prisma.user, 'findUnique').mockImplementationOnce(boom as never);
+  const findUnique = prisma.user.findUnique.bind(prisma.user);
+  jest.spyOn(prisma.user, 'findUnique').mockImplementation(((args: never) => {
+    // Commit-time MFA confirm also reads the user; only the dice-log
+    // displayName lookup should fail, so the roll still stands.
+    const select = (args as { select?: Record<string, unknown> }).select;
+    if (select && 'displayName' in select) return boom();
+    return findUnique(args);
+  }) as never);
   const noError = expectNoEvent(dm, 'error', 800);
   const order = waitForEvent<{ combatants: Array<{ tokenId: string; initiative: number | null }> }>(dm, 'initiative.state');
   dm.emit('initiative.roll', { tokenId: ORC, mapId });

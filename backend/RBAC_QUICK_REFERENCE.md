@@ -682,17 +682,20 @@ one atomic path rather than two.
 
 ### Membership changes under open sockets
 
-`socket.role` and `socket.campaignId` are read once, when the socket
-authenticates, and trusted by every gated handler after that. Anything that
-changes a membership therefore has to reach live connections, or the person
-keeps what they had until they reload. The routes below do, and all of them
-are best-effort so a socket layer that is down cannot fail a change already
+`socket.role` and `socket.campaignId` are set when the socket authenticates;
+handlers never take campaign or role off the wire. Discrete writes re-read
+the login session and CampaignMembership at commit and use that role for the
+permission decision (0 s stale). `token.move` frames may reuse a confirm for
+at most 2 s; a monitor then disconnects if authorization is gone. A campaign
+kick or role change drops that campaign's sockets and leaves the login
+session. The routes below reach live connections, and all of them are
+best-effort so a socket layer that is down cannot fail a change already
 written:
 
 | Route | Helper |
 |---|---|
 | `PUT /api/campaigns/:id/dm` | `applyRoleToLiveSockets(userId, campaignId, role)` for both seats |
-| `PUT /api/campaigns/:id/members/:userId/role` | `applyRoleToLiveSockets(userId, campaignId, role)`, then `campaign.role.changed` to the campaign so every open page, the member's own included, updates its controls |
+| `PUT /api/campaigns/:id/members/:userId/role` | `applyRoleToLiveSockets(userId, campaignId, role)`, then `campaign.role.changed` to whoever is still in the room (the member's own campaign sockets are already dropped; they pick up the new role on reconnect) |
 | `DELETE /api/campaigns/:id/members/:userId` | `clearCampaignFromLiveSockets(userId, campaignId)` |
 | `DELETE /api/campaigns/:id` | `clearDeletedCampaignFromLiveSockets(campaignId)` for every socket in the room, then the combat state is cleared |
 
@@ -709,19 +712,22 @@ The routes below end a sign-in's live sockets along with it, through `endLiveSoc
 
 Each socket is sent `campaign.access.revoked` with reason `signed-out` and a sentence saying why as its `message` (such as "You signed out." or "The instance is being restored from a backup. Sign in again once it has finished."), then disconnected. A socket records the login session it was opened under (`sessionId`, set at the handshake) so a sign-in can be singled out.
 
-`clearCampaignFromLiveSockets` clears the cached campaign and role and leaves the
-room, so the socket can neither act nor listen. Clearing `campaignId` is what
-stops it acting: every handler refuses a socket that is not authenticated to a
-campaign. A socket belongs to one campaign, so somebody playing elsewhere in
-another tab is untouched. `authenticate` keeps a socket in one campaign room:
-it handles the events one at a time per socket and leaves every other campaign
-room on each success, and every fan-out that walks a room and reads each
-socket's role goes through `campaignSockets`, which skips a socket whose
-`campaignId` is not that room. A fan-out that awaits anything between that
-fetch and reading the roles filters again with `stillInCampaign` right before
-it sends, and a drag's frames, whose recipients are decided once per drag, go
-only to those still in the room, so a socket that switches campaigns mid-way
-is not sent the old campaign's view under its new role.
+`clearCampaignFromLiveSockets` tells those sockets `campaign.access.revoked`
+with reason `removed` and disconnects them. The login session remains: a later
+handshake with the same cookie is accepted; `authenticate` to that campaign is
+then refused. `applyRoleToLiveSockets` disconnects those campaign sockets
+without `campaign.access.revoked` (still a member) so the production client
+reconnects and re-authenticates with the new role. A socket belongs to one
+campaign, so somebody playing elsewhere in another tab is untouched.
+`authenticate` keeps a socket in one campaign room: it handles the events one
+at a time per socket and leaves every other campaign room on each success, and
+every fan-out that walks a room and reads each socket's role goes through
+`campaignSockets`, which skips a socket whose `campaignId` is not that room. A
+fan-out that awaits anything between that fetch and reading the roles filters
+again with `stillInCampaign` right before it sends, and a drag's frames, whose
+recipients are decided once per drag, go only to those still in the room, so a
+socket that switches campaigns mid-way is not sent the old campaign's view
+under its new role.
 
 REST needs no equivalent for campaign roles; its middleware reads the membership
 per request. Platform role is a different matter, see above.

@@ -13,6 +13,8 @@ import type { DnD5eHitDice } from '../../game-systems/dnd5e';
 import { GAME_SYSTEM_SHEET_FROZEN_MESSAGE, isGameSystemSheetFrozen } from '../../game-systems';
 import { withinCeiling } from '../shared';
 import { emitCharacterUpdated } from '../utils';
+import { applyWriteAuthzDrop, confirmWriteAuthorization } from '../writeAuthz';
+import { acceptLiveSheetPatch } from '../../utils/prepareSheet';
 
 /** The parts of a character blob this handler touches — see `charData` below. */
 interface HpBlock {
@@ -107,6 +109,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
 
       // Each change holds the character's row for a transaction, so a burst
       // of them would hold every database connection the instance has.
@@ -114,8 +117,8 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
 
       const { characterId, delta } = data;
 
-      if (!characterId || typeof delta !== 'number' || !Number.isFinite(delta)) {
-        socket.emit('error', { message: 'characterId (string) and delta (number) are required' });
+      if (!characterId || typeof delta !== 'number' || !Number.isInteger(delta) || !Number.isFinite(delta)) {
+        socket.emit('error', { message: 'characterId (string) and delta (integer) are required' });
         return;
       }
 
@@ -131,7 +134,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
 
       // Verify character belongs to this campaign
       const membership = await prisma.campaignMembership.findFirst({
-        where: { campaignId: socket.campaignId, characterIds: { has: characterId } },
+        where: { campaignId, characterIds: { has: characterId } },
       });
 
       if (!membership) {
@@ -163,16 +166,43 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
 
       // Read and written under the row's lock, afresh. Reading before the
       // lock and writing the whole sheet back undid any save that landed in
-      // between; a save arriving now waits for this one instead.
+      // between; a save arriving now waits for this one instead. Session and
+      // MFA are confirmed before the lock; membership is re-read through the
+      // transaction so a kick or demotion cannot persist HP (ADR 0007).
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
+      if (!pre.ok) return;
       const outcome = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Character" WHERE id = ${characterId} FOR UPDATE`;
-        const fresh = await tx.character.findUnique({ where: { id: characterId }, select: { data: true } });
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId } as const;
+        if (authz.role === 'SPECTATOR') return { error: 'Spectators cannot change a character' } as const;
+        const fresh = await tx.character.findUnique({
+          where: { id: characterId },
+          select: { data: true, userId: true, gameSystem: true, campaignId: true },
+        });
         if (!fresh) return { error: 'Character not found' } as const;
-        const applied = applyHpDelta(character.gameSystem, fresh.data, delta);
+        if (fresh.campaignId !== campaignId) return { error: 'Character is not in this campaign' } as const;
+        if (fresh.userId !== socket.userId && authz.role !== 'DM') {
+          return { error: 'You do not have permission to update this character\'s HP' } as const;
+        }
+        if (isGameSystemSheetFrozen(fresh.gameSystem)) {
+          return { error: GAME_SYSTEM_SHEET_FROZEN_MESSAGE } as const;
+        }
+        const applied = applyHpDelta(fresh.gameSystem, fresh.data, delta);
         if ('error' in applied) return applied;
-        await tx.character.update({ where: { id: characterId }, data: { data: toJson(applied.data) } });
+        const accepted = acceptLiveSheetPatch({
+          gameSystem: fresh.gameSystem,
+          original: fresh.data,
+          patched: applied.data,
+        });
+        if (!accepted.ok) return { error: accepted.message };
+        await tx.character.update({ where: { id: characterId }, data: { data: toJson(accepted.data) } });
         return applied;
       });
+      if ('denied' in outcome) {
+        await applyWriteAuthzDrop(socket, outcome);
+        return;
+      }
       if ('error' in outcome) {
         socket.emit('error', { message: outcome.error });
         return;
@@ -180,7 +210,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       const { current, max, temp } = outcome.hp;
 
       // Broadcast updated HP to all campaign members
-      io.to(socket.campaignId!).emit('character.hp.updated', {
+      io.to(campaignId).emit('character.hp.updated', {
         characterId,
         hp: { current, max, temp },
       });
@@ -206,6 +236,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
 
       if (!withinCeiling(socket, 'character.hitdice.spend')) return;
 
@@ -223,7 +254,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       }
 
       const membership = await prisma.campaignMembership.findFirst({
-        where: { campaignId: socket.campaignId, characterIds: { has: characterId } },
+        where: { campaignId, characterIds: { has: characterId } },
       });
       if (!membership) {
         socket.emit('error', { message: 'Character is not in this campaign' });
@@ -252,15 +283,45 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       }
 
       // Under the row's lock and read afresh, for the reason given for hit
-      // points above.
+      // points above. Session and MFA are confirmed before the lock;
+      // membership is re-read through the transaction so a PLAYER demoted
+      // to SPECTATOR mid-write cannot land a hit die.
+      const pre = await confirmWriteAuthorization(socket, { campaignId });
+      if (!pre.ok) return;
       const outcome = await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Character" WHERE id = ${characterId} FOR UPDATE`;
-        const fresh = await tx.character.findUnique({ where: { id: characterId }, select: { data: true } });
+        const authz = await confirmWriteAuthorization(socket, { db: tx, campaignId });
+        if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign, campaignId: authz.campaignId } as const;
+        if (authz.role === 'SPECTATOR') return { error: 'Spectators cannot change a character' } as const;
+        const fresh = await tx.character.findUnique({
+          where: { id: characterId },
+          select: { data: true, userId: true, gameSystem: true, campaignId: true },
+        });
         if (!fresh) return { error: 'Character not found' } as const;
+        if (fresh.campaignId !== campaignId) return { error: 'Character is not in this campaign' } as const;
+        if (fresh.userId !== socket.userId && authz.role !== 'DM') {
+          return { error: 'You do not have permission to spend this character\'s hit dice' } as const;
+        }
+        if (isGameSystemSheetFrozen(fresh.gameSystem)) {
+          return { error: GAME_SYSTEM_SHEET_FROZEN_MESSAGE } as const;
+        }
+        if (fresh.gameSystem !== 'DND_5E') {
+          return { error: 'Hit dice are not tracked for this game system' } as const;
+        }
         const spent = spendHitDie(fresh.data, index);
         if ('error' in spent) return spent;
-        return { updated: await tx.character.update({ where: { id: characterId }, data: { data: toJson(spent.data) } }) };
+        const accepted = acceptLiveSheetPatch({
+          gameSystem: fresh.gameSystem,
+          original: fresh.data,
+          patched: spent.data,
+        });
+        if (!accepted.ok) return { error: accepted.message };
+        return { updated: await tx.character.update({ where: { id: characterId }, data: { data: toJson(accepted.data) } }) };
       });
+      if ('denied' in outcome) {
+        await applyWriteAuthzDrop(socket, outcome);
+        return;
+      }
       if ('error' in outcome) {
         socket.emit('error', { message: outcome.error });
         return;
@@ -272,7 +333,7 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
       // narrow one of its own that nothing would listen to. No token art or
       // name changed, so nothing needs to repaint the map.
       // The sheet as each member may read it: the Keeper's Notes to the DM alone.
-      await emitCharacterUpdated(socket.campaignId, updated, {
+      await emitCharacterUpdated(campaignId, updated, {
         characterId,
         userId: socket.userId,
         tokensChanged: false,

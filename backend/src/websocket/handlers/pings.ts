@@ -19,6 +19,7 @@ import { prisma } from '../../config/database';
 import logger from '../../utils/logger';
 import { emitToMapReaders } from '../utils';
 import { pingLimiter } from '../shared';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 /** Max pings per user per window, and the window itself. */
 const PING_LIMIT = 10;
@@ -52,6 +53,8 @@ export function registerPingHandlers(io: Server, socket: AuthenticatedSocket): v
       // would still send it to this campaign's DMs.
       const map = await prisma.map.findUnique({ where: { id: mapId }, select: { campaignId: true } });
       if (!map || map.campaignId !== campaignId) return;
+
+      if (!(await confirmWriteAuthorization(socket, { campaignId })).ok) return;
 
       // The sender included, so they see their own ping as well; a ping on
       // a map the DM is preparing reaches only the DM.

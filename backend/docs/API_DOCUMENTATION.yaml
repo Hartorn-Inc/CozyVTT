@@ -2852,9 +2852,9 @@ paths:
         its owner has left is readable and editable by its owner alone. The
         removed member's open connections leave the campaign and receive
         `campaign.access.revoked` (`{ campaignId, reason: 'removed', message:
-        'You were removed from this campaign.' }`), and the campaign
-        receives `roster.updated` (`{ action: 'member.left', userId,
-        campaignId }`).
+        'You were removed from this campaign.' }`). The login session
+        remains. The campaign receives `roster.updated` (`{ action:
+        'member.left', userId, campaignId }`).
       operationId: removeMember
       security:
         - cookieAuth: []
@@ -2901,11 +2901,14 @@ paths:
         than `DM`, `PLAYER` or `SPECTATOR` answers 400 `Role must be DM,
         PLAYER, or SPECTATOR`, checked before the member is looked up. The
         member keeps their assigned
-        characters. Their open connections take the new role at once, and
+        characters. That campaign's sockets are dropped without
+        `campaign.access.revoked` so a cached authenticate-time role cannot
+        outlive the write (ADR 0007); the login session remains and a
+        reconnecting client authenticates with the new role.
         `campaign.role.changed` (`{ campaignId, userId, role }`) goes to
-        everyone in the campaign so open pages follow it, with a
-        `roster.updated`; the initiative order and the map on screen are sent
-        again as the new role sees it.
+        whoever is still in the room (the member's own campaign sockets are
+        already gone), with a `roster.updated`; the initiative order and the
+        map on screen are sent again as the remaining roles see them.
       operationId: changeMemberRole
       security:
         - cookieAuth: []
@@ -2965,9 +2968,12 @@ paths:
         separate, which lets an owner hand the game to someone else and remain at
         the table as a player. Callable by the sitting DM, the campaign owner
         (even when they are not the DM), or a platform admin. Both members'
-        open connections take their new roles at once; `campaign.dm.transferred`
-        and a `roster.updated` for each go to the campaign, and the initiative
-        order and the map on screen are sent again as each new role sees it.
+        campaign sockets are dropped without `campaign.access.revoked` (ADR
+        0007); login sessions remain and reconnecting clients authenticate with
+        the new roles. `campaign.dm.transferred` and a `roster.updated` for
+        each go to whoever is still in the room (those campaign sockets are
+        already gone), and the initiative order and the map on screen are sent
+        again as the remaining roles see them.
         The caller need not be a member, so an unknown campaign is a 404 here,
         as is a `userId` that is not a member; naming the sitting DM is a 400.
         Who may hand the seat over, who holds it and the change are read and

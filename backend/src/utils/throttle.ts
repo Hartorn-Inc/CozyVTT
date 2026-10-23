@@ -9,8 +9,14 @@
  * Time is read from performance.now(), which only counts up: the wall clock
  * can be set back, and a wait measured on it would then hold calls for as
  * long as the clock moved.
+ *
+ * `cancel()` drops a trailing call that has not run yet (timer and pending
+ * arguments), so a disconnect can put a drag back without a late frame
+ * restoring `heldAt` afterwards.
  */
-export function throttle<A extends unknown[]>(fn: (...args: A) => unknown, wait: number): (...args: A) => void {
+export type Throttled<A extends unknown[]> = ((...args: A) => void) & { cancel: () => void };
+
+export function throttle<A extends unknown[]>(fn: (...args: A) => unknown, wait: number): Throttled<A> {
   let lastCall = -Infinity;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pending: A | undefined;
@@ -20,7 +26,7 @@ export function throttle<A extends unknown[]>(fn: (...args: A) => unknown, wait:
     fn(...args);
   };
 
-  return (...args: A): void => {
+  const run = (...args: A): void => {
     const remaining = wait - (performance.now() - lastCall);
     if (remaining <= 0 && timer === undefined) {
       call(args);
@@ -36,4 +42,12 @@ export function throttle<A extends unknown[]>(fn: (...args: A) => unknown, wait:
       }, Math.max(remaining, 0));
     }
   };
+  run.cancel = (): void => {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      timer = undefined;
+    }
+    pending = undefined;
+  };
+  return run;
 }

@@ -81,4 +81,16 @@ describe('throttle', () => {
     expect(fn.mock.calls.length).toBeLessThanOrEqual(64);
     expect(fn.mock.calls.at(-1)).toEqual([996]);
   });
+
+  it('cancel drops a trailing call that has not run yet', () => {
+    const fn = jest.fn();
+    const paced = throttle(fn, 16);
+    paced(1);
+    paced(2);
+    paced(3);
+    expect(fn.mock.calls).toEqual([[1]]);
+    paced.cancel();
+    jest.advanceTimersByTime(100);
+    expect(fn.mock.calls).toEqual([[1]]);
+  });
 });

@@ -7,6 +7,7 @@ import { AuthenticatedSocket } from '../auth';
 import { prisma } from '../../config/database';
 import logger from '../../utils/logger';
 import { chatMessageLimiter, withinCeiling } from '../shared';
+import { confirmWriteAuthorization } from '../writeAuthz';
 
 export function registerChatHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -15,7 +16,8 @@ export function registerChatHandlers(io: Server, socket: AuthenticatedSocket): v
    * The message type comes from the sender's role, never from the payload.
    * Always under the per-user flood ceiling; the campaign's chat cooldown,
    * when the DM turns it on, is the stricter rule on top.
-   * SECURITY: Uses server-authenticated socket.campaignId and socket.role only.
+   * SECURITY: campaign comes from the socket, never the payload; the write
+   * re-reads membership at commit and uses that role for the message type.
    */
   socket.on('chat.message', async (data: { content: string; type?: 'PLAYER' | 'DM' }) => {
     try {
@@ -23,6 +25,7 @@ export function registerChatHandlers(io: Server, socket: AuthenticatedSocket): v
         socket.emit('error', { message: 'Not authenticated to a campaign' });
         return;
       }
+      const campaignId = socket.campaignId;
 
       if (!withinCeiling(socket, 'chat.message')) return;
 
@@ -46,20 +49,15 @@ export function registerChatHandlers(io: Server, socket: AuthenticatedSocket): v
         return;
       }
 
-      // The type is decided by the sender's role on the session, not by the
-      // payload: a player's message is always PLAYER. The DM's is DM unless
-      // they ask to speak as a player (out of character).
-      const type: 'PLAYER' | 'DM' = socket.role === 'DM' ? (data.type ?? 'DM') : 'PLAYER';
-
       // Rate limiting: respect campaign's chatCooldown settings
       const campaignSettings = await prisma.campaign.findUnique({
-        where: { id: socket.campaignId },
+        where: { id: campaignId },
         select: { chatCooldownEnabled: true, chatCooldownSeconds: true },
       });
 
       if (campaignSettings?.chatCooldownEnabled) {
         const windowMs = (campaignSettings.chatCooldownSeconds ?? 5) * 1000;
-        if (!chatMessageLimiter.check(`${socket.userId}:${socket.campaignId}`, 1, windowMs)) {
+        if (!chatMessageLimiter.check(`${socket.userId}:${campaignId}`, 1, windowMs)) {
           socket.emit('error', { message: `Rate limit: wait ${campaignSettings.chatCooldownSeconds}s between messages.` });
           return;
         }
@@ -76,28 +74,35 @@ export function registerChatHandlers(io: Server, socket: AuthenticatedSocket): v
         return;
       }
 
+      const authz = await confirmWriteAuthorization(socket, { campaignId });
+      if (!authz.ok) return;
+      // The type is decided by the sender's role at commit, not by the
+      // payload: a player's message is always PLAYER. The DM's is DM unless
+      // they ask to speak as a player (out of character).
+      const committedType: 'PLAYER' | 'DM' = authz.role === 'DM' ? (data.type ?? 'DM') : 'PLAYER';
+
       // Save to database
       const message = await prisma.message.create({
         data: {
-          campaignId: socket.campaignId,
+          campaignId,
           userId: socket.userId!,
-          type,
+          type: committedType,
           content: content.trim(),
           // metadata is optional for chat messages
         },
       });
 
       // Broadcast to all campaign members (including sender)
-      io.to(socket.campaignId).emit('chat.message', {
+      io.to(campaignId).emit('chat.message', {
         id: message.id,
         userId: socket.userId,
         userName: user.displayName,
         content: content.trim(),
-        type,
+        type: committedType,
         timestamp: message.createdAt.toISOString(),
       });
 
-      logger.debug('chat.message', { type, userId: socket.userId, campaignId: socket.campaignId });
+      logger.debug('chat.message', { type: committedType, userId: socket.userId, campaignId });
     } catch (error) {
       logger.error('chat.message failed', { err: error });
       socket.emit('error', { message: 'Failed to send chat message' });
