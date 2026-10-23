@@ -3,7 +3,7 @@
 Scan the four runtime images an Instance starts for High and Critical
 advisories. Trivy is invoked as:
 
-    trivy image --scanners vuln --severity HIGH,CRITICAL --exit-code 1 --format table --ignorefile /dev/null -- <image>
+    trivy image --scanners vuln --pkg-types os --severity HIGH,CRITICAL --exit-code 1 --format table --ignorefile /dev/null -- <image>
 
 Images, in this order:
 
@@ -12,12 +12,15 @@ Images, in this order:
   3. ``cozyvtt-backend:latest`` (built, not pulled)
   4. ``cozyvtt-frontend:latest`` (built, not pulled)
 
-Builder stages and the development compose file are not scanned. Unfixed
-advisories are not ignored: that matches ``npm audit --omit=dev
---audit-level=high``. ``TRIVY_*`` environment variables are dropped, and
-``--ignorefile /dev/null`` is passed, so a runner or a repo ignore file
-cannot skip CVEs. The last ``image:`` in each service block wins, as Compose
-does.
+Builder stages and the development compose file are not scanned. The scan is
+OS packages in those images (Alpine and the like). ``npm audit --omit=dev
+--audit-level=high`` remains the JavaScript gate: Trivy language scanners
+also read nested ``package.json`` files and helper binaries such as
+postgres's ``gosu``, which is not what an Instance runs as the app.
+Unfixed OS advisories are not ignored. ``TRIVY_*`` environment variables
+are dropped, and ``--ignorefile /dev/null`` is passed, so a runner or a
+repo ignore file cannot skip CVEs. The last ``image:`` in each service
+block wins, as Compose does.
 
 Every image is scanned even if an earlier one failed. Missing Trivy or a
 missing image fails with a message; CI installs Trivy and pulls or builds
@@ -55,6 +58,8 @@ TRIVY = (
     'image',
     '--scanners',
     'vuln',
+    '--pkg-types',
+    'os',
     '--severity',
     'HIGH,CRITICAL',
     '--exit-code',

@@ -889,10 +889,13 @@ also does what self-hosters run and a developer usually does not:
 - **Scans the runtime images** an Instance starts (the production compose
   PostgreSQL and nginx digests, and the built `cozyvtt-backend:latest` and
   `cozyvtt-frontend:latest`) with Trivy (`trivy image --scanners vuln
-  --severity HIGH,CRITICAL --exit-code 1`): a high or critical advisory
-  fails the images job. The scan runs after those images are pulled or
-  built, and before the stack is started. Unfixed advisories are not
-  ignored, matching the npm audit. GitHub CI is the merge gate.
+  --pkg-types os --severity HIGH,CRITICAL --exit-code 1`): a high or critical advisory
+  fails the images job. The scan is OS packages in those images;
+  JavaScript stays on the npm audit above, and Trivy does not scan nested
+  `package.json` files or helper binaries such as postgres's `gosu`. The
+  scan runs after those images are pulled or built, and before the stack
+  is started. Unfixed OS advisories are not ignored. GitHub CI is the
+  merge gate.
 
 Every action the workflow uses is pinned to a commit, with its version in a
 comment, and `.github/dependabot.yml` asks for a weekly pull request into

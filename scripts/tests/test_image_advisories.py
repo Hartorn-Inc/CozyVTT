@@ -73,6 +73,7 @@ class ImageAdvisories(unittest.TestCase):
         self.assertEqual(ia.TRIVY[ia.TRIVY.index('--exit-code') + 1], '1')
         self.assertIn('--scanners', ia.TRIVY)
         self.assertIn('vuln', ia.TRIVY)
+        self.assertEqual(ia.TRIVY[ia.TRIVY.index('--pkg-types') + 1], 'os')
         self.assertIn('--ignorefile', ia.TRIVY)
         self.assertEqual(ia.TRIVY[ia.TRIVY.index('--ignorefile') + 1], '/dev/null')
         self.assertNotIn('--ignore-unfixed', ia.TRIVY)

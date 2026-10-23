@@ -730,6 +730,7 @@ describe('the dependency check SECURITY.md describes', () => {
     const script = read('scripts/ci/image-advisories.py');
     expect(script).toMatch(/--severity['\s,]+HIGH,CRITICAL|HIGH,CRITICAL/);
     expect(script).toMatch(/--exit-code['\s,]+1/);
+    expect(script).toMatch(/--pkg-types['\s,]+os/);
     expect(read('SECURITY.md')).toMatch(/high or critical(?: advisory)? in(?: those)? runtime images.*fail/i);
     expect(read('docs/DEVELOPMENT.md')).toMatch(/high or critical(?: advisory)?\s+fails the images job/i);
   });
