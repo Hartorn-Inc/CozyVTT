@@ -42,8 +42,13 @@ x-logging: &logging
 
 services:
   database:
-    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
-    # Supported production is linux/amd64 even when the digest is a multi-arch index.
+    # Built from the postgres:18-alpine pin in database/Dockerfile (same digest
+    # as docker-compose.dev.yml and CI) plus Alpine's brotli-libs upgrade.
+    build:
+      context: ./database
+      dockerfile: Dockerfile
+    image: cozyvtt-database:latest
+    # Supported production is linux/amd64 even when the parent digest is a multi-arch index.
     platform: linux/amd64
     container_name: cozyvtt-database
     logging: *logging
@@ -243,9 +248,10 @@ services:
           memory: 128M
 
   nginx:
-    # nginx's stable line, the same as the frontend image's (frontend/Dockerfile.prod).
-    # A test keeps the two in step; move both together.
-    image: nginx:1.30-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+    # nginx's stable alpine-slim line, the same as the frontend image's
+    # (frontend/Dockerfile.prod). Slim has no brotli-libs. A test keeps the
+    # two in step; move both together.
+    image: nginx:1.30-alpine-slim@sha256:d9322bba63c6cfc63dc9e86522fd4f95fd4d9020a02b5bced282bbf38b8c3960
     platform: linux/amd64
     container_name: cozyvtt-nginx
     # TODO(shutdown): with a Socket.io connection open, `docker compose stop`

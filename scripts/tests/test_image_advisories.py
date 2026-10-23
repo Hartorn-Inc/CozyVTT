@@ -26,6 +26,9 @@ SCRIPT = os.path.join(SCRIPTS, 'ci', 'image-advisories.py')
 WORKFLOW = os.path.join(ROOT, '.github', 'workflows', 'ci.yml')
 OVERRIDE = os.path.join(ROOT, 'docker-compose.override.example.yml')
 COMPOSE = os.path.join(ROOT, 'docker-compose.yml')
+DEV_COMPOSE = os.path.join(ROOT, 'docker-compose.dev.yml')
+DATABASE_DOCKERFILE = os.path.join(ROOT, 'database', 'Dockerfile')
+FRONTEND_DOCKERFILE = os.path.join(ROOT, 'frontend', 'Dockerfile.prod')
 DEPLOYMENT = os.path.join(ROOT, 'docs', 'DEPLOYMENT.md')
 DEVELOPMENT = os.path.join(ROOT, 'docs', 'DEVELOPMENT.md')
 SECURITY = os.path.join(ROOT, 'SECURITY.md')
@@ -92,11 +95,12 @@ class ImageAdvisories(unittest.TestCase):
             services['backend']['image'],
             services['frontend']['image'],
         )
-        self.assertRegex(expected[0], r'^postgres:\S+@sha256:[0-9a-f]{64}$')
+        self.assertEqual(expected[0], 'cozyvtt-database:latest')
         self.assertRegex(expected[1], r'^nginx:\S+@sha256:[0-9a-f]{64}$')
         self.assertEqual(expected[2], 'cozyvtt-backend:latest')
         self.assertEqual(expected[3], 'cozyvtt-frontend:latest')
         self.assertEqual(ia.runtime_images(), expected)
+        self.assertEqual(set(ia.BUILT), {expected[0], expected[2], expected[3]})
 
     def test_last_image_in_a_service_block_wins(self):
         digest = 'postgres:18-alpine@sha256:' + 'ab' * 32
@@ -131,10 +135,11 @@ class ImageAdvisories(unittest.TestCase):
         self.assertEqual(ia.SKIP_FILES, SKIP_FILES)
 
     def test_images_job_pulls_builds_then_runs_the_script(self):
-        pull = self.images_job.find('docker compose pull database nginx')
+        pull = self.images_job.find('docker compose pull nginx')
         build = self.images_job.find('docker compose build')
         scan = self.images_job.find('python3 scripts/ci/image-advisories.py')
         self.assertNotEqual(pull, -1)
+        self.assertEqual(self.images_job.find('docker compose pull database'), -1)
         self.assertGreater(build, pull)
         self.assertGreater(scan, build)
         scan_step = None
@@ -213,7 +218,7 @@ class ImageAdvisories(unittest.TestCase):
 
     def test_failed_inspect_skips_trivy_and_fails_main(self):
         images = (
-            'postgres:18-alpine@sha256:' + 'ab' * 32,
+            'cozyvtt-database:latest',
             'nginx:1.30-alpine@sha256:' + 'cd' * 32,
             'cozyvtt-backend:latest',
             'cozyvtt-frontend:latest',
@@ -236,7 +241,7 @@ class ImageAdvisories(unittest.TestCase):
 
     def test_nonzero_trivy_fails_main_when_inspect_succeeded(self):
         images = (
-            'postgres:18-alpine@sha256:' + 'ab' * 32,
+            'cozyvtt-database:latest',
             'nginx:1.30-alpine@sha256:' + 'cd' * 32,
             'cozyvtt-backend:latest',
             'cozyvtt-frontend:latest',
@@ -298,3 +303,33 @@ class ImageAdvisories(unittest.TestCase):
             self.assertIsNone(ia.amd64_image_id('nginx:1.30-alpine'))
         self.assertIn('linux/arm64', stderr.getvalue())
         self.assertIn('linux/amd64', stderr.getvalue())
+
+
+POSTGRES_PIN = re.compile(r'(?:image:\s*|FROM\s+)(postgres:\d+-alpine@sha256:[0-9a-f]{64})')
+NGINX_PIN = re.compile(r'(?:image:\s*|FROM\s+)(nginx:\S+@sha256:[0-9a-f]{64})')
+
+
+class RuntimeImagePins(unittest.TestCase):
+    def test_postgres_from_digest_matches_dev_compose_and_ci(self):
+        pins = []
+        for path in (DATABASE_DOCKERFILE, DEV_COMPOSE, WORKFLOW):
+            found = POSTGRES_PIN.findall(read(path))
+            self.assertEqual(len(found), 1, path)
+            pins.append(found[0])
+        self.assertEqual(len(set(pins)), 1)
+        self.assertRegex(pins[0], r'^postgres:18-alpine@sha256:[0-9a-f]{64}$')
+
+    def test_production_database_builds_from_the_pin_and_upgrades_brotli_libs(self):
+        dockerfile = read(DATABASE_DOCKERFILE)
+        compose = read(COMPOSE)
+        self.assertRegex(dockerfile, r"(?m)^RUN apk add --no-cache 'brotli-libs=1\.2\.1-r0'$")
+        self.assertIn('image: cozyvtt-database:latest', compose)
+        self.assertIn('context: ./database', compose)
+
+    def test_nginx_compose_digest_matches_frontend_production_from(self):
+        compose_pins = NGINX_PIN.findall(read(COMPOSE))
+        frontend_pins = NGINX_PIN.findall(read(FRONTEND_DOCKERFILE))
+        self.assertEqual(len(compose_pins), 1)
+        self.assertEqual(len(frontend_pins), 1)
+        self.assertEqual(compose_pins[0], frontend_pins[0])
+        self.assertRegex(compose_pins[0], r'^nginx:1\.\d*[02468]-alpine(?:-slim)?@sha256:[0-9a-f]{64}$')

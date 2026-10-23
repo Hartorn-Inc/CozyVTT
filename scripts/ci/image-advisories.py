@@ -15,7 +15,7 @@ image is not linux/amd64 is treated as missing.
 
 Images, in this order:
 
-  1. production compose ``database`` (the pinned postgres digest)
+  1. ``cozyvtt-database:latest`` (built from the pinned postgres digest)
   2. production compose ``nginx`` (the pinned nginx digest)
   3. ``cozyvtt-backend:latest`` (built, not pulled)
   4. ``cozyvtt-frontend:latest`` (built, not pulled)
@@ -49,8 +49,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 COMPOSE = os.path.join(ROOT, 'docker-compose.yml')
 
-# Local tags compose builds; the postgres and nginx refs come from compose.
-BUILT = ('cozyvtt-backend:latest', 'cozyvtt-frontend:latest')
+# Local tags compose builds; nginx is the remaining pulled digest.
+BUILT = ('cozyvtt-database:latest', 'cozyvtt-backend:latest', 'cozyvtt-frontend:latest')
 PLATFORM = 'linux/amd64'
 # Tracked names that would change which compose file CI runs, or let Trivy
 # skip advisories, relative to the files this script reads.
@@ -188,7 +188,7 @@ def main():
     )
     require_command(
         'docker',
-        'CI pulls database and nginx and builds backend and frontend first; '
+        'CI pulls nginx and builds database, backend and frontend first; '
         'GitHub CI is the merge gate.',
     )
 
@@ -207,7 +207,7 @@ def main():
         if not image_id:
             print(
                 f'image {image} is not present locally as {PLATFORM}. CI pulls '
-                'the production compose database and nginx images and runs '
+                'the production compose nginx image and runs '
                 'docker compose build before this script; GitHub CI is the '
                 'merge gate.',
                 file=sys.stderr,

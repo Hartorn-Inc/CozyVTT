@@ -199,9 +199,9 @@ describe('NGINX_CONF_STAMP in docker-compose.yml', () => {
 
 describe('the PostgreSQL client the backend image installs', () => {
   const clientFiles = ['backend/Dockerfile', 'backend/Dockerfile.prod'];
-  const serverFiles = ['docker-compose.yml', 'docker-compose.dev.yml', '.github/workflows/ci.yml'];
+  const serverFiles = ['database/Dockerfile', 'docker-compose.dev.yml', '.github/workflows/ci.yml'];
   const clients = clientFiles.flatMap((f) => majors(f, /postgresql(\d+)-client/g));
-  const servers = serverFiles.flatMap((f) => majors(f, /image:\s*postgres:(\d+)-alpine/g));
+  const servers = serverFiles.flatMap((f) => majors(f, /(?:image:\s*|FROM\s+)postgres:(\d+)-alpine/g));
 
   it('is one major, in every Dockerfile stage', () => {
     expect(new Set(clients).size).toBe(1);
@@ -233,8 +233,26 @@ describe('the PostgreSQL client the backend image installs', () => {
     expect(missing).toEqual([]);
   });
 
-  it('is pinned against one server major, the same in both compose files and CI', () => {
+  it('is pinned against one server major, the same in the production FROM, the development compose file and CI', () => {
     expect(new Set(servers).size).toBe(1);
+  });
+
+  it('is the same tag and digest in the production FROM, the development compose file and CI', () => {
+    const pins = serverFiles.flatMap((f) => {
+      const found = [...instructions(f).join('\n').matchAll(/(?:image:\s*|FROM\s+)(postgres:\d+-alpine@sha256:[0-9a-f]{64})/g)].map(
+        (m) => m[1],
+      );
+      if (found.length === 0) {
+        throw new Error(`${f} no longer pins postgres:N-alpine@sha256; update this test with the file`);
+      }
+      return found;
+    });
+    expect(new Set(pins).size).toBe(1);
+  });
+
+  it('upgrades brotli-libs in the production database image, until the official pin already has 1.2.1', () => {
+    const production = instructions('database/Dockerfile').join('\n');
+    expect(production).toMatch(/^RUN apk add --no-cache 'brotli-libs=1\.2\.1-r0'$/m);
   });
 
   it('is not older than the server image, or pg_dump refuses to dump it', () => {
