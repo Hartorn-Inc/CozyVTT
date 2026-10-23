@@ -8,6 +8,9 @@
 # Prefer not to edit this file: personal tweaks belong in docker-compose.override.yml,
 # which Compose merges automatically and git ignores — so `git pull` never conflicts.
 # Copy docker-compose.override.example.yml to get started.
+# A personal override may change ports, volumes, and the bundled nginx (disable
+# or replace it). It must not change stack image tags or digests: the repository
+# owns those.
 #
 # If you have a reverse proxy that handles INTERNAL routing too
 # (Traefik, Caddy, an existing host-level Nginx): you can remove the bundled
@@ -40,6 +43,8 @@ x-logging: &logging
 services:
   database:
     image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    # Supported production is linux/amd64 even when the digest is a multi-arch index.
+    platform: linux/amd64
     container_name: cozyvtt-database
     logging: *logging
     restart: unless-stopped
@@ -86,6 +91,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile.prod
     image: cozyvtt-backend:latest
+    platform: linux/amd64
     container_name: cozyvtt-backend
     logging: *logging
     restart: unless-stopped
@@ -194,6 +200,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.prod
     image: cozyvtt-frontend:latest
+    platform: linux/amd64
     container_name: cozyvtt-frontend
     logging: *logging
     restart: unless-stopped
@@ -233,7 +240,8 @@ services:
   nginx:
     # nginx's stable line, the same as the frontend image's (frontend/Dockerfile.prod).
     # A test keeps the two in step; move both together.
-    image: nginx:1.30-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    image: nginx:1.30-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+    platform: linux/amd64
     container_name: cozyvtt-nginx
     # TODO(shutdown): with a Socket.io connection open, `docker compose stop`
     # waits the full 10 s and then kills nginx (exit 137): the image's
