@@ -19,7 +19,7 @@ import { randomUUID } from 'crypto';
 import request from 'supertest';
 import { prisma } from '../../config/database';
 import { createTestApp } from '../../__tests__/helpers/test-app';
-import { createWsTestServer, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
+import { createWsTestServer, expectNoEvent, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
 import { clearState, getState } from '../initiativeState';
 import { createTestUser, TEST_PASSWORD } from '../../__tests__/helpers/db';
 
@@ -106,6 +106,16 @@ afterAll(async () => {
 
 type Client = Awaited<ReturnType<WsTestServer['connectAndAuth']>>;
 
+function waitDisconnect(client: Client): Promise<string> {
+  return new Promise((resolve) => {
+    if (!client.connected) {
+      resolve('already');
+      return;
+    }
+    client.once('disconnect', (reason: string) => resolve(reason));
+  });
+}
+
 /** Add combatants as the DM, waiting for each broadcast, then let the players' copies land. */
 async function addAll(dm: Client, tokenIds: string[], mapId = mapA) {
   for (const tokenId of tokenIds) {
@@ -189,13 +199,22 @@ describe('the order is sent again when a member\'s view of it changes', () => {
     const player = await server.connectAndAuth(playerCookie, campaignId);
     await addAll(dm, [HERO]);
 
-    const demoted = waitForEvent<State>(player, 'initiative.state');
+    const notRevoked = expectNoEvent(player, 'campaign.access.revoked', 500);
+    const dropped = waitDisconnect(player);
     expect((await dmRest.put(`/api/campaigns/${campaignId}/members/${playerId}/role`).send({ role: 'SPECTATOR' })).status).toBe(200);
-    const seen = await demoted;
-    expect(ids(seen)).toEqual([HERO]);
-    expect(seen.combatants[0].hp).toBeNull();
+    await expect(dropped).resolves.toBe('io server disconnect');
+    await expect(notRevoked).resolves.toBeUndefined();
+
+    // Authenticate does not auto-send initiative.state; ask after reconnecting
+    // as SPECTATOR (the old player socket was dropped by the role change).
+    const spectator = await server.connectAndAuth(playerCookie, campaignId);
+    const seen = waitForEvent<State>(spectator, 'initiative.state');
+    spectator.emit('initiative.request_state');
+    const state = await seen;
+    expect(ids(state)).toEqual([HERO]);
+    expect(state.combatants[0].hp).toBeNull();
     dm.disconnect();
-    player.disconnect();
+    spectator.disconnect();
   });
 
   it("through a bound character's new picture", async () => {

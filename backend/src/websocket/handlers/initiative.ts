@@ -519,8 +519,11 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
 
       // Persist to token, in the list as it is under the map's lock: the
       // copy fetched before the character lookups above is stale by now.
-      // Control, spectator, current-map, in-order and combat-active are
-      // re-applied here with the fresh role and token row (ADR 0007).
+      // Role, canRollDice, canReadMap, canControlToken and combat-active
+      // are re-applied here with the fresh role and token row (ADR 0007).
+      // In-order is not: a fight the DM ended meanwhile is not a persist
+      // refusal (the in-memory update below already skips a combatant
+      // that left).
       const persisted = await setTokenInitiative(
         socket,
         mapId,
@@ -533,11 +536,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
           if (!canControlToken(role, freshToken.controlledBy, socket.userId)) {
             return 'You can only roll initiative for your own token';
           }
-          const combat = getCombatState(socket.campaignId!);
-          if (!combat.combatants.some((c) => c.tokenId === tokenId)) {
-            return 'That token is not in the initiative order yet';
-          }
-          if (combat.active) {
+          if (getCombatState(socket.campaignId!).active) {
             return 'Combat has started — ask your DM to change your initiative';
           }
           return true;
@@ -554,14 +553,15 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // Only for a DM, and only a token that was not in the order when the
       // roll began: a player's roll is rejected above unless the token is
       // already a combatant, and a combatant that has left the order since
-      // stays out.
+      // stays out. A non-DM also skips the re-sort if combat is active now
+      // (a start that landed after persist).
       //
       // The order as it is now, not the copy read before the awaits above:
       // a concurrent roll re-sorts it, a remove shortens it, and the DM may
       // have ended the fight, which writing the old copy back would undo.
       const current = getCombatState(socket.campaignId);
       const combatantIndex = current.combatants.findIndex((c) => c.tokenId === tokenId);
-      if (combatantIndex !== -1) {
+      if (combatantIndex !== -1 && (persisted.role === 'DM' || !current.active)) {
         current.combatants[combatantIndex].initiative = rolledValue;
         current.combatants = sortCombatants(current.combatants);
         setCombatState(socket.campaignId, current);
