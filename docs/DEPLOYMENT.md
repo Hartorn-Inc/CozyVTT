@@ -79,7 +79,9 @@ NODE_ENV=production
 
 **`BACKUP_ENCRYPTION_KEY` is not `SESSION_SECRET`.** Generate it with the same `openssl rand -hex 32` command, as a separate value. A missing or unusable key (unset, not 64 hexadecimal characters, or equal to `SESSION_SECRET`) still boots the Instance; **Create Backup** is refused so a plaintext archive is not written. Restore still reads a legacy plaintext ZIP and an archive encrypted with a previous key (`BACKUP_ENCRYPTION_PREVIOUS_KEYS` after you rotate).
 
-**Use letters and digits only in `DATABASE_PASSWORD`**, which is what `openssl rand -hex 16` gives you. The stack writes the password into the database's address, so a character such as `/`, `#`, `?` or `%` breaks that address. The database container still starts and looks healthy, but the backend cannot connect: `docker compose logs backend` shows `Database connection successful`, because that first check does not use the password, and then `Migration failed`, and the container keeps restarting. If you see that, check the password's characters first. A `$` has a different problem: Docker Compose reads a `$` in `.env` as the start of a variable name, so the password it uses is not the one you typed.
+**Use letters and digits only in `DATABASE_PASSWORD` and `DATABASE_APP_PASSWORD`**, which is what `openssl rand -hex 16` gives you. The stack writes the password into the database's address, so a character such as `/`, `#`, `?` or `%` breaks that address. The database container still starts and looks healthy, but the backend cannot connect: `docker compose logs backend` shows `Database connection successful`, because that first check does not use the password, and then creating the schema owner or migrating fails, and the container keeps restarting. If you see that, check the password's characters first. A `$` has a different problem: Docker Compose reads a `$` in `.env` as the start of a variable name, so the password it uses is not the one you typed.
+
+PostgreSQL uses two roles. **Bootstrap superuser** is `DATABASE_USER` (default `cozyvtt`): Compose passes it to `POSTGRES_USER`, and the official image creates it as a superuser on an empty volume. Existing installs already have this role; keep the name. **Schema owner** is `DATABASE_APP_USER` (default `cozyvtt_app`): it owns the database and the `public` schema, runs migrations, and is the backend `DATABASE_URL` user. It is not a superuser. First start after this upgrade creates `cozyvtt_app` (or your `DATABASE_APP_USER`) from the bootstrap superuser, then migrates and runs as that role. If it cannot, the backend refuses to start with a log line pointing here. `DATABASE_APP_USER` must not equal `DATABASE_USER`. Unset, `DATABASE_APP_PASSWORD` uses `DATABASE_PASSWORD`, so first start needs no new secret.
 
 `CORS_ORIGIN` is also the only other address a browser page may make changes from. A page on any other address, another port on the same server included, is refused if it tries to sign in, save or delete anything as whoever is signed in. CozyVTT serves the app and its API from one address, as the bundled nginx and every setup in this guide do, so that check needs nothing from you. Set `CORS_ORIGIN` to the address your players type, `https://`, host and any port included: email links are built from it unless you set `APP_URL`.
 
@@ -87,21 +89,22 @@ NODE_ENV=production
 
 The database image reads `POSTGRES_PASSWORD` only when it creates an empty database, so on an instance that has already run, changing `DATABASE_PASSWORD` in `.env` on its own locks the backend out: the database keeps the old password and the backend connects with the new one. This is what happens if you upgrade with the placeholder still in place and the backend stops with `DATABASE_URL uses the placeholder password from .env.example` in `docker compose logs backend`.
 
-Change it inside the database first, with the stack up (the database container runs even while the backend refuses to start):
+Change the passwords inside the database first, with the stack up (the database container runs even while the backend refuses to start). When the two roles share `DATABASE_PASSWORD` (the default), alter both to the same new value:
 
 ```bash
 NEW_PASSWORD=$(openssl rand -hex 24)
 docker compose exec database psql -U cozyvtt -d cozyvtt -c "ALTER USER cozyvtt WITH PASSWORD '$NEW_PASSWORD';"
+docker compose exec database psql -U cozyvtt -d cozyvtt -c "ALTER USER cozyvtt_app WITH PASSWORD '$NEW_PASSWORD';"
 echo "$NEW_PASSWORD"
 ```
 
-The command uses the default names. If you changed them in `.env`, put your `DATABASE_USER` in place of `cozyvtt` after `-U` and after `ALTER USER`, and your `DATABASE_NAME` in place of `cozyvtt` after `-d`. Then put the printed value in `.env` as `DATABASE_PASSWORD`, and restart. The stack builds the database's address from it, so there is no `DATABASE_URL` to change in `.env` (a line you added there is ignored on Docker):
+The commands use the default names. If you changed them in `.env`, put your `DATABASE_USER` in place of `cozyvtt` after `-U` and after the first `ALTER USER`, your `DATABASE_APP_USER` in place of `cozyvtt_app` after the second `ALTER USER`, and your `DATABASE_NAME` in place of `cozyvtt` after `-d`. Then put the printed value in `.env` as `DATABASE_PASSWORD` (and as `DATABASE_APP_PASSWORD` too if you set that separately). When `DATABASE_APP_PASSWORD` is set on its own, generate and `ALTER USER` each role with its own password. Restart. The stack builds the database's address from the schema owner, so there is no `DATABASE_URL` to change in `.env` (a line you added there is ignored on Docker):
 
 ```bash
 docker compose up -d
 ```
 
-A hex password avoids any quoting trouble in the command above and in `.env`, and the characters that break the database's address. On a manual install the same `ALTER USER` runs through `sudo -u postgres psql`, as in the install steps below, and the new password goes in `DATABASE_URL` in `backend/.env`.
+A hex password avoids any quoting trouble in the commands above and in `.env`, and the characters that break the database's address. On a manual install the same `ALTER USER` runs through `sudo -u postgres psql` against the schema owner, as in the install steps below, and the new password goes in `DATABASE_URL` in `backend/.env`. The OS `postgres` role is the bootstrap superuser there: do not connect the app as `postgres`.
 
 ### 3. Build and start the stack
 
@@ -117,7 +120,7 @@ This starts four containers on an isolated internal network:
 
 Every container runs with Docker's `no-new-privileges` option, so no program in it can gain privileges, and with only the few Linux capabilities (the separate powers root normally holds) that its start-up needs, such as giving a folder to the right owner or switching to an unprivileged user. The frontend container's files are read-only: it only serves the built app, and nginx keeps its scratch files in memory. So are the proxy's (`cozyvtt-nginx`): it writes its settings, rendered from `nginx/nginx.conf` as it starts, to memory, and keeps large uploads and downloads as they pass on a volume of its own, `nginx_temp`, which Compose creates on the first start and which needs no backup. The backend's files are read-only as well, apart from `backend/uploads`, `backend/backups` and `backend/logs` and its `/tmp`, where a backup or a restore keeps its working copy of the database: a volume of its own, `backend_tmp`, created on the first start like `nginx_temp`, with nothing in it to back up. So is the database container: PostgreSQL writes the cluster on `postgres_data` (mounted at `/var/lib/postgresql`; 18 stores it under `18/docker`) and keeps `/tmp` and `/var/run/postgresql` in memory. A leftover PostgreSQL 15 volume will not start; remove it with `docker volume rm` before `compose up`. The backend starts as root only long enough to give its mounted folders the right owner, then runs as an unprivileged user, `appuser`. Commands you run inside the backend container take `-u appuser`, as every one in this guide does: root in that container cannot write the backend's files.
 
-Database migrations run automatically when the backend starts.
+Database migrations run automatically when the backend starts, as the schema owner. First start after this upgrade creates that role from the bootstrap superuser, or the backend refuses to start.
 
 ### 4. Complete the setup wizard
 
@@ -817,6 +820,8 @@ sudo -u postgres psql -c "ALTER USER cozyvtt WITH PASSWORD 'your-db-password';"
 sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE cozyvtt TO cozyvtt;"
 ```
 
+`createuser` without `SUPERUSER` makes `cozyvtt` the schema owner. Put that role in `DATABASE_URL`. The OS `postgres` role is the bootstrap superuser on a manual install: do not connect the app as `postgres`.
+
 ### 3. Configure and build
 
 ```bash
@@ -1323,7 +1328,7 @@ A database-only backup (the kind a restore makes first) has no uploaded files, a
 
 If the backend is stopped while a restore is running, the uploaded backup it was working from is left in the backups folder as `restore-temp-….zip`; it is deleted the next time the backend starts.
 
-**Restore only backups made by this dashboard or by the backup script, on an instance you trust.** A backup is a set of instructions the database carries out with its owner's full rights. The restore refuses the database tool's own commands, and a line that starts with a copy statement that is not table data, but it cannot tell harmless SQL from harmful SQL. A file made to do harm can put anything at all in your database, and on the Docker setup it can also run programs inside the database container.
+**Restore only backups made by this dashboard or by the backup script, on an instance you trust.** A backup is a set of instructions the database carries out with its owner's full rights. The restore refuses the database tool's own commands, and a line that starts with a copy statement that is not table data, but it cannot tell harmless SQL from harmful SQL. A file made to do harm can put anything at all in your database. On the Docker setup the owner is the non-superuser schema owner; `COPY ... PROGRAM` can still run a program inside the database container, but no longer as a superuser.
 
 A backup restores onto an instance whose database user has a different name, which is what moving to a new machine with a fresh `.env` produces: everything in it ends up owned by the instance's own database user. Restoring drops and recreates the database's `public` schema, which needs the database role to own the database and that schema. The Docker setup does that for you. On a manual install, make sure of it once, using your own database and user names if you chose different ones (in each command the `cozyvtt` after `-d` or `DATABASE` is the database, the one after `TO` the user). The second command is needed on PostgreSQL 14, and on a database first created on 14 and upgraded since; on newer ones it does no harm:
 
@@ -1400,30 +1405,36 @@ DATABASE_URL="postgresql://user:pass@host:5432/cozyvtt" ./backend/scripts/backup
 
 Write the address exactly as the backend's `.env` has it. A password holding a character an address cannot carry as it is, such as `/`, `#`, `?` or `%`, is written percent-encoded there (`%2F` for `/`, `%25` for `%`), and the scripts decode it as the backend does. Leave out `:5432` and port 5432 is used.
 
-Under Docker, the scripts take the database's user and name from
-`DATABASE_USER` and `DATABASE_NAME` in their environment, not from `.env`, and
-assume `cozyvtt` for both. If you changed either in `.env`, put the same values
-in front of the command, for example:
+Under Docker, the scripts take the schema owner and database name from
+`DATABASE_APP_USER` and `DATABASE_NAME` in their environment, not from `.env`,
+and assume `cozyvtt_app` and `cozyvtt`. If you changed either in `.env`, put the
+same values in front of the command, for example:
 
 ```bash
-DATABASE_USER=myuser DATABASE_NAME=mydb ./backend/scripts/backup.sh
+DATABASE_APP_USER=myapp DATABASE_NAME=mydb ./backend/scripts/backup.sh
 ```
 
 ### Via Command Line
 
 If you would rather not use the backup script, this one command makes the same
-backup by hand (with the default `cozyvtt` names; put yours in place of both if
-you changed them):
+backup by hand (with the default schema owner `cozyvtt_app` and database
+`cozyvtt`; put yours in place of both if you changed them):
 
 ```bash
 (umask 077; docker compose exec -T database \
-  pg_dump -U cozyvtt -d cozyvtt --no-owner --no-privileges \
+  pg_dump -U cozyvtt_app -d cozyvtt --no-owner --no-privileges \
+    --enable-row-security \
     --exclude-table-data=public.session \
     --exclude-table-data=public.revoked_login_session \
   | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz)
 ```
 
 The `umask 077` in brackets makes the file readable by you alone, as the script's are: it holds every password hash and MFA secret on the instance. (Password reset and invitation links are stored hashed, so a backup holds no working link.)
+
+`--enable-row-security` is required for the schema owner: that role is
+`NOSUPERUSER` and `NOBYPASSRLS`, so `pg_dump`'s default `SET row_security = off`
+is refused. CozyVTT does not enable row security; the flag dumps the rows the
+owner can already see.
 
 `--exclude-table-data=public.session` and
 `--exclude-table-data=public.revoked_login_session` leave the login sessions
@@ -1462,7 +1473,7 @@ crontab -e
 ```
 
 Put the folder you installed CozyVTT into in place of `/path/to/cozyvtt`, and
-the `DATABASE_USER=... DATABASE_NAME=...` prefix in front of the script if you
+the `DATABASE_APP_USER=... DATABASE_NAME=...` prefix in front of the script if you
 changed those names. The user whose crontab this is needs to be able to run
 `docker compose` without `sudo`.
 
@@ -1612,6 +1623,7 @@ docker compose logs backend | grep FATAL
 |---|---|
 | `SESSION_SECRET is shorter than 32 characters`, `SESSION_SECRET is a placeholder value` or `SESSION_SECRET is not set` | Run `openssl rand -hex 32`, put what it prints in `.env` after `SESSION_SECRET=`, and run `docker compose up -d`. Everyone is signed out once |
 | `DATABASE_URL uses the placeholder password from .env.example` | Follow [Changing the database password](#changing-the-database-password). The database keeps the password it was made with, so it has to be changed inside the database first |
+| `schema owner` / `bootstrap` / `DATABASE_APP_USER` | First start after upgrade creates the schema owner from the bootstrap superuser, or refuses to boot. Check `DATABASE_USER` and `DATABASE_PASSWORD` still open a superuser connection, that `DATABASE_APP_USER` is not the same name, and follow the two-role notes at the start of this guide |
 
 Use `docker compose up -d`, which reads `.env` again; `docker compose restart` keeps the old value. Once the backend starts, `docker compose ps` shows it as `healthy` within a minute.
 
@@ -1785,7 +1797,7 @@ Before going live:
 - [ ] **Backups tested** — Automated backups configured and a restore drill completed successfully
 - [ ] **Upload isolation** — `backend/uploads/` is served only through authenticated backend endpoints, not directly by the web server
 - [ ] **Security headers** — CozyVTT sends its own (Content-Security-Policy, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) from the container that serves the app page, so they arrive whether you use the bundled Nginx or your own proxy. A manual install has no such container: its Nginx example in [Manual Deployment](#manual-deployment) sets them in `location /`. Confirm with `curl -sI https://your-host/ | grep -i content-security`. If your proxy strips or overwrites response headers, stop doing that. **HSTS**: the backend already sends `Strict-Transport-Security: max-age=31536000; includeSubDomains` with every answer from `/api`, so a browser that has used the instance over HTTPS keeps that name on HTTPS for a year (see [HTTPS is remembered by browsers](#https-is-remembered-by-browsers)). The app page itself carries it only if you turn on the commented line in the `nginx/conf.d/https.conf` example
-- [ ] **Database isolation** — PostgreSQL container uses `expose` (not `ports`); unreachable from outside the Docker network
+- [ ] **Database isolation** — PostgreSQL container uses `expose` (not `ports`); unreachable from outside the Docker network. The backend connects as the non-superuser schema owner (`DATABASE_APP_USER`), not the bootstrap superuser (`DATABASE_USER`); first start after upgrade creates that role or refuses to boot
 - [ ] **Log size** — Nothing to set up: the backend rotates `backend/logs/` itself and Docker caps each container's log (see [Monitoring and Logs](#monitoring-and-logs)). Remove any `logrotate` rule you added for `backend/logs/`
 - [ ] **OS updates** — A plan exists for keeping the host OS and Docker up to date
 - [ ] **Brute-force protection** — `fail2ban` (or equivalent) is configured to block IPs hammering `/api/auth/login` and SSH; CozyVTT's own limits are 5 failed sign-ins per 15 minutes per visitor address and 10 per hour per account from everywhere (each lock is noted in **Admin → Activity**), but a host-level ban catches scanners earlier

@@ -128,7 +128,12 @@ services:
       database:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://${DATABASE_USER:-cozyvtt}:${DATABASE_PASSWORD}@database:5432/${DATABASE_NAME:-cozyvtt}
+      DATABASE_URL: postgresql://${DATABASE_APP_USER:-cozyvtt_app}:${DATABASE_APP_PASSWORD:-${DATABASE_PASSWORD}}@database:5432/${DATABASE_NAME:-cozyvtt}
+      DATABASE_USER: ${DATABASE_USER:-cozyvtt}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      DATABASE_APP_USER: ${DATABASE_APP_USER:-cozyvtt_app}
+      DATABASE_APP_PASSWORD: ${DATABASE_APP_PASSWORD:-${DATABASE_PASSWORD}}
+      DATABASE_NAME: ${DATABASE_NAME:-cozyvtt}
       NODE_ENV: production
       PORT: 4000
       SESSION_SECRET: ${SESSION_SECRET}

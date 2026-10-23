@@ -42,9 +42,11 @@ COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/prisma.config.ts ./
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 
-# Copy startup script
+# Copy startup scripts
 COPY scripts/start.sh /usr/local/bin/start.sh
-RUN sed -i 's/\r$//' /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
+COPY scripts/ensure-schema-owner.sh /usr/local/bin/ensure-schema-owner.sh
+RUN sed -i 's/\r$//' /usr/local/bin/start.sh /usr/local/bin/ensure-schema-owner.sh \
+  && chmod +x /usr/local/bin/start.sh /usr/local/bin/ensure-schema-owner.sh
 
 # Unlock helper for encrypted Admin Dashboard Instance backups
 # (docs/DEPLOYMENT.md). Operators run:
