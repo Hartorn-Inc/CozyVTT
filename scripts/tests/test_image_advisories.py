@@ -97,6 +97,10 @@ class ImageAdvisories(unittest.TestCase):
         self.assertEqual(expected[2], 'cozyvtt-backend:latest')
         self.assertEqual(expected[3], 'cozyvtt-frontend:latest')
         self.assertEqual(ia.runtime_images(), expected)
+        self.assertEqual(services['database']['build']['context'], './database')
+        self.assertEqual(services['database']['build']['dockerfile'], 'Dockerfile.prod')
+        self.assertEqual(services['nginx']['build']['context'], './nginx')
+        self.assertEqual(services['nginx']['build']['dockerfile'], 'Dockerfile.prod')
 
     def test_last_image_in_a_service_block_wins(self):
         digest = 'postgres:18-alpine@sha256:' + 'ab' * 32
@@ -264,6 +268,48 @@ class ImageAdvisories(unittest.TestCase):
         self.assertEqual(status, 1)
         self.assertEqual(scan.call_count, 4)
         scan.assert_any_call('sha256:nginx')
+
+    def test_prod_dockerfiles_apk_upgrade_brotli(self):
+        expected = "RUN apk add --no-cache --upgrade 'brotli-libs>=1.2.1-r0'"
+        for rel in ('database/Dockerfile.prod', 'nginx/Dockerfile.prod', 'frontend/Dockerfile.prod'):
+            self.assertIn(expected, read(os.path.join(ROOT, rel)))
+
+    def test_amd64_image_id_prefers_name_tag_when_compose_build_retagged(self):
+        digest = 'nginx:1.30-alpine@sha256:' + 'ab' * 32
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args[-1])
+            if args[-1] == digest:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout='sha256:hub linux/amd64\n', stderr=''
+                )
+            return subprocess.CompletedProcess(
+                args, 0, stdout='sha256:rebuilt linux/amd64\n', stderr=''
+            )
+
+        with patch.object(ia.subprocess, 'run', side_effect=fake_run):
+            self.assertEqual(ia.amd64_image_id(digest), 'sha256:rebuilt')
+        self.assertEqual(calls, [digest, 'nginx:1.30-alpine'])
+
+    def test_amd64_image_id_keeps_digest_when_name_tag_is_missing(self):
+        digest = 'nginx:1.30-alpine@sha256:' + 'ab' * 32
+
+        def fake_run(args, **kwargs):
+            if args[-1] == digest:
+                return subprocess.CompletedProcess(
+                    args, 0, stdout='sha256:hub linux/amd64\n', stderr=''
+                )
+            return subprocess.CompletedProcess(
+                args, 1, stdout='', stderr='Error: No such object: nginx:1.30-alpine\n'
+            )
+
+        stderr = io.StringIO()
+        with patch.object(ia.subprocess, 'run', side_effect=fake_run), patch.object(
+            ia.sys, 'stderr', stderr
+        ):
+            self.assertEqual(ia.amd64_image_id(digest), 'sha256:hub')
+        self.assertIn('Error: No such object:', stderr.getvalue())
 
     def test_amd64_image_id_prints_docker_stderr_and_falls_back_to_name_tag(self):
         digest = 'nginx:1.30-alpine@sha256:' + 'ab' * 32

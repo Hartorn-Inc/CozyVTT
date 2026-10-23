@@ -8,15 +8,18 @@ advisories. Trivy is invoked as:
 The ``<id>`` is the linux/amd64 image Compose stored after ``docker compose
 pull`` / ``docker compose build``, not the raw multi-arch index string from
 compose ``image:``. Each compose ref is resolved with ``docker image
-inspect`` (``{{.Id}} {{.Os}}/{{.Architecture}}``); if inspecting
-``name:tag@sha256:…`` fails because a platform-filtered pull stored only
-the child, the same inspect is tried on ``name:tag``. A ref whose stored
-image is not linux/amd64 is treated as missing.
+inspect`` (``{{.Id}} {{.Os}}/{{.Architecture}}``). For a digest ref,
+``name:tag`` is inspected as well: ``docker compose build`` retags the
+apk-upgraded image without the Hub digest, so ``name:tag`` is preferred
+when both resolve to linux/amd64. If inspecting ``name:tag@sha256:…``
+fails because a platform-filtered pull stored only the child, the same
+inspect is tried on ``name:tag``. A ref whose stored image is not
+linux/amd64 is treated as missing.
 
 Images, in this order:
 
-  1. production compose ``database`` (the pinned postgres digest)
-  2. production compose ``nginx`` (the pinned nginx digest)
+  1. production compose ``database`` (pinned postgres digest, rebuilt)
+  2. production compose ``nginx`` (pinned nginx digest, rebuilt)
   3. ``cozyvtt-backend:latest`` (built, not pulled)
   4. ``cozyvtt-frontend:latest`` (built, not pulled)
 
@@ -161,14 +164,21 @@ def _inspect(ref):
 
 def amd64_image_id(ref):
     found, image_id = _inspect(ref)
-    if found:
-        return image_id
     name_tag = ref.split('@', 1)[0]
     if name_tag == ref:
+        return image_id if found else None
+    # Digest inspect found a non-amd64 image: do not silently scan another tag.
+    if found and not image_id:
         return None
-    found, image_id = _inspect(name_tag)
+    # Compose build retags the apk-upgraded image as name:tag. Prefer that
+    # when it exists so pull-then-build scans the rebuilt layer, not Hub.
+    tag_found, tag_id = _inspect(name_tag)
+    if tag_id:
+        return tag_id
     if found:
         return image_id
+    if tag_found:
+        return tag_id
     return None
 
 
@@ -188,8 +198,8 @@ def main():
     )
     require_command(
         'docker',
-        'CI pulls database and nginx and builds backend and frontend first; '
-        'GitHub CI is the merge gate.',
+        'CI pulls database and nginx and builds database, nginx, backend and '
+        'frontend first; GitHub CI is the merge gate.',
     )
 
     images = runtime_images()
@@ -208,8 +218,8 @@ def main():
             print(
                 f'image {image} is not present locally as {PLATFORM}. CI pulls '
                 'the production compose database and nginx images and runs '
-                'docker compose build before this script; GitHub CI is the '
-                'merge gate.',
+                'docker compose build (including those two) before this '
+                'script; GitHub CI is the merge gate.',
                 file=sys.stderr,
             )
             status = 1

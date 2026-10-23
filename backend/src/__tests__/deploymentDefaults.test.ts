@@ -137,6 +137,7 @@ describe('the images', () => {
     expect(nginx).toHaveLength(2);
     for (const image of nginx) expect(image).toMatch(/^nginx:1\.\d*[02468]-alpine@sha256:[0-9a-f]{64}$/);
     expect(new Set(nginx).size).toBe(1);
+    expect(images('nginx/Dockerfile.prod').filter((i) => /^nginx[:@]/.test(i))).toEqual([nginx[0]]);
   });
 
   it('pin every third-party production image to a tag and digest', () => {
@@ -146,6 +147,8 @@ describe('the images', () => {
       { file: 'backend/Dockerfile', named: images('backend/Dockerfile') },
       { file: 'frontend/Dockerfile.prod', named: images('frontend/Dockerfile.prod') },
       { file: 'frontend/Dockerfile', named: images('frontend/Dockerfile') },
+      { file: 'database/Dockerfile.prod', named: images('database/Dockerfile.prod') },
+      { file: 'nginx/Dockerfile.prod', named: images('nginx/Dockerfile.prod') },
       { file: '.github/workflows/ci.yml', named: images('.github/workflows/ci.yml').filter((image) => image.startsWith('postgres:')) },
     ];
     for (const { file, named } of files) {

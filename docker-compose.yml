@@ -42,7 +42,13 @@ x-logging: &logging
 
 services:
   database:
-    image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+    image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
+    # Hub linux/amd64 still ships brotli-libs 1.2.0-r1 (CVE-2026-111497).
+    # Dockerfile.prod apk-upgrades it; image: stays the official pin so
+    # `docker compose pull database` and the digest tests still match.
+    build:
+      context: ./database
+      dockerfile: Dockerfile.prod
     # Supported production is linux/amd64 even when the digest is a multi-arch index.
     platform: linux/amd64
     container_name: cozyvtt-database
@@ -246,6 +252,12 @@ services:
     # nginx's stable line, the same as the frontend image's (frontend/Dockerfile.prod).
     # A test keeps the two in step; move both together.
     image: nginx:1.30-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
+    # Hub linux/amd64 still ships brotli-libs 1.2.0-r1 (CVE-2026-111497).
+    # Dockerfile.prod apk-upgrades it; image: stays the official pin so
+    # `docker compose pull nginx` and the digest tests still match.
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile.prod
     platform: linux/amd64
     container_name: cozyvtt-nginx
     # TODO(shutdown): with a Socket.io connection open, `docker compose stop`

@@ -1370,7 +1370,7 @@ under a different database user name still restores. Like the dashboard, the
 script runs `psql` in its restricted mode, which needs a PostgreSQL release
 from August 2025 or later; on Docker that is the database container's own
 `psql`, and `docker compose pull database` followed by
-`docker compose up -d database` brings an older image up to date.
+`docker compose up -d --build database` brings an older image up to date.
 
 **Restart the backend as soon as a restore finishes.** The restore empties the
 login sessions an older backup carried, as part of that same single step, so

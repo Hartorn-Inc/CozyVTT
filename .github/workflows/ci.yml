@@ -91,7 +91,7 @@ jobs:
     # one on the port the tests expect.
     services:
       postgres:
-        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
         env:
           POSTGRES_USER: cozyvtt
           POSTGRES_PASSWORD: cozyvtt
@@ -200,8 +200,9 @@ jobs:
           exit $status
 
   # What an Operator's `docker compose up -d --build` runs: the compose file
-  # read, the pinned database and nginx images pulled, both production images
-  # built, High and Critical advisories in those four runtime images, and the
+  # read, the pinned database and nginx images pulled, then database, nginx,
+  # backend and frontend built (the first two apk-upgrade brotli on the Hub
+  # pin), High and Critical advisories in those four runtime images, and the
   # bundled nginx's configuration rendered as its container renders it and
   # checked by nginx, the HTTPS example from docs/DEPLOYMENT.md included.
   # Then the stack is started and a browser walks through it (frontend/e2e):
