@@ -715,6 +715,24 @@ describe('the dependency check SECURITY.md describes', () => {
     expect(tools.length).toBeGreaterThan(0);
     for (const step of tools) expect(step).toMatch(/continue-on-error:\s*true/);
   });
+
+  it('fails the images job on a high or critical advisory in the runtime images', () => {
+    const imagesJob = jobSteps('images');
+    const body = imagesJob.join('\n');
+    const pull = body.indexOf('docker compose pull database nginx');
+    const build = body.indexOf('docker compose build');
+    const scan = imagesJob.find((step) => /scripts\/ci\/image-advisories/.test(step));
+    expect(pull).toBeGreaterThan(-1);
+    expect(build).toBeGreaterThan(pull);
+    expect(scan).toBeDefined();
+    expect(body.indexOf('scripts/ci/image-advisories')).toBeGreaterThan(build);
+    expect(scan).not.toMatch(/continue-on-error:\s*true/);
+    const script = read('scripts/ci/image-advisories.py');
+    expect(script).toMatch(/--severity['\s,]+HIGH,CRITICAL|HIGH,CRITICAL/);
+    expect(script).toMatch(/--exit-code['\s,]+1/);
+    expect(read('SECURITY.md')).toMatch(/high or critical(?: advisory)? in(?: those)? runtime images.*fail/i);
+    expect(read('docs/DEVELOPMENT.md')).toMatch(/high or critical(?: advisory)?\s+fails the images job/i);
+  });
 });
 
 describe('the install-script list the guides describe', () => {

@@ -29,10 +29,12 @@ This guide covers deploying CozyVTT to a **production server** using Docker Comp
 
 ## Requirements
 
-- A Linux server (Ubuntu 22.04 LTS recommended)
+Supported production is this repository's Docker Compose stack on one Linux amd64 host plus a [Cloudflare Tunnel overlay](#cloudflare-tunnel-recommended-for-public-instances). ARM hosts and 1 GB always-free micros are not verification gates and are not the supported path.
+
+- A Linux amd64 host (Ubuntu 22.04 LTS recommended)
 - Docker 24+ and Docker Compose v2
 - A domain name pointing to your server's IP (optional for LAN-only use)
-- At least 1 GB RAM; 2 GB recommended for comfortable operation
+- Typical memory: 2 GB is comfortable
 
 Once it is built, CozyVTT needs no internet access to run, and visitors' browsers contact no site but yours: the pages, pictures and fonts all come from your own server. Building the images downloads software, and the Creature Library's **Import D&D 5e SRD** button fetches the creatures from Open5e (api.open5e.com) when an administrator presses it; email is sent only through the SMTP server you configure.
 
@@ -512,10 +514,11 @@ services:
       - "127.0.0.1:8080:80"
 ```
 
-Two things to know:
+Three things to know:
 
 - **Adding settings works naturally.** The `ports` lines above are simply added to the shipped configuration. You leave `docker-compose.yml` untouched, so it updates cleanly forever.
 - **Removing a service doesn't.** There's no way to delete something in this second file — it can only add or change. The `profiles: ["disabled"]` line above is the workaround: it tags the nginx service so it never starts. (If you'd rather not use that, you can leave the line out and start CozyVTT with `docker compose up -d database backend frontend`, naming the services you want — but you have to remember it every time.)
+- **Do not change stack `image:` tags or digests.** The override may change ports, volumes, and the bundled nginx. The repository owns the image tags and digests; retagging them is not the supported path.
 
 Check that it did what you expect, then restart:
 

@@ -211,7 +211,7 @@ exact browser origin, and add the hostname to `VITE_ALLOWED_HOSTS` in `.env`.
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full dev setup (including running outside Docker).
 
-See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment with Nginx and SSL.
+See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment with Nginx and SSL. Supported production is this repository's Docker Compose stack on one Linux amd64 host, with a Cloudflare Tunnel overlay for a public Instance.
 
 ---
 
