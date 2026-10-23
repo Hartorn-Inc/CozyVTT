@@ -5,7 +5,9 @@
  * After that, the per-socket monitor reconfirms; a removed member is kicked
  * (`campaign.access.revoked` `removed`) and disconnected so they cannot drag
  * forever on cached `socket.role`. A demotion to spectator disconnects
- * without that event so a client can reconnect with the new role.
+ * without that event so a client can reconnect with the new role. An open
+ * drag is put back at the stored square (`token.moved` with `movedBy` null),
+ * since kick and demotion never reach `token.move.end`.
  *
  * Requires PostgreSQL at DATABASE_URL. One test waits the 2 s bound.
  */
@@ -124,6 +126,10 @@ describe('token-drag authorization after DRAG_AUTH_STALE_MS (ADR 0007)', () => {
     player.emit('token.move', { tokenId: OWN, mapId, x: 6, y: 5 });
     expect(await frame).toMatchObject({ tokenId: OWN, dragging: true });
 
+    const home = waitForEvent<{ tokenId: string; x: number; y: number; dragging?: boolean; movedBy: string | null }>(
+      dm, 'token.moved', DRAG_AUTH_STALE_MS + 3000
+    );
+
     await prisma.campaignMembership.delete({
       where: { userId_campaignId: { userId: playerId, campaignId } },
     });
@@ -132,6 +138,7 @@ describe('token-drag authorization after DRAG_AUTH_STALE_MS (ADR 0007)', () => {
     const dropped = waitDisconnect(player);
     await expect(revoked).resolves.toMatchObject({ reason: 'removed' });
     await expect(dropped).resolves.toBe('io server disconnect');
+    expect(await home).toEqual({ tokenId: OWN, mapId, x: 5, y: 5, movedBy: null });
 
     const quiet = expectNoEvent(dm, 'token.moved', 400);
     // The socket is already gone; a further frame must not reach the table.
@@ -150,6 +157,10 @@ describe('token-drag authorization after DRAG_AUTH_STALE_MS (ADR 0007)', () => {
     player.emit('token.move', { tokenId: OWN, mapId, x: 6, y: 5 });
     expect((await frame).tokenId).toBe(OWN);
 
+    const home = waitForEvent<{ tokenId: string; x: number; y: number; dragging?: boolean; movedBy: string | null }>(
+      dm, 'token.moved', DRAG_AUTH_STALE_MS + 3000
+    );
+
     await prisma.campaignMembership.update({
       where: { userId_campaignId: { userId: playerId, campaignId } },
       data: { role: 'SPECTATOR' },
@@ -160,6 +171,7 @@ describe('token-drag authorization after DRAG_AUTH_STALE_MS (ADR 0007)', () => {
     const dropped = waitDisconnect(player);
     await expect(dropped).resolves.toBe('io server disconnect');
     expect(revoked).toEqual([]);
+    expect(await home).toEqual({ tokenId: OWN, mapId, x: 5, y: 5, movedBy: null });
 
     dm.disconnect();
   });

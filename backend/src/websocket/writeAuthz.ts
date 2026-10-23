@@ -195,7 +195,11 @@ async function confirmMembershipThrough(
   }
 
   socket.role = membership.role;
-  markWriteAuthzConfirmed(socket);
+  // Do not stamp writeAuthzConfirmedAt: this path skipped the session store.
+  // Stamping would let token.move frames treat a membership-only confirm as a
+  // full confirm for DRAG_AUTH_STALE_MS. Pre-lock confirmWriteAuthorization()
+  // without `db` still stamps. Discrete writes are 0 s stale and do not use
+  // that cache. Drag/monitor never pass `db`.
   return { ok: true, role: membership.role };
 }
 

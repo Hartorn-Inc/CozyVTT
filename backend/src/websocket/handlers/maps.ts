@@ -56,6 +56,15 @@ export function registerMapHandlers(io: Server, socket: AuthenticatedSocket): vo
         return;
       }
 
+      // Recheck after authz: a set-current during that round trip already
+      // broadcasts map.changed for the new map. Sending this pre-await object
+      // would put every client back onto the previous one.
+      const stillShowing = await prisma.campaign.findUnique({
+        where: { id: socket.campaignId },
+        select: { currentMapId: true },
+      });
+      if (stillShowing?.currentMapId !== mapId) return;
+
       // Each member gets the map as they may see it; the payload says whether
       // the spirit overlay applies to that viewer.
       await broadcastMapData(io, socket.campaignId, map);

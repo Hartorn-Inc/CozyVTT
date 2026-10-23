@@ -20,7 +20,7 @@ import type { Socket as ClientSocket } from 'socket.io-client';
 import { prisma } from '../../config/database';
 import { toJson } from '../../utils/prisma-json';
 import { withMapsLocked } from '../../utils/mapTokens';
-import { createWsTestServer, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
+import { createWsTestServer, expectNoEvent, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
 import { setState, getState, clearState } from '../initiativeState';
 import { sendInitiativeState } from '../handlers/initiative';
 
@@ -202,5 +202,25 @@ it("does not bring back a combatant the DM removed while the DM's own roll for i
   await holder;
   await rolled;
   expect(getState(campaignId).combatants.map((c) => c.tokenId)).toEqual([HERO]);
+});
+
+it('does not treat a token gone during the lock as a successful initiative write', async () => {
+  setState(campaignId, { active: false, round: 0, currentTokenId: null, combatants: [] });
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let locked!: () => void;
+  const holding = new Promise<void>((resolve) => { locked = resolve; });
+  const holder = withMapsLocked([mapId], async () => { locked(); await gate; });
+  await holding;
+
+  dm.emit('initiative.roll', { tokenId: GOBLIN, mapId });
+  await rollWaitingForLock();
+  await prisma.map.update({ where: { id: mapId }, data: { tokens: toJson([]) } });
+  const quiet = expectNoEvent(dm, 'dice.rolled', 1500);
+  release();
+  await holder;
+  await quiet;
+  expect(getState(campaignId).combatants.map((c) => c.tokenId)).not.toContain(GOBLIN);
 });
 

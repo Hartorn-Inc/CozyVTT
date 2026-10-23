@@ -6,7 +6,7 @@
  * raycasting visibility polygon (or tokens controlled by the player themselves).
  */
 
-import { filterTokensByLighting, filterMapData, filterTokensByRole } from './spirit-layer';
+import { filterTokensByLighting, filterMapData, filterTokensByRole, canActOnTokenPlaneFromLoaded } from './spirit-layer';
 import type { WallSegment } from '../types/walls';
 
 // Minimal token factory
@@ -481,5 +481,35 @@ describe('filterTokensByRole', () => {
     it('reaches the DM as stored', () => {
       expect(filterTokensByRole([veiled], 'DM', false, 'dm')[0]).toBe(veiled);
     });
+  });
+});
+
+describe('canActOnTokenPlaneFromLoaded', () => {
+  const spirit = { layer: 'spirit' as const };
+  const material = { layer: 'token' as const };
+  const visibleOwn = { layer: 'spirit' as const, visible: true, controlledBy: 'player-1' };
+  const hiddenOwn = { layer: 'spirit' as const, visible: false, controlledBy: 'player-1' };
+
+  it('allows the DM on a spirit token without current-map tokens', () => {
+    expect(canActOnTokenPlaneFromLoaded('DM', spirit, 'dm-1', false, null)).toBe(true);
+  });
+
+  it('allows anyone on a material-plane token', () => {
+    expect(canActOnTokenPlaneFromLoaded('PLAYER', material, 'player-1', false, null)).toBe(true);
+  });
+
+  it('allows a spirit token when the overlay is on', () => {
+    expect(canActOnTokenPlaneFromLoaded('PLAYER', spirit, 'player-1', true, null)).toBe(true);
+    expect(canActOnTokenPlaneFromLoaded('SPECTATOR', spirit, 'spec-1', true, null)).toBe(true);
+  });
+
+  it('allows a player who has a visible spirit token they control on the current map', () => {
+    expect(canActOnTokenPlaneFromLoaded('PLAYER', spirit, 'player-1', false, [visibleOwn])).toBe(true);
+  });
+
+  it('refuses a player with only a hidden spirit token, a spectator named on one, or a non-current map', () => {
+    expect(canActOnTokenPlaneFromLoaded('PLAYER', spirit, 'player-1', false, [hiddenOwn])).toBe(false);
+    expect(canActOnTokenPlaneFromLoaded('SPECTATOR', spirit, 'player-1', false, [visibleOwn])).toBe(false);
+    expect(canActOnTokenPlaneFromLoaded('PLAYER', spirit, 'player-1', false, null)).toBe(false);
   });
 });

@@ -15,7 +15,8 @@
 
 import { randomUUID } from 'crypto';
 import { prisma } from '../../config/database';
-import { createWsTestServer, expectNoEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
+import { createWsTestServer, expectNoEvent, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
+import { applyRoleToLiveSockets, clearCampaignFromLiveSockets } from '../utils';
 
 jest.setTimeout(30000);
 
@@ -81,6 +82,11 @@ beforeEach(async () => {
   // A fresh second for the writes and for the ceiling.
   await sleep(1100);
   await prisma.mapExploration.deleteMany({ where: { mapId } });
+  await prisma.campaignMembership.upsert({
+    where: { userId_campaignId: { userId: dmId, campaignId } },
+    create: { userId: dmId, campaignId, role: 'DM', characterIds: [] },
+    update: { role: 'DM' },
+  });
 });
 
 afterEach(() => {
@@ -153,6 +159,46 @@ describe('exploration:reveal', () => {
     await sleep(1600);
 
     expect(await remembered()).toEqual([]);
+    player.disconnect();
+    dm.disconnect();
+  });
+
+  it("does not write a DM's previewed reveal after the DM is kicked", async () => {
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const first = waitForEvent<StateEvent>(player, 'exploration:state');
+    dm.emit('exploration:reveal', { mapId, cells: [20], userId: playerId });
+    expect((await first).cells).toContain(20);
+    dm.emit('exploration:reveal', { mapId, cells: [21], userId: playerId });
+    // Queued by now, and not due to be written for most of a second.
+    await sleep(150);
+    await prisma.campaignMembership.delete({
+      where: { userId_campaignId: { userId: dmId, campaignId } },
+    });
+    await clearCampaignFromLiveSockets(dmId, campaignId);
+    await sleep(1100);
+
+    expect(await remembered()).not.toContain(21);
+    player.disconnect();
+    dm.disconnect();
+  });
+
+  it("does not write a DM's previewed reveal after the DM is demoted", async () => {
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const first = waitForEvent<StateEvent>(player, 'exploration:state');
+    dm.emit('exploration:reveal', { mapId, cells: [22], userId: playerId });
+    expect((await first).cells).toContain(22);
+    dm.emit('exploration:reveal', { mapId, cells: [23], userId: playerId });
+    await sleep(150);
+    await prisma.campaignMembership.update({
+      where: { userId_campaignId: { userId: dmId, campaignId } },
+      data: { role: 'SPECTATOR' },
+    });
+    await applyRoleToLiveSockets(dmId, campaignId, 'SPECTATOR');
+    await sleep(1100);
+
+    expect(await remembered()).not.toContain(23);
     player.disconnect();
     dm.disconnect();
   });

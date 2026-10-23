@@ -166,8 +166,9 @@ export async function resendInitiative(campaignId: string, options: { evenWhenEm
 /**
  * Store a token's initiative on its map, in the list as it is under the map's
  * lock like every other write to a map's tokens. A token no longer on the
- * map is left alone. `allowed` is the permission rule at commit, with the
- * fresh role and the token row as they are under the lock.
+ * map is left alone (`written: false`), not treated as a successful write.
+ * `allowed` is the permission rule at commit, with the fresh role and the
+ * token row as they are under the lock.
  */
 async function setTokenInitiative(
   socket: AuthenticatedSocket,
@@ -175,12 +176,12 @@ async function setTokenInitiative(
   tokenId: string,
   value: number | null,
   allowed: (role: string, freshToken: Token, currentMapId: string | null) => true | string,
-): Promise<{ ok: true; role: string } | { ok: false; denied?: true; message?: string }> {
+): Promise<{ ok: true; role: string; written: boolean } | { ok: false; denied?: true; message?: string }> {
   const pre = await confirmWriteAuthorization(socket);
   if (!pre.ok) return { ok: false, denied: true };
 
   type Locked =
-    | { ok: true; role: string }
+    | { ok: true; role: string; written: boolean }
     | { ok: false; denied: true; dropCampaign?: true }
     | { ok: false; message: string };
   const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked> => {
@@ -192,13 +193,13 @@ async function setTokenInitiative(
     });
     const tokens = readTokens(fresh.tokens);
     const index = tokens.findIndex((t) => t.id === tokenId);
-    if (index === -1) return { ok: true, role: authz.role };
+    if (index === -1) return { ok: true, role: authz.role, written: false };
     const freshToken = tokens[index];
     const permission = allowed(authz.role, freshToken, fresh.campaign.currentMapId);
     if (permission !== true) return { ok: false, message: permission };
     tokens[index] = { ...freshToken, initiative: value };
     await tx.map.update({ where: { id: mapId }, data: { tokens: toJson(tokens) } });
-    return { ok: true, role: authz.role };
+    return { ok: true, role: authz.role, written: true };
   });
   if (!outcome.ok) {
     await applyWriteAuthzDrop(socket, outcome);
@@ -326,6 +327,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         if (!persisted.denied) socket.emit('error', { message: persisted.message ?? 'Only the DM can modify initiative' });
         return;
       }
+      if (!persisted.written) return;
 
       // Update in-memory combat state
       const state = getCombatState(socket.campaignId);
@@ -548,6 +550,9 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         }
         return;
       }
+      // Token gone during the lock: left alone, not a success with a dice log
+      // entry or an in-memory combatant insert.
+      if (!persisted.written) return;
 
       // Update in-memory state — add to combatants if not already present.
       // Only for a DM, and only a token that was not in the order when the

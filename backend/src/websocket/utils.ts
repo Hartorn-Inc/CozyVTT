@@ -392,6 +392,28 @@ export async function sendSystemMessage(
   }
 }
 
+type LiveCampaignDropHook = (userId: string, campaignId: string) => void;
+const liveCampaignDropHooks: LiveCampaignDropHook[] = [];
+
+/**
+ * Register work to run when a member is kicked from a campaign or their role
+ * there changes. Handlers that own per-user timers (queued exploration
+ * writes) hook here so `utils` does not import them.
+ */
+export function onLiveCampaignDrop(hook: LiveCampaignDropHook): void {
+  liveCampaignDropHooks.push(hook);
+}
+
+function notifyLiveCampaignDrop(userId: string, campaignId: string): void {
+  for (const hook of liveCampaignDropHooks) {
+    try {
+      hook(userId, campaignId);
+    } catch (error) {
+      logger.error('live campaign drop hook failed', { err: error });
+    }
+  }
+}
+
 /**
  * Drop a user's live sockets for one campaign after their role there changed.
  *
@@ -416,6 +438,7 @@ export async function applyRoleToLiveSockets(
   role: CampaignRole
 ): Promise<number> {
   void role;
+  notifyLiveCampaignDrop(userId, campaignId);
   const io = getSocketInstance();
   // Sockets join a room named for their user (see events.ts), which is how a
   // specific person's connections are addressed.
@@ -455,6 +478,7 @@ export async function clearCampaignFromLiveSockets(
   userId: string,
   campaignId: string
 ): Promise<number> {
+  notifyLiveCampaignDrop(userId, campaignId);
   const io = getSocketInstance();
   const sockets = await io.in(userId).fetchSockets();
 

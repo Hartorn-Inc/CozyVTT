@@ -19,7 +19,7 @@ import { prisma } from '../../config/database';
 import { ExplorationRevealSchema } from '../../validators/walls';
 import type { FogState } from '../../types/walls';
 import logger from '../../utils/logger';
-import { emitToMapReaders } from '../utils';
+import { emitToMapReaders, onLiveCampaignDrop } from '../utils';
 import { explorationRevealLimiter, limiterKey, stateRequestAllowed, withinCeiling, loadFogState, applyWsFogOperation, revealedCellIndices, broadcastExplorationState, fogFits, FogTooLargeError } from '../shared';
 import { toJson } from '../../utils/prisma-json';
 import { canReadMap } from '../../services/permissions';
@@ -49,6 +49,8 @@ interface QueuedReveal {
   campaignId: string;
   mapId: string;
   userId: string;
+  /** socket.userId who queued this write (the DM, when previewing another member). */
+  actorId: string;
   cells: Set<number>;
   lastWrite: number;
   timer: ReturnType<typeof setTimeout> | null;
@@ -56,12 +58,14 @@ interface QueuedReveal {
 }
 const queuedReveals = new Map<string, QueuedReveal>();
 
-function queueReveal(io: Server, campaignId: string, mapId: string, userId: string, cells: number[]): void {
+function queueReveal(io: Server, campaignId: string, mapId: string, userId: string, cells: number[], actorId: string): void {
   const key = `${mapId}:${userId}`;
   let queued = queuedReveals.get(key);
   if (!queued) {
-    queued = { campaignId, mapId, userId, cells: new Set(), lastWrite: 0, timer: null, writing: false };
+    queued = { campaignId, mapId, userId, actorId, cells: new Set(), lastWrite: 0, timer: null, writing: false };
     queuedReveals.set(key, queued);
+  } else {
+    queued.actorId = actorId;
   }
   for (const cell of cells) queued.cells.add(cell);
   scheduleRevealWrite(io, key, queued);
@@ -80,7 +84,7 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
   queued.lastWrite = Date.now();
   const cells = [...queued.cells];
   queued.cells.clear();
-  const { campaignId, mapId, userId } = queued;
+  const { campaignId, mapId, userId, actorId } = queued;
   try {
     // Read again: memory can be turned off, or the map moved or resized past
     // what memory can hold, within the second.
@@ -96,11 +100,22 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
     // the lock is released when the transaction ends.
     const cellsNow = await prisma.$transaction(async (tx) => {
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${mapId}), hashtext(${userId}))`;
-      const member = await tx.campaignMembership.findUnique({
-        where: { userId_campaignId: { userId, campaignId } },
-        select: { userId: true },
+      const actor = await tx.campaignMembership.findUnique({
+        where: { userId_campaignId: { userId: actorId, campaignId } },
+        select: { role: true },
       });
-      if (!member) return null;
+      if (!actor) return null;
+      // A DM preview writes another member's memory: the actor must still be
+      // the DM. The memory owner's own reveal is enough if they are still a
+      // member (a kicked player is gone).
+      if (actorId !== userId) {
+        if (actor.role !== 'DM') return null;
+        const member = await tx.campaignMembership.findUnique({
+          where: { userId_campaignId: { userId, campaignId } },
+          select: { userId: true },
+        });
+        if (!member) return null;
+      }
       const row = await tx.mapExploration.findUnique({
         where: { mapId_userId: { mapId, userId } },
         select: { explored: true },
@@ -145,6 +160,19 @@ function forgetQueuedReveals(mapId: string): void {
     if (!queued.writing) queuedReveals.delete(key);
   }
 }
+
+/** Drop this actor's queued reveals on kick or role-change. If `writing`, the in-tx actor check still refuses the upsert. */
+function forgetQueuedRevealsForActor(userId: string, campaignId: string): void {
+  for (const [key, queued] of queuedReveals) {
+    if (queued.actorId !== userId || queued.campaignId !== campaignId) continue;
+    if (queued.timer) clearTimeout(queued.timer);
+    queued.timer = null;
+    queued.cells.clear();
+    if (!queued.writing) queuedReveals.delete(key);
+  }
+}
+
+onLiveCampaignDrop(forgetQueuedRevealsForActor);
 
 export function registerExplorationHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
@@ -206,7 +234,7 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
         socket.emit('error', { message: 'You can only record your own explored memory' });
         return;
       }
-      queueReveal(io, socket.campaignId, mapId, userId, cells);
+      queueReveal(io, socket.campaignId, mapId, userId, cells, socket.userId);
     } catch (error) {
       logger.error('exploration:reveal failed', { err: error });
     }

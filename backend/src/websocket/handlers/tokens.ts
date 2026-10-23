@@ -8,7 +8,7 @@ import { throttle } from '../../utils/throttle';
 import { AuthenticatedSocket } from '../auth';
 import { prisma } from '../../config/database';
 import {
-  canActOnTokenPlane, getSpiritVisibilityBatch, filterTokensByRole, filterTokensByLighting, playerSightOnLitMap,
+  canActOnTokenPlane, canActOnTokenPlaneFromLoaded, getSpiritVisibilityBatch, filterTokensByRole, filterTokensByLighting, playerSightOnLitMap,
   tokenForRecipient, viewerIdFor,
 } from '../../utils/spirit-layer';
 import type { Map as MapRow } from '@prisma/client';
@@ -66,7 +66,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
    * which can change mid-drag without touching the token, so the decision is
    * made again at least every DRAG_DECISION_MS as well.
    */
-  const drags = new Map<string, { seenAs: string; at: number; deciding: Promise<DragAudience> }>();
+  const drags = new Map<string, { seenAs: string; at: number; deciding: Promise<DragAudience>; mapId: string }>();
   const seenAs = (token: Pick<Token, 'visible' | 'layer'>) => `${token.visible !== false}|${token.layer}`;
   function dragAudienceFor(mapId: string, token: Token): Promise<DragAudience> {
     const cached = drags.get(token.id);
@@ -84,7 +84,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       if (before) audience.holding = before.holding;
       return audience;
     });
-    drags.set(token.id, { seenAs: seenAs(token), at: now, deciding });
+    drags.set(token.id, { seenAs: seenAs(token), at: now, deciding, mapId });
     return deciding;
   }
   async function decideDragAudience(mapId: string, tokenId: string): Promise<DragAudience> {
@@ -233,6 +233,72 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         s.emit('token:disappeared', { tokenId: token.id, mapId });
       }
     }
+  }
+
+  /**
+   * A drop refused after the token was picked up, or an open drag abandoned
+   * (kick, demotion, disconnect): the mover's screen has already drawn it, and
+   * the frames reached everyone the drag went to. Tell them where the token
+   * is; the correction names no mover, since nobody moved it. Only when the
+   * drag began here with frames this socket was allowed to send (`sawTheDrag`),
+   * or `evenWithoutDrag` says the mover is told regardless. And only a screen
+   * that opening the map now would give the token to.
+   */
+  async function emitPutBack(
+    campaignId: string,
+    mapId: string,
+    tokenId: string,
+    token: Token,
+    map: MapRow & { campaign: { currentMapId: string | null } },
+    tokensArray: Token[],
+    sawTheDrag: Promise<DragAudience> | undefined,
+    evenWithoutDrag: boolean
+  ): Promise<void> {
+    if (!sawTheDrag && !evenWithoutDrag) return;
+    const audience = sawTheDrag ? await sawTheDrag : null;
+    const told = stillInCampaign(await campaignSockets(io, campaignId), campaignId)
+      .filter((s) => s.id === socket.id || audience?.recipients.has(s.id));
+    const playerIds = told
+      .map((s) => s as unknown as AuthenticatedSocket)
+      .filter((a) => a.role !== 'DM' && a.userId)
+      .map((a) => a.userId as string);
+    const spiritVisibility = await getSpiritVisibilityBatch(campaignId, playerIds);
+    const back = { tokenId, mapId, x: token.position.x, y: token.position.y, movedBy: null };
+    for (const s of told) {
+      const recipient = frameRecipient(s as unknown as AuthenticatedSocket, map, tokensArray, tokenId, spiritVisibility);
+      const holds = s.id === socket.id || audience === null || audience.holding.has(s.id);
+      if (recipient && recipient.sees(token)) {
+        if (!holds) s.emit('token:appeared', { token: recipient.shown(token), mapId });
+        s.emit('token.moved', back);
+      } else if (holds && s.id !== socket.id && recipient) {
+        s.emit('token:disappeared', { tokenId, mapId });
+      }
+    }
+  }
+
+  /**
+   * Re-read the map, then put the token back at its stored square. After
+   * confirmWriteAuthorization / withMapsLocked (and on disconnect), another
+   * writer may have moved or hidden it: emitting a pre-lock snapshot can
+   * overwrite that write. Map or token gone: skip.
+   */
+  async function putBackStored(
+    campaignId: string,
+    mapId: string,
+    tokenId: string,
+    sawTheDrag: Promise<DragAudience> | undefined,
+    evenWithoutDrag: boolean
+  ): Promise<void> {
+    if (!sawTheDrag && !evenWithoutDrag) return;
+    const row = await prisma.map.findUnique({
+      where: { id: mapId },
+      include: { campaign: { select: { currentMapId: true } } },
+    });
+    if (!row || row.campaignId !== campaignId) return;
+    const tokensArray = (Array.isArray(row.tokens) ? row.tokens : []) as unknown as Token[];
+    const token = tokensArray.find((t) => t.id === tokenId);
+    if (!token) return;
+    await emitPutBack(campaignId, mapId, tokenId, token, row, tokensArray, sawTheDrag, evenWithoutDrag);
   }
 
   /**
@@ -492,28 +558,8 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
        * taken the token from a screen, or given it one that cannot see where
        * it stands; each is put back in step.
        */
-      const putBack = async (evenWithoutDrag: boolean) => {
-        if (!sawTheDrag && !evenWithoutDrag) return;
-        const audience = sawTheDrag ? await sawTheDrag : null;
-        const told = stillInCampaign(await campaignSockets(io, campaignId), campaignId)
-          .filter((s) => s.id === socket.id || audience?.recipients.has(s.id));
-        const playerIds = told
-          .map((s) => s as unknown as AuthenticatedSocket)
-          .filter((a) => a.role !== 'DM' && a.userId)
-          .map((a) => a.userId as string);
-        const spiritVisibility = await getSpiritVisibilityBatch(campaignId, playerIds);
-        const back = { tokenId, mapId, x: token.position.x, y: token.position.y, movedBy: null };
-        for (const s of told) {
-          const recipient = frameRecipient(s as unknown as AuthenticatedSocket, map, tokensArray, tokenId, spiritVisibility);
-          const holds = s.id === socket.id || audience === null || audience.holding.has(s.id);
-          if (recipient && recipient.sees(token)) {
-            if (!holds) s.emit('token:appeared', { token: recipient.shown(token), mapId });
-            s.emit('token.moved', back);
-          } else if (holds && s.id !== socket.id && recipient) {
-            s.emit('token:disappeared', { tokenId, mapId });
-          }
-        }
-      };
+      const putBack = (evenWithoutDrag: boolean) =>
+        putBackStored(campaignId, mapId, tokenId, sawTheDrag, evenWithoutDrag);
 
       // Update token position, in the list as it is under the map's lock: a
       // DM's add or delete landing during the drag used to be written away.
@@ -525,7 +571,10 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         | { refused: string; putBack: boolean }
         | { tokens: Token[]; x: number; y: number };
       const pre = await confirmWriteAuthorization(socket);
-      if (!pre.ok) return;
+      if (!pre.ok) {
+        await putBack(false);
+        return;
+      }
       const outcome = await withMapsLocked([mapId], async (tx): Promise<MoveEndOutcome> => {
         const authz = await confirmWriteAuthorization(socket, { db: tx });
         if (!authz.ok) return { denied: true, dropCampaign: authz.dropCampaign };
@@ -533,7 +582,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
           where: { id: mapId },
           select: {
             tokens: true, width: true, height: true, campaignId: true,
-            campaign: { select: { status: true, currentMapId: true } },
+            campaign: { select: { status: true, currentMapId: true, spiritLayerEnabled: true } },
           },
         });
         if (!fresh || fresh.campaignId !== campaignId || !canReadMap(authz.role, mapId, fresh.campaign.currentMapId)) {
@@ -546,7 +595,16 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         if (!canControlToken(authz.role, freshToken.controlledBy, socket.userId)) {
           return { refused: moveRefusal(authz.role), putBack: false } as const;
         }
-        if (!(await canActOnTokenPlane(authz.role, freshToken, campaignId, socket.userId!))) {
+        // Plane from rows already on this tx: canActOnTokenPlane / getSpiritVisibility
+        // use global prisma (membership, campaign, maybe current-map tokens) and
+        // at connection_limit=1 that nested checkout waits on the held lock.
+        if (!canActOnTokenPlaneFromLoaded(
+          authz.role,
+          freshToken,
+          socket.userId!,
+          fresh.campaign.spiritLayerEnabled,
+          fresh.campaign.currentMapId === mapId ? tokens : null
+        )) {
           return { refused: 'You cannot interact with spirit layer tokens', putBack: false } as const;
         }
         if (!canMoveTokensNow(authz.role, fresh.campaign.status)) {
@@ -562,6 +620,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         return { tokens, x: dropped.x, y: dropped.y };
       });
       if ('denied' in outcome) {
+        await putBack(false);
         await applyWriteAuthzDrop(socket, outcome);
         return;
       }
@@ -657,5 +716,24 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       logger.error('token.move.end failed', { err: error });
       socket.emit('error', { message: 'Failed to finalize token movement' });
     }
+  });
+
+  // Kick, role-change, monitor disconnect, and a client close mid-drag never
+  // reach token.move.end. Put each open drag back at its stored square so
+  // other clients do not keep heldAt.
+  socket.on('disconnect', () => {
+    const open = [...drags.entries()];
+    drags.clear();
+    const campaignId = socket.campaignId;
+    if (!campaignId || open.length === 0) return;
+    void (async () => {
+      for (const [tokenId, drag] of open) {
+        try {
+          await putBackStored(campaignId, drag.mapId, tokenId, drag.deciding, false);
+        } catch (error) {
+          logger.error('token drag putBack on disconnect failed', { err: error });
+        }
+      }
+    })();
   });
 }

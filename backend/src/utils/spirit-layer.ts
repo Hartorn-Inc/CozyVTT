@@ -261,6 +261,34 @@ export async function canActOnTokenPlane(
   return getSpiritVisibility(campaignId, userId);
 }
 
+/**
+ * The same plane rule as {@link canActOnTokenPlane}, from campaign and token
+ * rows already loaded under a map lock. Do not call {@link getSpiritVisibility}
+ * while holding that lock: it uses global prisma and can wait on the
+ * connection the lock occupies.
+ *
+ * DM or a material-plane token is allowed. A spirit token is allowed when the
+ * overlay is on, or when a PLAYER has a visible spirit token they control on
+ * the current map (`tokensOnCurrentMap`; null when this map is not current —
+ * canReadMap has already refused a player there). Matches
+ * {@link getSpiritVisibility}: DM; `spiritLayerEnabled`; PLAYER + visible
+ * `controlledBy === userId` + `layer === 'spirit'`.
+ */
+export function canActOnTokenPlaneFromLoaded(
+  role: string | undefined,
+  token: Pick<Token, 'layer'>,
+  userId: string,
+  spiritLayerEnabled: boolean,
+  tokensOnCurrentMap: ReadonlyArray<Pick<Token, 'layer' | 'visible' | 'controlledBy'>> | null
+): boolean {
+  if (role === 'DM' || token.layer !== 'spirit') return true;
+  if (spiritLayerEnabled) return true;
+  if (role !== 'PLAYER' || tokensOnCurrentMap == null) return false;
+  return tokensOnCurrentMap.some(
+    (t) => t.layer === 'spirit' && t.visible && t.controlledBy === userId
+  );
+}
+
 export function filterTokensByRole(
   tokens: unknown,
   userRole: string,
