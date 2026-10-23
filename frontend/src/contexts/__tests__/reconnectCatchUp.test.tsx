@@ -22,13 +22,15 @@ vi.mock('@/services/api', () => ({
 const socketOn = vi.fn();
 vi.mock('@/services/socket', () => ({
   default: {
-    onCharacterHpUpdated: vi.fn(), onDmTransferred: vi.fn(), onMemberRoleChanged: vi.fn(),
+    onCharacterHpUpdated: vi.fn(),
+    onDmTransferred: (cb: unknown) => socketOn('campaign.dm.transferred', cb),
+    onMemberRoleChanged: (cb: unknown) => socketOn('campaign.role.changed', cb),
     on: (...a: unknown[]) => socketOn(...a), off: vi.fn(), connect: vi.fn(), disconnect: vi.fn(), getSocket: vi.fn().mockReturnValue(null), startHeartbeat: vi.fn(),
   },
 }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'me' } }) }));
 
-import { CampaignProvider, useCampaign } from '../CampaignContext';
+import { CampaignProvider, useCampaign, type TableRetryOutcome } from '../CampaignContext';
 import { useGameStore } from '@/stores/gameStore';
 import { CampaignStatus, type Campaign, type Map as CampaignMap, type Token } from '@/types';
 
@@ -192,7 +194,7 @@ it('writes nothing once the page has moved to another campaign', async () => {
   getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
     releaseMap = () => resolve({ map: { id: mapId, tokens: [] }, spiritVisible: false });
   }));
-  let catching: Promise<boolean> = Promise.resolve(false);
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
   act(() => { catching = latest!.catchUpAfterReconnect(); });
   await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm1'));
 
@@ -225,7 +227,7 @@ it('writes nothing once the page has closed', async () => {
   getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
     releaseMap = () => resolve({ map: { id: mapId, tokens: [{ id: 'from-c1' }] }, spiritVisible: false });
   }));
-  let catching: Promise<boolean> = Promise.resolve(false);
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
   act(() => { catching = latest!.catchUpAfterReconnect(); });
   await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm1'));
 
@@ -456,7 +458,7 @@ it('does not rewind currentMapId when catch-up GET is stale after a live map swi
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseCampaign = resolve;
   }));
-  let catching: Promise<boolean> = Promise.resolve(false);
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
   act(() => { catching = latest!.catchUpAfterReconnect(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -490,7 +492,7 @@ it('discards a late catch-up getMap after the table has already switched maps', 
   getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
     releaseMap = () => resolve({ map: { id: mapId, tokens: [tokenAt('stale', 1, 2)] }, spiritVisible: false });
   }));
-  let catching: Promise<boolean> = Promise.resolve(false);
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
   act(() => { catching = latest!.catchUpAfterReconnect(); });
   await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm3'));
 
@@ -535,7 +537,7 @@ it('does not clear the live map when catch-up GET has no current map after a liv
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseCampaign = resolve;
   }));
-  let catching: Promise<boolean> = Promise.resolve(false);
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
   act(() => { catching = latest!.catchUpAfterReconnect(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -591,4 +593,185 @@ it('refreshCampaign settings PUT does not overwrite live map, status, or spirit'
   expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
   expect(latest!.campaign?.currentVibe).toBe('night');
   expect(useGameStore.getState().tokens['t1']?.position).toEqual({ x: 4, y: 5 });
+});
+
+it('does not adopt a stale catch-up map after a live A→B→A round trip', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('mid', 2, 2)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('mid', 2, 2)]);
+  });
+  act(() => {
+    latest!.setCurrentMap({ id: 'm1', tokens: [tokenAt('back', 3, 3)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('back', 3, 3)]);
+  });
+
+  const getMapCallsBeforeRelease = getMap.mock.calls.length;
+  await act(async () => {
+    releaseCampaign(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+    await catching;
+  });
+
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['back']);
+  expect(getMap.mock.calls.slice(getMapCallsBeforeRelease).some(([, mapId]) => mapId === 'm2')).toBe(false);
+});
+
+it('does not clear the mounted map when catch-up GET is null after a live A→B→A round trip', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('mid', 2, 2)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('mid', 2, 2)]);
+  });
+  act(() => {
+    latest!.setCurrentMap({ id: 'm1', tokens: [tokenAt('back', 3, 3)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('back', 3, 3)]);
+  });
+
+  await act(async () => {
+    releaseCampaign({ ...campaignAs('ACTIVE', 'm2', 'PLAYER'), currentMapId: null });
+    await catching;
+  });
+
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['back']);
+});
+
+it('still hydrates catch-up when a same-id function-form patch runs while GET is in flight', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.setCurrentMap((prev) => (prev?.id === 'm1' ? { ...prev, fogEnabled: true } : prev));
+  });
+
+  await act(async () => {
+    releaseCampaign(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+    await catching;
+  });
+
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(getMap.mock.calls.some(([, mapId]) => mapId === 'm2')).toBe(true);
+});
+
+it('does not roll back a live pause or role from a stale catch-up GET, including when the map half is discarded', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.campaign?.status).toBe('ACTIVE');
+  expect(latest!.userRole).toBe('PLAYER');
+
+  const onRoleChanged = socketOn.mock.calls
+    .filter(([event]) => event === 'campaign.role.changed')
+    .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
+  expect(onRoleChanged).toBeDefined();
+
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'SPECTATOR' });
+    latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('live', 9, 9)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('live', 9, 9)]);
+    latest!.setCurrentMap({ id: 'm1', tokens: [tokenAt('back', 3, 3)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('back', 3, 3)]);
+  });
+
+  await act(async () => {
+    releaseCampaign(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+    await catching;
+  });
+
+  expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
+  expect(latest!.userRole).toBe('SPECTATOR');
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+  expect(getMap.mock.calls.some(([, mapId]) => mapId === 'm2')).toBe(false);
+});
+
+it('still applies a missed pause when reconnect authenticated repeats the same role', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  const onAuthenticated = socketOn.mock.calls
+    .filter(([event]) => event === 'authenticated')
+    .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
+  expect(onAuthenticated).toBeDefined();
+
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    onAuthenticated!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+  });
+
+  await act(async () => {
+    releaseCampaign(campaignAs('PAUSED', 'm1', 'PLAYER'));
+    await catching;
+  });
+
+  expect(latest!.campaign?.status).toBe('PAUSED');
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.currentMap?.id).toBe('m1');
 });

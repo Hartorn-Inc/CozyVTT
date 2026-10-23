@@ -87,9 +87,11 @@ function CampaignPageContent() {
   const { user } = useAuth();
   const [retryingMap, setRetryingMap] = useState(false);
   const [retryingSync, setRetryingSync] = useState(false);
-  const [tableStatusAnnouncement, setTableStatusAnnouncement] = useState('');
+  const [mapRetryAnnouncement, setMapRetryAnnouncement] = useState('');
+  const [syncRetryAnnouncement, setSyncRetryAnnouncement] = useState('');
   const campaignErrorHeadingRef = useRef<HTMLHeadingElement>(null);
-  const announceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mapAnnounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncAnnounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const showBlockingCampaignError = Boolean(error && (!campaign || !errorRetryable));
 
   useEffect(() => {
@@ -100,26 +102,42 @@ function CampaignPageContent() {
 
   useEffect(() => {
     return () => {
-      if (announceTimerRef.current !== null) {
-        clearTimeout(announceTimerRef.current);
+      if (mapAnnounceTimerRef.current !== null) {
+        clearTimeout(mapAnnounceTimerRef.current);
+      }
+      if (syncAnnounceTimerRef.current !== null) {
+        clearTimeout(syncAnnounceTimerRef.current);
       }
     };
   }, []);
 
-  const announceTableStatus = (message: string, immediate = false) => {
-    if (announceTimerRef.current !== null) {
-      clearTimeout(announceTimerRef.current);
-      announceTimerRef.current = null;
+  const announceInRegion = (
+    setAnnouncement: (message: string) => void,
+    timerRef: { current: ReturnType<typeof setTimeout> | null },
+    message: string,
+    immediate = false,
+  ) => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
     }
     if (immediate) {
-      setTableStatusAnnouncement(message);
+      setAnnouncement(message);
       return;
     }
-    setTableStatusAnnouncement('');
-    announceTimerRef.current = setTimeout(() => {
-      setTableStatusAnnouncement(message);
-      announceTimerRef.current = null;
+    setAnnouncement('');
+    timerRef.current = setTimeout(() => {
+      setAnnouncement(message);
+      timerRef.current = null;
     }, 0);
+  };
+
+  const announceMapRetry = (message: string, immediate = false) => {
+    announceInRegion(setMapRetryAnnouncement, mapAnnounceTimerRef, message, immediate);
+  };
+
+  const announceSyncRetry = (message: string, immediate = false) => {
+    announceInRegion(setSyncRetryAnnouncement, syncAnnounceTimerRef, message, immediate);
   };
 
   /**
@@ -342,8 +360,11 @@ function CampaignPageContent() {
 
   return (
     <div className="h-screen flex flex-col bg-gradient-to-br from-soft-cream via-parchment to-warm-amber/20">
-      <div id="campaign-table-status" className="sr-only" aria-live="polite" aria-atomic="true">
-        {tableStatusAnnouncement}
+      <div id="campaign-map-retry-status" className="sr-only" aria-live="polite" aria-atomic="true">
+        {mapRetryAnnouncement}
+      </div>
+      <div id="campaign-sync-retry-status" className="sr-only" aria-live="polite" aria-atomic="true">
+        {syncRetryAnnouncement}
       </div>
       {/* Header Bar */}
       <header className="flex items-center justify-between px-4 py-3 bg-moss-green/10 border-b border-moss-green/20 shadow-sm">
@@ -500,9 +521,9 @@ function CampaignPageContent() {
             onClick={() => {
               if (retryingSync) return;
               setRetryingSync(true);
-              announceTableStatus('Retrying sync', true);
-              void Promise.resolve(catchUpAfterReconnect()).then((ok) => {
-                announceTableStatus(ok ? 'Table synced' : (syncError || 'Failed to catch up after reconnect'));
+              announceSyncRetry('Retrying sync', true);
+              void Promise.resolve(catchUpAfterReconnect()).then((result) => {
+                announceSyncRetry(result.message);
               }).finally(() => setRetryingSync(false));
             }}
             busyKeepFocus={retryingSync}
@@ -556,9 +577,9 @@ function CampaignPageContent() {
                       onClick={() => {
                         if (retryingMap) return;
                         setRetryingMap(true);
-                        announceTableStatus('Retrying map load', true);
-                        void Promise.resolve(retryMapLoad()).then((ok) => {
-                          announceTableStatus(ok ? 'Map loaded' : (mapLoadError?.message || 'Failed to load map'));
+                        announceMapRetry('Retrying map load', true);
+                        void Promise.resolve(retryMapLoad()).then((result) => {
+                          announceMapRetry(result.message);
                         }).finally(() => setRetryingMap(false));
                       }}
                       busyKeepFocus={retryingMap}

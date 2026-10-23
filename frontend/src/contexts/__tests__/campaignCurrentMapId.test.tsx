@@ -108,6 +108,8 @@ describe('campaign.currentMapId follows setCurrentMap', () => {
   });
 
   it('an update of the map showing applies to its latest value and keeps currentMapId', async () => {
+    // Function-form patches (fog/illumination) keep the same map id and must
+    // not count as a live map switch for catch-up's mapEpoch.
     const get = await mount();
     act(() => {
       get().setCurrentMap(mapMeta('m2', 'Second Map'));
