@@ -129,11 +129,53 @@ function images(rel: string): string[] {
 }
 
 describe('the images', () => {
+  const DIGEST = /^(?:[a-z0-9.-]+\/)?[a-z0-9.-]+:[a-zA-Z0-9._-]+@sha256:[0-9a-f]{64}$/;
+  const LOCAL = /^cozyvtt-(?:backend|frontend):latest$/;
+
   it('pin nginx to one stable line, the same for the proxy and the frontend', () => {
     const nginx = [...images('docker-compose.yml'), ...images('frontend/Dockerfile.prod')].filter((i) => /^nginx[:@]/.test(i));
     expect(nginx).toHaveLength(2);
     for (const image of nginx) expect(image).toMatch(/^nginx:1\.\d*[02468]-alpine@sha256:[0-9a-f]{64}$/);
     expect(new Set(nginx).size).toBe(1);
+  });
+
+  it('pin every third-party production image to a tag and digest', () => {
+    const files: Array<{ file: string; named: string[] }> = [
+      { file: 'docker-compose.yml', named: images('docker-compose.yml') },
+      { file: 'backend/Dockerfile.prod', named: images('backend/Dockerfile.prod') },
+      { file: 'backend/Dockerfile', named: images('backend/Dockerfile') },
+      { file: 'frontend/Dockerfile.prod', named: images('frontend/Dockerfile.prod') },
+      { file: 'frontend/Dockerfile', named: images('frontend/Dockerfile') },
+      { file: '.github/workflows/ci.yml', named: images('.github/workflows/ci.yml').filter((image) => image.startsWith('postgres:')) },
+    ];
+    for (const { file, named } of files) {
+      expect(named.length).toBeGreaterThan(0);
+      for (const image of named) {
+        if (LOCAL.test(image)) continue;
+        expect({ file, image }).toEqual({ file, image: expect.stringMatching(DIGEST) });
+      }
+    }
+  });
+
+  it.each(['database', 'backend', 'frontend', 'nginx'])('runs production %s on linux/amd64', (name) => {
+    expect(service('docker-compose.yml', name)).toMatch(/\n {4}platform: linux\/amd64\n/);
+  });
+
+  it('does not pin the development stack to amd64', () => {
+    expect(read('docker-compose.dev.yml')).not.toMatch(/^\s*platform:/m);
+  });
+
+  it('does not interpolate production stack image names from the environment', () => {
+    const named = images('docker-compose.yml');
+    expect(named.length).toBeGreaterThan(0);
+    expect(named.filter((image) => /\$\{/.test(image))).toEqual([]);
+  });
+
+  it('does not let the override example retag stack images', () => {
+    const keys = read('docker-compose.override.example.yml')
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line) && /^\s+image:/.test(line));
+    expect(keys).toEqual([]);
   });
 
   it.each(['backend/Dockerfile.prod', 'backend/Dockerfile', 'frontend/Dockerfile.prod', 'frontend/Dockerfile'])(

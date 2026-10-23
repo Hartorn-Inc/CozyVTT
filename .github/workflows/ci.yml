@@ -199,24 +199,34 @@ jobs:
           done
           exit $status
 
-  # What a self-hoster's `docker compose up -d --build` runs: the compose file
-  # read, both production images built, and the bundled nginx's configuration
-  # rendered as its container renders it and checked by nginx, the HTTPS
-  # example from docs/DEPLOYMENT.md included. Then the stack is started and a
-  # browser walks through it (frontend/e2e): the setup wizard, signing in and
-  # out, a campaign opened with its live connection, at desktop and phone
-  # sizes.
+  # What an Operator's `docker compose up -d --build` runs: the compose file
+  # read, the pinned database and nginx images pulled, both production images
+  # built, High and Critical advisories in those four runtime images, and the
+  # bundled nginx's configuration rendered as its container renders it and
+  # checked by nginx, the HTTPS example from docs/DEPLOYMENT.md included.
+  # Then the stack is started and a browser walks through it (frontend/e2e):
+  # the setup wizard, signing in and out, a campaign opened with its live
+  # connection, at desktop and phone sizes.
   images:
     name: Production images, nginx and smoke tests
     runs-on: ubuntu-26.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Read docker-compose.yml with the example settings
         run: cp .env.example .env && docker compose config -q
+      - name: Pull the pinned database and nginx images
+        run: docker compose pull database nginx
       - run: docker compose build
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.76.1
+          cache: false
+      - name: Scan runtime images for High and Critical advisories
+        run: python3 scripts/ci/image-advisories.py
       - run: pip install pyyaml
       - run: python3 scripts/nginx-check.py
       # Throwaway secrets, a port of its own, and a setup token the smoke
