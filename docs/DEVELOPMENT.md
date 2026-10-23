@@ -125,6 +125,8 @@ Copy `backend/.env.example` to `backend/.env` and fill in the values.
 | `SETUP_TOKEN` | No | — | The token the setup wizard asks for; unset, the backend makes one and prints it in its log until setup has run |
 | `UPLOAD_DIR` | No | `uploads` | Where uploaded files are stored, relative to the backend folder |
 | `BACKUP_DIR` | No | `backups` | Where the Admin Dashboard writes backups; must not be inside the uploads folder |
+| `BACKUP_ENCRYPTION_KEY` | For new Instance backups | — | 64 hex characters (`openssl rand -hex 32`). Encrypts Admin Dashboard Instance backups. Missing or unusable (including equal to `SESSION_SECRET`): the Instance still boots; creating a new backup is refused so a plaintext archive is not written |
+| `BACKUP_ENCRYPTION_PREVIOUS_KEYS` | No | — | Previous backup keys, comma and/or whitespace separated, same 64-hex format. Restore tries the current key then these. Never `SESSION_SECRET` |
 | `SESSION_MAX_AGE` | No | `3600000` | Milliseconds a sign-in lasts without a request |
 | `REMEMBER_ME_MAX_AGE` | No | `2592000000` | Milliseconds a **Remember me** sign-in lasts, and the longest any sign-in lasts |
 | `RATE_LIMIT_MAX_REQUESTS` | No | `300` | Requests per minute to `/api` from one address |
@@ -185,7 +187,9 @@ These variables belong in the root `.env` used by Docker Compose, not in
 | `DEV_SMTP_SECURE` | No | — | `true` for TLS SMTP in development |
 
 The development Compose file ignores the production `SESSION_SECRET`,
-`SETUP_TOKEN`, `APP_URL`, and `SMTP_*` values. Email remains disabled unless
+`SETUP_TOKEN`, `APP_URL`, and `SMTP_*` values. `BACKUP_ENCRYPTION_KEY` and
+`BACKUP_ENCRYPTION_PREVIOUS_KEYS` use those production names from `.env`;
+there is no `DEV_` split. Email remains disabled unless
 the development SMTP settings are supplied. Generate `DEV_SESSION_SECRET`
 with `openssl rand -hex 32` and place it only in `.env`; Make rejects the
 known placeholder, blank values, equal production values, and exported

@@ -15,6 +15,7 @@ import { createShutdown, onShutdownSignals, onProcessFailure } from './utils/shu
 import { setupState } from './services/systemSettings';
 import { removeLeftoverRestoreUploads } from './services/restoreState';
 import { resolveBackupDir } from './utils/backupDir';
+import { warnIfBackupEncryptionKeyUnusable } from './config/backupEncryptionKey';
 import { setupTokenHint } from './services/setupToken';
 import { backupsInProgress } from './services/backupsInProgress';
 import { personalFilesBeingRemoved } from './services/accountDeletion';
@@ -82,6 +83,11 @@ void Promise.all([loginSessionRevocationGuard, enforceDatabaseRole()]).then(() =
     for (const warning of getProxyLimitWarnings()) {
       logger.warn(warning);
     }
+
+    // A missing backup key still boots; creating a new Instance backup is
+    // refused so a plaintext archive is not written. Never fatal, including
+    // in production — unlike SESSION_SECRET.
+    warnIfBackupEncryptionKeyUnusable();
 
     // A backend stopped mid-restore left the uploaded backup in the backups
     // folder; nothing can finish restoring it now.

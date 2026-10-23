@@ -10031,12 +10031,17 @@ paths:
         Platform ADMIN only. Writes `backup-YYYY-MM-DDTHH-MM-SS.zip` (with a `-2`, `-3`
         suffix while that name is taken, so two backups asked for in the same
         second are both kept) to the server's backup directory (`backend/backups/` on the host under Docker, `BACKUP_DIR`
-        on an install without Docker), holding `database.sql`, a `pg_dump` of the
+        on an install without Docker). The ZIP of `database.sql` (a `pg_dump` of the
         database without its ownership and privilege statements and without the
-        login sessions, and the `uploads/` tree. Needs `pg_dump` in the backend
+        login sessions) and the `uploads/` tree is encrypted with
+        `BACKUP_ENCRYPTION_KEY` (AES-256-GCM; on-disk bytes start with `CVTTBK01`,
+        never `SESSION_SECRET`). Needs `pg_dump` in the backend
         image, which the Docker image provides; answers 500 when it is missing or
         the dump fails. The archive can be fetched with the download route and
-        loaded back with the restore route. Refused with 409 while a restore
+        loaded back with the restore route. Refused with 400 `Backup Unavailable`
+        and `code: BACKUP_ENCRYPTION_KEY_MISSING` when `BACKUP_ENCRYPTION_KEY` is
+        missing or unusable: the Instance still runs, and a new backup is refused
+        so a plaintext archive is not written. Refused with 409 while a restore
         takes its upload or writes its safety backup, and with 503, as every
         /api route is, while the restore replaces the database.
         Backups are never deleted automatically: each stays until it is deleted
@@ -10060,12 +10065,30 @@ paths:
                     format: date-time
         '400':
           description: >-
-            `Bad Request` when DATABASE_URL `?schema=` is not a simple identifier
-            (letters, digits, underscore). Nothing was changed.
+            `Backup Unavailable` with `code: BACKUP_ENCRYPTION_KEY_MISSING` when
+            `BACKUP_ENCRYPTION_KEY` is not set or is unusable. The Instance still
+            runs; a new backup is refused so a plaintext archive is not written.
+            Nothing is written. `Bad Request` when DATABASE_URL `?schema=` is not
+            a simple identifier (letters, digits, underscore). Nothing was changed.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+              examples:
+                encryptionKeyMissing:
+                  value:
+                    error: Backup Unavailable
+                    code: BACKUP_ENCRYPTION_KEY_MISSING
+                    message: >-
+                      BACKUP_ENCRYPTION_KEY is not set or is unusable. The Instance
+                      still runs. A new backup is refused so a plaintext archive is
+                      not written.
+                invalidSchema:
+                  value:
+                    error: Bad Request
+                    message: >-
+                      DATABASE_URL schema= is not a simple identifier. Nothing was
+                      changed.
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
@@ -10080,9 +10103,9 @@ paths:
           description: pg_dump not found or backup failed
     get:
       tags: [Admin]
-      summary: List database backups
+      summary: List Instance backups
       operationId: adminListBackups
-      description: Returns the backup archives (`backup-YYYY-MM-DDTHH-MM-SS.zip`, or the same with a `-2`, `-3` suffix) in the server's backup directory with filename, size and creation time, newest first. A backup is written under a temporary name and appears only once it is complete; an unfinished one left by a backend stopped partway through is deleted when the list is read, and so is an uploaded backup (`restore-temp-…`) a backend stopped mid-restore left behind, when no restore is running. A backup directory that cannot be read answers 500, not an empty list.
+      description: Returns the Instance backups (`backup-YYYY-MM-DDTHH-MM-SS.zip`, or the same with a `-2`, `-3` suffix) in the server's backup directory with filename, size and creation time, newest first. New files are encrypted archives still named `.zip`. A backup is written under a temporary name and appears only once it is complete; an unfinished one left by a backend stopped partway through is deleted when the list is read, and so is an uploaded backup (`restore-temp-…`) a backend stopped mid-restore left behind, when no restore is running. A backup directory that cannot be read answers 500, not an empty list.
       security:
         - cookieAuth: []
       responses:
@@ -10121,7 +10144,7 @@ paths:
       tags: [Admin]
       summary: Download a backup file
       operationId: adminDownloadBackup
-      description: Streams a backup `.zip` (the database dump and every uploaded file) as a download. Filename is strictly validated against the `backup-YYYY-MM-DDTHH-MM-SS.zip` pattern (an optional `-2`, `-3` suffix included) to prevent path traversal.
+      description: Streams a backup file (an encrypted Instance backup still named `.zip`) as a download. Filename is strictly validated against the `backup-YYYY-MM-DDTHH-MM-SS.zip` pattern (an optional `-2`, `-3` suffix included) to prevent path traversal.
       security:
         - cookieAuth: []
       parameters:
@@ -11280,7 +11303,14 @@ paths:
         while one is taking its upload or writing its safety backup, answers 409,
         and once the database is being replaced every API request answers 503
         until the restore ends. The upload is capped at 4 GB (413) and its filename
-        must end in `.zip` (400). Once accepted, a file that is not a ZIP archive is
+        must end in `.zip` (400). An encrypted Instance backup (`CVTTBK01`) is
+        decrypted with `BACKUP_ENCRYPTION_KEY` then `BACKUP_ENCRYPTION_PREVIOUS_KEYS`
+        (never `SESSION_SECRET`) before the ZIP is read; a legacy plaintext ZIP is
+        still accepted. An archive encrypted with a key this Instance does not have
+        answers 400 `Invalid Backup` naming those variables; nothing is changed.
+        If the current key is missing, the safety copy is refused with 400
+        `Backup Unavailable` and `code: BACKUP_ENCRYPTION_KEY_MISSING` and nothing
+        is restored. Once accepted, a file that is not a ZIP archive is
         refused with 400, as is an archive listing more than 100,000 entries or
         holding an entry whose path could escape the destination folder; an archive
         that unpacks to more than 10 GiB answers 413. Each refusal names its reason
@@ -11354,16 +11384,21 @@ paths:
             `Bad Request` `No backup file provided` when the request holds no
             file. `Bad Request` when DATABASE_URL `?schema=` is not a simple
             identifier (letters, digits, underscore); nothing was changed.
-            Other refusals are `Invalid Backup`: a filename not
+            `Backup Unavailable` with `code: BACKUP_ENCRYPTION_KEY_MISSING` when
+            the safety copy cannot be encrypted because `BACKUP_ENCRYPTION_KEY`
+            is missing or unusable; nothing was restored. Other refusals are
+            `Invalid Backup`: a filename not
             ending in `.zip`; a multipart body over the field limits every
             upload route shares (more than 100 text fields, a field name over
             100 bytes, a field value over 16 KB, 16,384 bytes), a file sent
             under a name other than `backup`, or a second file, answered `The
             upload could not be read: <reason>. Nothing was changed.`; a file
-            that is not a ZIP archive; an archive listing more than 100,000
-            entries or holding an unsafe path; or a ZIP that is not a complete
-            CozyVTT backup. A ZIP without `database.sql` answers `This file
-            does not appear to be a valid CozyVTT backup (database.sql not
+            that is not a ZIP archive; an archive encrypted with a key this
+            Instance does not have (names `BACKUP_ENCRYPTION_KEY` /
+            `BACKUP_ENCRYPTION_PREVIOUS_KEYS`); an archive listing more than
+            100,000 entries or holding an unsafe path; or a ZIP that is not a
+            complete CozyVTT backup. A ZIP without `database.sql` answers `This
+            file does not appear to be a valid CozyVTT backup (database.sql not
             found inside ZIP)`; the other `Invalid Backup` messages give the
             reason and end "Nothing was changed." None of these changes
             anything. Before 1.5.2 every refusal here but the missing file and
@@ -12790,7 +12825,7 @@ components:
             Machine-readable code, sent only where a client has to act on it:
             PASSWORD_CHANGE_REQUIRED, MFA_ENROLMENT_REQUIRED, SIGN_IN_EXPIRED,
             CHARACTER_CHANGED, ASSET_IN_USE, UVTT_IMPORT_NEEDS_CONFIRMATION,
-            GAME_SYSTEM_SHEET_FROZEN.
+            GAME_SYSTEM_SHEET_FROZEN, BACKUP_ENCRYPTION_KEY_MISSING.
         validationErrors:
           type: array
           description: Per-field problems with a character sheet or template.
