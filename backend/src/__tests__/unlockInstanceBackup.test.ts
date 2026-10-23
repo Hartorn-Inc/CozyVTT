@@ -125,4 +125,146 @@ describeOnPosix('unlock-instance-backup.mjs', () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toEqual(zip);
   });
+
+  it('writes no stdout when dest is omitted and the key is wrong', async () => {
+    const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('no-out')]);
+    const enc = path.join(dir, 'backup.zip');
+    await encryptBackupToFile(Readable.from(zip), enc, Buffer.from(KEY, 'hex'));
+
+    const result = run([enc], { BACKUP_ENCRYPTION_KEY: OTHER_KEY }, null);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toEqual(Buffer.alloc(0));
+  });
+
+  it('writes decrypted ZIP bytes to stdout for an encrypted archive', async () => {
+    const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('enc-stdout')]);
+    const enc = path.join(dir, 'backup.zip');
+    await encryptBackupToFile(Readable.from(zip), enc, Buffer.from(KEY, 'hex'));
+
+    const unlockTemps = async () =>
+      (await fs.readdir(os.tmpdir())).filter((name) => name.startsWith('cozyvtt-unlock-'));
+    const before = new Set(await unlockTemps());
+    const result = run([enc], { BACKUP_ENCRYPTION_KEY: KEY }, null);
+    const after = new Set(await unlockTemps());
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toEqual(zip);
+    expect([...after].sort()).toEqual([...before].sort());
+  });
+
+  it('does not create a cozyvtt-unlock- temp file when writing to stdout', async () => {
+    expect(await fs.readFile(SCRIPT, 'utf8')).not.toMatch(/cozyvtt-unlock-/);
+
+    const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('no-tmp')]);
+    const source = path.join(dir, 'legacy.zip');
+    await fs.writeFile(source, zip);
+
+    const unlockTemps = async () =>
+      (await fs.readdir(os.tmpdir())).filter((name) => name.startsWith('cozyvtt-unlock-'));
+    const before = new Set(await unlockTemps());
+    const result = run([source, '-'], {}, null);
+    const after = new Set(await unlockTemps());
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toEqual(zip);
+    expect([...after].sort()).toEqual([...before].sort());
+  });
+
+  it('leaves an existing destination unchanged on a second encrypted unlock', async () => {
+    const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('first')]);
+    const enc = path.join(dir, 'backup.zip');
+    const dest = path.join(dir, 'plain.zip');
+    await encryptBackupToFile(Readable.from(zip), enc, Buffer.from(KEY, 'hex'));
+    expect(run([enc, dest], { BACKUP_ENCRYPTION_KEY: KEY }).status).toBe(0);
+
+    const past = new Date(Date.now() - 60_000);
+    await fs.utimes(dest, past, past);
+    const before = await snapshot(dest);
+
+    const result = run([enc, dest], { BACKUP_ENCRYPTION_KEY: KEY });
+
+    expect(result.status).not.toBe(0);
+    expect(String(result.stderr)).toMatch(/already exists/i);
+    await expectUnchanged(dest, before);
+  });
+
+  it('leaves an existing destination unchanged on a second legacy copy-through', async () => {
+    const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('legacy')]);
+    const source = path.join(dir, 'legacy.zip');
+    const dest = path.join(dir, 'out.zip');
+    await fs.writeFile(source, zip);
+    expect(run([source, dest], {}).status).toBe(0);
+
+    const past = new Date(Date.now() - 60_000);
+    await fs.utimes(dest, past, past);
+    const before = await snapshot(dest);
+
+    const result = run([source, dest], {});
+
+    expect(result.status).not.toBe(0);
+    expect(String(result.stderr)).toMatch(/already exists/i);
+    await expectUnchanged(dest, before);
+  });
+
+  it('leaves the source archive unchanged when dest is the same path', async () => {
+    const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('same')]);
+    const source = path.join(dir, 'legacy.zip');
+    await fs.writeFile(source, zip);
+    const past = new Date(Date.now() - 60_000);
+    await fs.utimes(source, past, past);
+    const before = await snapshot(source);
+
+    const sameString = run([source, source], {});
+    expect(sameString.status).not.toBe(0);
+    expect(String(sameString.stderr)).toMatch(/same path/i);
+    await expectUnchanged(source, before);
+
+    const viaResolve = run([source, path.join(dir, '.', 'legacy.zip')], {});
+    expect(viaResolve.status).not.toBe(0);
+    expect(String(viaResolve.stderr)).toMatch(/same path/i);
+    await expectUnchanged(source, before);
+
+    const relative = run(['legacy.zip', './legacy.zip'], {});
+    expect(relative.status).not.toBe(0);
+    expect(String(relative.stderr)).toMatch(/same path/i);
+    await expectUnchanged(source, before);
+  });
+
+  it('leaves an existing dest that is the encrypted archive itself unchanged', async () => {
+    const zip = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from('enc-self')]);
+    const enc = path.join(dir, 'backup.zip');
+    await encryptBackupToFile(Readable.from(zip), enc, Buffer.from(KEY, 'hex'));
+    const past = new Date(Date.now() - 60_000);
+    await fs.utimes(enc, past, past);
+    const before = await snapshot(enc);
+
+    const sameString = run([enc, enc], { BACKUP_ENCRYPTION_KEY: KEY });
+    expect(sameString.status).not.toBe(0);
+    expect(String(sameString.stderr)).toMatch(/same path/i);
+    await expectUnchanged(enc, before);
+
+    const viaResolve = run([enc, path.join(dir, '.', 'backup.zip')], { BACKUP_ENCRYPTION_KEY: KEY });
+    expect(viaResolve.status).not.toBe(0);
+    expect(String(viaResolve.stderr)).toMatch(/same path/i);
+    await expectUnchanged(enc, before);
+  });
 });
+
+async function snapshot(filePath: string) {
+  const st = await fs.stat(filePath);
+  return {
+    bytes: await fs.readFile(filePath),
+    mtimeMs: st.mtimeMs,
+    ino: st.ino,
+    size: st.size,
+  };
+}
+
+async function expectUnchanged(filePath: string, before: Awaited<ReturnType<typeof snapshot>>) {
+  const after = await snapshot(filePath);
+  expect(after.bytes).toEqual(before.bytes);
+  expect(after.mtimeMs).toBe(before.mtimeMs);
+  expect(after.ino).toBe(before.ino);
+  expect(after.size).toBe(before.size);
+}

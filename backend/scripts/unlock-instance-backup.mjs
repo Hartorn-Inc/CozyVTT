@@ -20,10 +20,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
-import os from 'node:os';
 import path from 'node:path';
 import { pipeline } from 'node:stream/promises';
-import { Readable } from 'node:stream';
+import { Readable, Writable } from 'node:stream';
 
 // Duplicated from backend/src/utils/backupEncryption.ts; keepInStep.test.ts
 // compares BACKUP_ARCHIVE_MAGIC / BACKUP_NONCE_LENGTH / BACKUP_AUTH_TAG_LENGTH.
@@ -41,6 +40,8 @@ const UNKNOWN_KEY_MESSAGE =
 const UNKNOWN_FORMAT_MESSAGE =
   'The file is not an encrypted Instance backup (CVTTBK01) and not a legacy plaintext ZIP.';
 const DAMAGED_MESSAGE = 'The file is not a complete encrypted Instance backup, or it is damaged.';
+const SAME_PATH_MESSAGE = 'Source and destination are the same path; the file was left unchanged.';
+const DEST_EXISTS_MESSAGE = 'The destination already exists; the existing file was left unchanged.';
 
 function parseBackupEncryptionKeyHex(raw) {
   if (raw === undefined) return null;
@@ -119,24 +120,90 @@ async function inspectKind(filePath) {
   }
 }
 
-async function decryptOnce(sourcePath, destPath, key, nonce, tag, ciphertextStart, ciphertextEnd) {
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, nonce);
-  decipher.setAuthTag(tag);
-  const out = fs.createWriteStream(destPath, { flags: 'wx', mode: 0o600 });
-  const cipherBytes = ciphertextEnd - ciphertextStart + 1;
-  const src =
-    cipherBytes <= 0
-      ? Readable.from([])
-      : fs.createReadStream(sourcePath, { start: ciphertextStart, end: ciphertextEnd });
+/** Same path.resolve, or the same file after realpath when both exist. */
+async function isSamePath(sourcePath, destPath) {
+  const resolvedSource = path.resolve(sourcePath);
+  const resolvedDest = path.resolve(destPath);
+  if (resolvedSource === resolvedDest) return true;
   try {
-    await pipeline(src, decipher, out);
-  } catch (error) {
-    out.destroy();
-    throw error;
+    const [realSource, realDest] = await Promise.all([
+      fsp.realpath(resolvedSource),
+      fsp.realpath(resolvedDest),
+    ]);
+    return realSource === realDest;
+  } catch {
+    return false;
   }
 }
 
-async function decryptBackupFile(sourcePath, destPath, keys) {
+/**
+ * createWriteStream({ flags: 'wx' }) emits EEXIST on `error`; it does not throw.
+ * Resolve only after `open` so an existing dest is never treated as ours.
+ */
+function waitForExclusiveOpen(stream) {
+  return new Promise((resolve, reject) => {
+    const onOpen = () => {
+      stream.off('error', onError);
+      resolve();
+    };
+    const onError = (error) => {
+      stream.off('open', onOpen);
+      reject(error);
+    };
+    stream.once('open', onOpen);
+    stream.once('error', onError);
+  });
+}
+
+function wrapDestError(error) {
+  if (error && typeof error === 'object' && error.code === 'EEXIST') {
+    return new Error(DEST_EXISTS_MESSAGE);
+  }
+  return error;
+}
+
+/** Unlink dest only if this attempt created it (after wx open succeeded). */
+async function writeExclusive(destPath, writeFn) {
+  const out = fs.createWriteStream(destPath, { flags: 'wx', mode: 0o600 });
+  let opened = false;
+  try {
+    await waitForExclusiveOpen(out);
+    opened = true;
+    await writeFn(out);
+  } catch (error) {
+    out.destroy();
+    if (opened) {
+      await fsp.unlink(destPath).catch(() => undefined);
+    }
+    throw wrapDestError(error);
+  }
+  await fsp.chmod(destPath, 0o600);
+}
+
+/** In-memory sink so a failed key is never written to stdout or dest. */
+function discardSink() {
+  return new Writable({
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+}
+
+async function decryptOnce(sourcePath, dest, key, layout) {
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, layout.nonce);
+  decipher.setAuthTag(layout.tag);
+  const cipherBytes = layout.ciphertextEnd - layout.ciphertextStart + 1;
+  const src =
+    cipherBytes <= 0
+      ? Readable.from([])
+      : fs.createReadStream(sourcePath, {
+          start: layout.ciphertextStart,
+          end: layout.ciphertextEnd,
+        });
+  await pipeline(src, decipher, dest);
+}
+
+async function readEncryptedLayout(sourcePath) {
   const handle = await fsp.open(sourcePath, 'r');
   let size;
   let header;
@@ -170,39 +237,43 @@ async function decryptBackupFile(sourcePath, destPath, keys) {
     await tagHandle.close();
   }
 
+  return {
+    nonce,
+    tag,
+    ciphertextStart: HEADER_LENGTH,
+    ciphertextEnd: size - BACKUP_AUTH_TAG_LENGTH - 1,
+  };
+}
+
+async function findWorkingKey(sourcePath, keys, layout) {
   if (keys.length === 0) {
     throw new Error(UNKNOWN_KEY_MESSAGE);
   }
-
-  const ciphertextStart = HEADER_LENGTH;
-  const ciphertextEnd = size - BACKUP_AUTH_TAG_LENGTH - 1;
-
   for (const key of keys) {
     try {
-      await decryptOnce(sourcePath, destPath, key, nonce, tag, ciphertextStart, ciphertextEnd);
-      await fsp.chmod(destPath, 0o600);
-      return;
+      await decryptOnce(sourcePath, discardSink(), key, layout);
+      return key;
     } catch (error) {
-      await fsp.unlink(destPath).catch(() => undefined);
       if (!isAuthTagFailure(error)) throw error;
     }
   }
   throw new Error(UNKNOWN_KEY_MESSAGE);
 }
 
+async function decryptBackupFile(sourcePath, destPath, keys) {
+  const layout = await readEncryptedLayout(sourcePath);
+  const key = await findWorkingKey(sourcePath, keys, layout);
+  await writeExclusive(destPath, (out) => decryptOnce(sourcePath, out, key, layout));
+}
+
 async function copyThrough(sourcePath, destPath) {
-  const out = fs.createWriteStream(destPath, { flags: 'wx', mode: 0o600 });
-  try {
-    await pipeline(fs.createReadStream(sourcePath), out);
-    await fsp.chmod(destPath, 0o600);
-  } catch (error) {
-    out.destroy();
-    await fsp.unlink(destPath).catch(() => undefined);
-    throw error;
-  }
+  await writeExclusive(destPath, (out) => pipeline(fs.createReadStream(sourcePath), out));
 }
 
 async function unlockToFile(sourcePath, destPath) {
+  if (await isSamePath(sourcePath, destPath)) {
+    throw new Error(SAME_PATH_MESSAGE);
+  }
   const kind = await inspectKind(sourcePath);
   if (kind === 'encrypted') {
     await decryptBackupFile(sourcePath, destPath, restoreBackupEncryptionKeys());
@@ -210,6 +281,21 @@ async function unlockToFile(sourcePath, destPath) {
   }
   if (kind === 'zip') {
     await copyThrough(sourcePath, destPath);
+    return;
+  }
+  throw new Error(UNKNOWN_FORMAT_MESSAGE);
+}
+
+async function unlockToStdout(sourcePath) {
+  const kind = await inspectKind(sourcePath);
+  if (kind === 'encrypted') {
+    const layout = await readEncryptedLayout(sourcePath);
+    const key = await findWorkingKey(sourcePath, restoreBackupEncryptionKeys(), layout);
+    await decryptOnce(sourcePath, process.stdout, key, layout);
+    return;
+  }
+  if (kind === 'zip') {
+    await pipeline(fs.createReadStream(sourcePath), process.stdout);
     return;
   }
   throw new Error(UNKNOWN_FORMAT_MESSAGE);
@@ -233,14 +319,7 @@ async function main() {
 
   const toStdout = destArg === undefined || destArg === '-';
   if (toStdout) {
-    const tmpDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'cozyvtt-unlock-'));
-    const tmpFile = path.join(tmpDir, 'backup.zip');
-    try {
-      await unlockToFile(sourcePath, tmpFile);
-      await pipeline(fs.createReadStream(tmpFile), process.stdout);
-    } finally {
-      await fsp.rm(tmpDir, { recursive: true, force: true });
-    }
+    await unlockToStdout(sourcePath);
     return;
   }
 
