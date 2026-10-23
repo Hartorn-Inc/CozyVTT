@@ -35,6 +35,10 @@
  * they allow; a dialog offering more than the server takes is a map the DM
  * fills in and cannot save. The file is kept identical in both packages.
  *
+ * The fog operation cell cap. A reveal/hide names at most 20,000 cells in
+ * one message; the server Zod constant, the client chunk helper, and the
+ * OpenAPI FogOperation schema must name that same literal.
+ *
  * The socket flood ceilings, applied by the server and listed in the
  * WebSocket guide, which is what a self-hoster or the author of a scripted
  * client reads to know what the server will take.
@@ -400,6 +404,28 @@ describe('campaign.access.revoked, which the server sends and the client reads',
 describe('the map limits', () => {
   it('are the same file in the browser and on the server', () => {
     expect(read('frontend/src/constants/mapLimits.ts')).toBe(read('backend/src/validators/mapLimits.ts'));
+  });
+});
+
+describe('the fog operation cell cap', () => {
+  const constant = (rel: string) => {
+    const m = /export const FOG_MESSAGE_MAX_CELLS = (\d+);/.exec(read(rel));
+    if (!m) throw new Error(`${rel} no longer exports FOG_MESSAGE_MAX_CELLS; update this test with the file`);
+    return Number(m[1]);
+  };
+  const fogOperationBlock = () => {
+    const yaml = read('backend/docs/API_DOCUMENTATION.yaml');
+    const start = yaml.indexOf('\n    FogOperation:\n');
+    if (start === -1) throw new Error('API_DOCUMENTATION.yaml no longer has a FogOperation schema');
+    const rest = yaml.slice(start + 1);
+    const end = rest.slice(1).search(/\n {4}[A-Z][A-Za-z]+:/);
+    return end === -1 ? rest : rest.slice(0, end + 1);
+  };
+
+  it('is the literal 20000 on the server, the client chunk helper, and FogOperation.maxItems', () => {
+    expect(constant('backend/src/validators/walls.ts')).toBe(20000);
+    expect(constant('frontend/src/components/campaign/map/chunkFogCells.ts')).toBe(20000);
+    expect(fogOperationBlock()).toMatch(/maxItems:\s*20000/);
   });
 });
 

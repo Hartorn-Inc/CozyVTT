@@ -411,19 +411,21 @@ export async function broadcastFogState(io: Server, campaignId: string, mapId: s
  * follows the memory as it grows. Each send is the whole memory, a few times
  * a second while a player moves, so a DM socket not previewing them is not
  * sent it. Nobody else: one player's memory is never another's to see.
+ * `epoch` is the map's explored-memory clock (unchanged on a reveal).
  */
 export async function broadcastExplorationState(
   io: Server,
   campaignId: string,
   mapId: string,
   userId: string,
-  cells: number[]
+  cells: number[],
+  epoch: number
 ): Promise<void> {
   const sockets = await campaignSockets(io, campaignId);
   for (const s of sockets) {
     const member = s as unknown as AuthenticatedSocket;
     if (member.userId === userId || (member.role === 'DM' && member.previewingMemoryOf === userId)) {
-      s.emit('exploration:state', { mapId, userId, cells });
+      s.emit('exploration:state', { mapId, userId, cells, epoch });
     }
   }
 }

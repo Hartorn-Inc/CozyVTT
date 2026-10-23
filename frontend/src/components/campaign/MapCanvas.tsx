@@ -57,6 +57,8 @@ import { createVisionCache } from './map/vision';
 import { pickTokenAt, pickMovableTokenAt, blockingTokensAt, visibleTokenHp } from './map/tokenHitTest';
 import { cachedTokenImage, placeholderColor } from './map/layers/drawTokens';
 import { fogRectFromDrag, fogCellsInRect, revealedSetFromFogState } from './map/fogSelection';
+import { chunkFogCells, FOG_MESSAGE_MAX_CELLS, FOG_OPERATION_CHUNK_GAP_MS } from './map/chunkFogCells';
+import { createFogOperationQueue } from './map/fogOperationQueue';
 import { exploredCellsFromCoverage, diffNew } from './map/exploration';
 import { rectFromDrag, segmentsInRect } from './map/mapSelection';
 import { useWallSelection } from './map/useWallSelection';
@@ -601,17 +603,34 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
   };
 
   /**
-   * Apply a set of fog cells: optimistic local update plus one server op.
+   * Apply a set of fog cells: optimistic local update plus queued server ops.
    *
    * A rectangle drag produces exactly one call here, which is why the old
    * pending-cells buffer and its 80ms flush interval are gone — those existed
-   * only to batch the continuous stream a brush stroke produced.
+   * only to batch the continuous stream a brush stroke produced. The local
+   * grid still flips the whole set at once; the wire is split into messages
+   * of at most 20,000 cells, queued and spaced so the 10/s fog limiter does
+   * not drop them. A later rectangle is appended; it does not cancel earlier
+   * chunks. Rejoin / map change / unmount clear the queue (catch-up snapshots).
    */
+  const socketRef = useRef(socket);
+  socketRef.current = socket;
+  const fogOpQueueRef = useRef<ReturnType<typeof createFogOperationQueue> | null>(null);
+  if (fogOpQueueRef.current === null) {
+    fogOpQueueRef.current = createFogOperationQueue({
+      getSocket: () => socketRef.current?.getSocket() ?? null,
+      gapMs: FOG_OPERATION_CHUNK_GAP_MS,
+    });
+  }
+  useEffect(() => {
+    return () => { fogOpQueueRef.current?.clear(); };
+  }, [joinedEpoch, currentMap?.id]);
+
   const applyFogCells = useCallback((cells: number[]) => {
     if (!currentMap || !fogMode || cells.length === 0) return;
 
     const reveal = fogMode === 'fog-reveal';
-    const operation = { op: reveal ? 'reveal' : 'hide', cells } as const;
+    const op = reveal ? 'reveal' : 'hide';
 
     setFogState((prev) => {
       if (!prev) return prev;
@@ -622,8 +641,14 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
       return { ...prev, revealed };
     });
 
-    socket?.getSocket()?.emit('fog:operation', { mapId: currentMap.id, operation });
-  }, [currentMap, fogMode, socket]);
+    fogOpQueueRef.current?.enqueue(
+      chunkFogCells(cells, FOG_MESSAGE_MAX_CELLS).map((chunk) => ({
+        mapId: currentMap.id,
+        op,
+        cells: chunk,
+      }))
+    );
+  }, [currentMap, fogMode]);
 
   /** Finish a fog drag: compute the snapped rectangle once and apply it. */
   const commitFogDrag = useCallback((endX: number, endY: number) => {
@@ -3562,16 +3587,20 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
               }
             }}
             onRevealAll={() => {
+              fogOpQueueRef.current?.clear();
               const socketInstance = socket?.getSocket();
               if (socketInstance && currentMap) {
                 socketInstance.emit('fog:operation', { mapId: currentMap.id, operation: { op: 'reveal_all' } });
+                fogOpQueueRef.current?.noteEmit();
               }
               setFogState((prev) => prev ? { ...prev, revealed: new Array(prev.revealed.length).fill(true) } : prev);
             }}
             onHideAll={() => {
+              fogOpQueueRef.current?.clear();
               const socketInstance = socket?.getSocket();
               if (socketInstance && currentMap) {
                 socketInstance.emit('fog:operation', { mapId: currentMap.id, operation: { op: 'hide_all' } });
+                fogOpQueueRef.current?.noteEmit();
               }
               setFogState((prev) => prev ? { ...prev, revealed: new Array(prev.revealed.length).fill(false) } : prev);
             }}

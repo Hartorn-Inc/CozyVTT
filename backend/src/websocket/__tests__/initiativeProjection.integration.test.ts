@@ -162,6 +162,20 @@ describe('initiative.state as each member may see it', () => {
     p1.disconnect();
   });
 
+  it('never lists an unseen spirit-layer combatant to a player', async () => {
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const p1 = await server.connectAndAuth(p1Cookie, campaignId);
+    const added = waitForEvent<State>(dm, 'initiative.state');
+    dm.emit('initiative.add', { tokenId: SPIRIT, mapId });
+    expect(byId(await added, SPIRIT)?.name).toBe('Wisp');
+
+    const asked = waitForEvent<State>(p1, 'initiative.state');
+    p1.emit('initiative.request_state');
+    expect(byId(await asked, SPIRIT)).toBeUndefined();
+    dm.disconnect();
+    p1.disconnect();
+  });
+
   it('follows the token: hit points the DM changes reach the tracker on its next send', async () => {
     const dm = await server.connectAndAuth(dmCookie, campaignId);
     const p1 = await server.connectAndAuth(p1Cookie, campaignId);
@@ -282,6 +296,72 @@ describe('a combatant on a map the campaign is not showing', () => {
     expect((await toDm).characterName).toBe('Crypt Lurker');
     await expect(silence).resolves.toBeUndefined();
 
+    dm.disconnect();
+    p1.disconnect();
+  });
+});
+
+/**
+ * Initiative is a combat roster, not a vision channel. Lighting and fog do
+ * not hide combatants; hidden / other-map / unseen spirit-layer still do
+ * (covered above). These cases pin that a player still lists someone they
+ * cannot see on the map.
+ */
+describe('initiative lists combatants lighting and fog would hide on the map', () => {
+  const DARK = 'dark';
+  const FOGGED = 'fogged';
+  let litMapId: string;
+
+  beforeAll(async () => {
+    const base = { imageUrl: '', size: { width: 1, height: 1 }, layer: 'token', rotation: 0, conditions: [], metadata: {} };
+    // 20×20 at 50px. A full-height wall at x=500 splits the map. The player's
+    // token stands west of it; the dark combatant stands east, out of line of
+    // sight on a lit map with global illumination off.
+    const wall = { id: randomUUID(), x1: 500, y1: 0, x2: 500, y2: 1000, type: 'wall' };
+    const map = await prisma.map.create({
+      data: {
+        campaignId, name: 'Lit Init', imageUrl: '/api/assets/maps/none', baseLayerUrl: '/api/assets/maps/none',
+        width: 20, height: 20, gridSize: 50, annotations: [],
+        lightingEnabled: true, globalIllumination: false, fogEnabled: true,
+        wallSegments: toJson([wall]),
+        tokens: [
+          { ...base, id: HERO, name: 'Hero', position: { x: 2, y: 10 }, visible: true, controlledBy: p1Id, hp: hp(4, 10), showHpBar: false },
+          { ...base, id: DARK, name: 'In the Dark', position: { x: 15, y: 10 }, visible: true, controlledBy: null, hp: hp(8, 8), showHpBar: false },
+          { ...base, id: FOGGED, name: 'Under Fog', position: { x: 3, y: 3 }, visible: true, controlledBy: null, hp: hp(2, 2), showHpBar: false },
+        ],
+      },
+    });
+    litMapId = map.id;
+  });
+
+  afterAll(async () => {
+    await prisma.map.deleteMany({ where: { id: litMapId } });
+  });
+
+  beforeEach(async () => {
+    await prisma.campaign.update({ where: { id: campaignId }, data: { currentMapId: litMapId } });
+  });
+
+  afterEach(async () => {
+    await prisma.campaign.update({ where: { id: campaignId }, data: { currentMapId: mapId } });
+  });
+
+  it('still lists a combatant out of line of sight on a lit map', async () => {
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const p1 = await server.connectAndAuth(p1Cookie, campaignId);
+    const added = waitForEvent<State>(p1, 'initiative.state');
+    dm.emit('initiative.add', { tokenId: DARK, mapId: litMapId });
+    expect(byId(await added, DARK)?.name).toBe('In the Dark');
+    dm.disconnect();
+    p1.disconnect();
+  });
+
+  it('still lists a combatant standing on an unrevealed fog cell', async () => {
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const p1 = await server.connectAndAuth(p1Cookie, campaignId);
+    const added = waitForEvent<State>(p1, 'initiative.state');
+    dm.emit('initiative.add', { tokenId: FOGGED, mapId: litMapId });
+    expect(byId(await added, FOGGED)?.name).toBe('Under Fog');
     dm.disconnect();
     p1.disconnect();
   });

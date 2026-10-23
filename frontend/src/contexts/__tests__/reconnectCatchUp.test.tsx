@@ -235,3 +235,35 @@ it('writes nothing once the page has closed', async () => {
   await act(async () => { releaseMap(); await catching; });
   expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-c2']);
 });
+
+// Catch-up is a silent REST snapshot of the last frame: getCampaign / getMap
+// and setTokens from that map. It must not emit or wait on a stream of
+// token.moved; those events are not replayed after a reconnect.
+it('applies the map snapshot on catch-up and does not wait on token.moved', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [{ id: 't-before' } as Token] }, spiritVisible: false })
+  );
+  render(
+    <MemoryRouter initialEntries={['/campaigns/c1']}>
+      <Routes>
+        <Route path="/campaigns/:id" element={<CampaignProvider><Probe /></CampaignProvider>} />
+      </Routes>
+    </MemoryRouter>
+  );
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['t-before']);
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockResolvedValueOnce({
+    map: { id: 'm1', tokens: [{ id: 't-after' } as Token] },
+    spiritVisible: false,
+  });
+  const socketCallsBefore = socketOn.mock.calls.length;
+  await act(async () => { await latest!.catchUpAfterReconnect(); });
+
+  expect(getCampaign).toHaveBeenCalled();
+  expect(getMap).toHaveBeenLastCalledWith('c1', 'm1');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['t-after']);
+  expect(socketOn.mock.calls.slice(socketCallsBefore).map(([event]) => event)).not.toContain('token.moved');
+});

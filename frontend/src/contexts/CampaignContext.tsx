@@ -58,6 +58,7 @@ interface CampaignContextState {
   /**
    * After a reconnect: re-read what arrives only as events (the session's
    * state, members' roles, the map the table is on) and reload that map.
+   * Silent; last frame kept — a REST snapshot, not a replay of `token.moved`.
    */
   catchUpAfterReconnect: () => Promise<void>;
   /**
@@ -289,6 +290,9 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // end, a member's role, a switch to another map. Re-read them without the
   // full reload's loading screen, then load the map the table is on now,
   // which may not be the one this page had (a player may no longer read it).
+  // Silent; last frame kept — REST snapshot of campaign + current map, not a
+  // replay of historical `token.moved` (or fog, or pings). Explored-memory
+  // epoch is not this catch-up's clock.
   const catchUpAfterReconnect = useCallback(async () => {
     const campaignId = campaign?.id;
     if (!campaignId) return;

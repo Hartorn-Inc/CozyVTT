@@ -90,6 +90,26 @@ function scheduleRevealWrite(io: Server, key: string, queued: QueuedReveal): voi
   queued.timer.unref?.();
 }
 
+/**
+ * Per-map explored-memory clock, independent of `joinedEpoch` and of
+ * `campaign.currentMapId`. Starts at a process-lifetime base so a restart
+ * never advertises an epoch older than a mounted client's last applied
+ * value. Incremented only on `exploration:reset`. In memory; not a Prisma
+ * field. Token, fog and ping handlers must not read this.
+ */
+const PROCESS_EXPLORATION_EPOCH_BASE = Date.now();
+const explorationEpochs = new Map<string, number>();
+
+function explorationEpochFor(mapId: string): number {
+  return explorationEpochs.get(mapId) ?? PROCESS_EXPLORATION_EPOCH_BASE;
+}
+
+function bumpExplorationEpoch(mapId: string): number {
+  const next = explorationEpochFor(mapId) + 1;
+  explorationEpochs.set(mapId, next);
+  return next;
+}
+
 async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal): Promise<void> {
   queued.timer = null;
   queued.writing = true;
@@ -98,11 +118,15 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
   queued.cellsByActor = new Map();
   const { campaignId, mapId, userId } = queued;
   const cells = [...pendingByActor.values()].flatMap((set) => [...set]);
+  const epochAtStart = explorationEpochFor(mapId);
   try {
     // Read again: memory can be turned off, or the map moved or resized past
-    // what memory can hold, within the second.
+    // what memory can hold, within the second. A reset that lands while this
+    // write is in flight bumps the map's epoch; we then abort so forgotten
+    // cells are not stored or broadcast as a post-reset replace.
     const map = await prisma.map.findUnique({ where: { id: mapId }, select: MAP_SELECT });
     if (!map || map.campaignId !== campaignId || !map.explorationEnabled || !fogFits(map)) return;
+    if (explorationEpochFor(mapId) !== epochAtStart) return;
     // Cells already remembered, which is what the page reports most of the
     // time it moves about known ground, are not worth a lock or a write.
     const held = await prisma.mapExploration.findUnique({ where: { mapId_userId: { mapId, userId } }, select: { explored: true } });
@@ -144,6 +168,7 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
       const after = revealedCellIndices(explored);
       // Nothing new: nothing to write, and nobody's memory to resend.
       if (after.length === before) return null;
+      if (explorationEpochFor(mapId) !== epochAtStart) return null;
       await tx.mapExploration.upsert({
         where: { mapId_userId: { mapId, userId } },
         create: { mapId, userId, explored: toJson(explored) },
@@ -151,7 +176,13 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
       });
       return after;
     });
-    if (cellsNow) await broadcastExplorationState(io, campaignId, mapId, userId, cellsNow);
+    if (explorationEpochFor(mapId) !== epochAtStart) {
+      // Reset won: the upsert may have raced past deleteMany. Drop this
+      // user's row and do not broadcast cells under a post-reset epoch.
+      await prisma.mapExploration.deleteMany({ where: { mapId, userId } });
+      return;
+    }
+    if (cellsNow) await broadcastExplorationState(io, campaignId, mapId, userId, cellsNow, epochAtStart);
   } catch (error) {
     logger.error('exploration:reveal failed', { err: error });
   } finally {
@@ -290,7 +321,12 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
         select: { explored: true },
       });
       const explored: FogState = loadFogState(map, (row?.explored as FogState | null) ?? null);
-      socket.emit('exploration:state', { mapId, userId, cells: revealedCellIndices(explored) });
+      socket.emit('exploration:state', {
+        mapId,
+        userId,
+        cells: revealedCellIndices(explored),
+        epoch: explorationEpochFor(mapId),
+      });
     } catch (error) {
       if (error instanceof FogTooLargeError) {
         socket.emit('error', { message: error.message });
@@ -302,6 +338,8 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
 
   /**
    * exploration:reset — DM forgets every player's explored areas on a map.
+   * Increments only this map's explored-memory epoch. Does not touch tokens,
+   * fog, or pings, and does not bump join or current-map identity.
    */
   socket.on('exploration:reset', async (data: { mapId?: unknown }) => {
     try {
@@ -328,9 +366,15 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
         socket.emit('error', { message: 'Only DMs can reset explored areas' });
         return;
       }
+      const epoch = bumpExplorationEpoch(mapId);
       forgetQueuedReveals(mapId);
       await prisma.mapExploration.deleteMany({ where: { mapId } });
-      await emitToMapReaders(io, campaignId, mapId, 'exploration:state', { mapId, userId: null, cells: [] });
+      await emitToMapReaders(io, campaignId, mapId, 'exploration:state', {
+        mapId,
+        userId: null,
+        cells: [],
+        epoch,
+      });
     } catch (error) {
       logger.error('exploration:reset failed', { err: error });
       socket.emit('error', { message: 'Failed to reset explored areas' });
