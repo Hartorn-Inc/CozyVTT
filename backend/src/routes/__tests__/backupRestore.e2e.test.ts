@@ -236,6 +236,9 @@ const DUMP_FROM_NEWER_CLIENT = [
   'SET statement_timeout = 0;',
   'SET transaction_timeout = 0;',
   "SET client_encoding = 'UTF8';",
+  'SET row_security = off;',
+  "COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';",
+  'COMMENT ON TABLE public."User" IS \'instance user\';',
   '',
   'DROP TABLE IF EXISTS public."Note";',
   'CREATE TABLE public."Note" (id text NOT NULL, body text);',
@@ -390,6 +393,9 @@ describe('POST /api/admin/backups/restore', () => {
     expect(path.basename(psql.args[psql.args.indexOf('--file') + 1])).not.toBe('database.sql');
     expect(psql.sqlLoaded).toMatch(/^\\restrict [A-Za-z0-9]+\nDROP SCHEMA public CASCADE;\nCREATE SCHEMA public;\n/);
     expect(psql.sqlLoaded).not.toContain('\nSET transaction_timeout = 0;\n');
+    expect(psql.sqlLoaded).not.toContain('\nSET row_security = off;\n');
+    expect(psql.sqlLoaded).not.toContain('COMMENT ON EXTENSION');
+    expect(psql.sqlLoaded).toContain("COMMENT ON TABLE public.\"User\" IS 'instance user';");
     expect(psql.sqlLoaded).toContain('CREATE TABLE public."Note"');
     expect(psql.sqlLoaded).not.toContain('OWNER TO');
     expect(psql.sqlLoaded).toContain('a1\tSET transaction_timeout = 0;\n');
@@ -450,7 +456,9 @@ describe('POST /api/admin/backups/restore', () => {
     expect(res.status).toBe(200);
     const [dump] = calls;
     expect(dump.cmd).toBe('pg_dump');
-    expect(dump.args).toEqual(expect.arrayContaining(['--clean', '--if-exists', '--no-owner', '--no-privileges']));
+    expect(dump.args).toEqual(
+      expect.arrayContaining(['--clean', '--if-exists', '--no-owner', '--no-privileges', '--enable-row-security']),
+    );
     const named = /(backup-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}(?:-\d+)?\.zip)/.exec(res.body.message)?.[1];
     expect(named).toBeDefined();
     expect(res.body.safetyBackup).toBe(named);

@@ -1420,12 +1420,18 @@ backup by hand (with the default schema owner `cozyvtt_app` and database
 ```bash
 (umask 077; docker compose exec -T database \
   pg_dump -U cozyvtt_app -d cozyvtt --no-owner --no-privileges \
+    --enable-row-security \
     --exclude-table-data=public.session \
     --exclude-table-data=public.revoked_login_session \
   | gzip > backup_$(date +%Y%m%d_%H%M%S).sql.gz)
 ```
 
 The `umask 077` in brackets makes the file readable by you alone, as the script's are: it holds every password hash and MFA secret on the instance. (Password reset and invitation links are stored hashed, so a backup holds no working link.)
+
+`--enable-row-security` is required for the schema owner: that role is
+`NOSUPERUSER` and `NOBYPASSRLS`, so `pg_dump`'s default `SET row_security = off`
+is refused. CozyVTT does not enable row security; the flag dumps the rows the
+owner can already see.
 
 `--exclude-table-data=public.session` and
 `--exclude-table-data=public.revoked_login_session` leave the login sessions

@@ -172,6 +172,7 @@ class ScriptSource(unittest.TestCase):
         )
         self.assertIsNotNone(docker, 'backup.sh no longer dumps through docker compose exec')
         block = docker.group(1)
+        self.assertIn('--enable-row-security', block)
         self.assertIn('--exclude-table-data=public.session', block)
         self.assertIn('--exclude-table-data=public.revoked_login_session', block)
         self.assertNotIn('${APP_SCHEMA}', block)
@@ -179,6 +180,7 @@ class ScriptSource(unittest.TestCase):
 
     def test_deployment_guide_names_public_and_schema_scoped_tables(self):
         guide = read(DEPLOYMENT_DOC)
+        self.assertIn('--enable-row-security', guide)
         self.assertIn('--exclude-table-data=public.session', guide)
         self.assertIn('--exclude-table-data=public.revoked_login_session', guide)
         self.assertIn('?schema=', guide)
@@ -264,6 +266,7 @@ class BackupRestoreScripts(unittest.TestCase):
 
     def test_backup_without_schema_excludes_public_login_tables_only(self):
         args = self._backup_args('postgresql://cozyvtt:secret@localhost:5432/cozyvtt')
+        self.assertIn('--enable-row-security', args)
         self.assertEqual(self._excludes(args), [
             '--exclude-table-data=public.session',
             '--exclude-table-data=public.revoked_login_session',
@@ -512,6 +515,71 @@ class BackupRestoreScripts(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn(
             'it does not create the User and _prisma_migrations tables, so it is not a CozyVTT backup',
+            result.stderr + result.stdout,
+        )
+        self.assertFalse(os.path.isfile(self.loaded))
+
+    def test_restore_drops_row_security_off_and_extension_comments_keeps_table_comments(self):
+        self._write_dump('\n'.join([
+            '-- PostgreSQL database dump',
+            'SET row_security = off;',
+            'CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;',
+            "COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';",
+            'ALTER EXTENSION plpgsql UPDATE;',
+            'DROP EXTENSION plpgsql;',
+            'CREATE TABLE public."User" (',
+            '    id text NOT NULL',
+            ');',
+            "COMMENT ON TABLE public.\"User\" IS 'instance user';",
+            'CREATE FUNCTION public.reject_revoked_login_session() RETURNS trigger',
+            '    LANGUAGE plpgsql',
+            '    AS $$',
+            'BEGIN',
+            '  RETURN NEW;',
+            'END;',
+            '$$;',
+            'CREATE TABLE public._prisma_migrations (',
+            '    id character varying(36) NOT NULL',
+            ');',
+            '-- PostgreSQL database dump complete',
+            '',
+        ]))
+        text = self._restore_sql('postgresql://cozyvtt:secret@localhost:5432/cozyvtt')
+        self.assertNotIn('SET row_security = off;', text)
+        self.assertNotIn('COMMENT ON EXTENSION plpgsql', text)
+        self.assertNotIn('ALTER EXTENSION plpgsql', text)
+        self.assertNotIn('DROP EXTENSION plpgsql;', text)
+        self.assertIn('CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;', text)
+        self.assertIn("COMMENT ON TABLE public.\"User\" IS 'instance user';", text)
+        self.assertIn('\nBEGIN\n', text)
+        self.assertIn('\nEND;\n', text)
+
+    def test_restore_still_refuses_commit_after_a_dollar_dollar_that_is_not_a_function_body(self):
+        dump = '\n'.join([
+            '-- PostgreSQL database dump',
+            "SELECT '$$';",
+            'COMMIT;',
+            'CREATE TABLE public."User" (',
+            '    id text NOT NULL',
+            ');',
+            'CREATE TABLE public._prisma_migrations (',
+            '    id character varying(36) NOT NULL',
+            ');',
+            '-- PostgreSQL database dump complete',
+            '',
+        ])
+        self._write_dump(dump)
+        result = subprocess.run(
+            ['bash', RESTORE_SH, self.backup_file],
+            cwd=self.root.name,
+            env=self._env('postgresql://cozyvtt:secret@localhost:5432/cozyvtt'),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(
+            'it takes control of the transaction the restore runs in',
             result.stderr + result.stdout,
         )
         self.assertFalse(os.path.isfile(self.loaded))

@@ -3,6 +3,7 @@
     python3 -m unittest discover -s scripts/tests
 """
 
+import gzip
 import io
 import os
 import shutil
@@ -134,6 +135,10 @@ class SchemaOwnerStatic(unittest.TestCase):
         self.assertIn('DB_USER="${DATABASE_APP_USER:-cozyvtt_app}"', read(BACKUP))
         self.assertIn('DB_USER="${DATABASE_APP_USER:-cozyvtt_app}"', read(RESTORE))
         self.assertIn('--no-owner --no-privileges', read(BACKUP))
+        self.assertIn('--enable-row-security', read(BACKUP))
+        restore = read(RESTORE)
+        self.assertIn('SET row_security = off', restore)
+        self.assertIn('COMMENT ON EXTENSION', restore)
 
     def test_password_substring_of_a_printed_role_is_not_a_leak(self):
         self.assertFalse(
@@ -655,9 +660,9 @@ class SchemaOwnerLivePostgres(unittest.TestCase):
             role = _psql(
                 cluster.host, cluster.port, APP_USER, APP_PASSWORD, cluster.dbname,
                 '-tAqc',
-                'SELECT rolsuper FROM pg_roles WHERE rolname = current_user',
+                'SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user',
             )
-            self.assertEqual(role.stdout.strip(), 'f')
+            self.assertEqual(role.stdout.strip(), 'f|f')
 
             owners = _psql(
                 cluster.host, cluster.port, APP_USER, APP_PASSWORD, cluster.dbname,
@@ -684,6 +689,73 @@ class SchemaOwnerLivePostgres(unittest.TestCase):
                 self.assertEqual(migrate.returncode, 0, migrate.stdout + migrate.stderr)
             elif _database_url():
                 self.fail('prisma migrate deploy is required when DATABASE_URL is set, but %s is missing' % PRISMA)
+
+            pg_dump = _pg_bin('pg_dump')
+            if pg_dump:
+                dump_sql = os.path.join(tmp, 'dump.sql')
+                dumped = subprocess.run(
+                    [
+                        pg_dump,
+                        '-h', cluster.host,
+                        '-p', cluster.port,
+                        '-U', APP_USER,
+                        '-d', cluster.dbname,
+                        '--no-password',
+                        '--no-owner',
+                        '--no-privileges',
+                        '--enable-row-security',
+                        '--exclude-table-data=public.session',
+                        '--exclude-table-data=public.revoked_login_session',
+                        '--file', dump_sql,
+                    ],
+                    env={**os.environ, 'PGPASSWORD': APP_PASSWORD, 'PATH': helper_path},
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(dumped.returncode, 0, dumped.stdout + dumped.stderr)
+                dump_text = read(dump_sql)
+                if 'COMMENT ON EXTENSION plpgsql' not in dump_text:
+                    dump_text += "\nCOMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';\n"
+                if 'SET row_security = off;' not in dump_text:
+                    dump_text = 'SET row_security = off;\n' + dump_text
+                archive = os.path.join(tmp, 'cozyvtt_live.sql.gz')
+                with gzip.open(archive, 'wb') as gz:
+                    gz.write(dump_text.encode('utf-8'))
+                restored = subprocess.run(
+                    ['bash', RESTORE, archive],
+                    env={
+                        'PATH': helper_path,
+                        'HOME': tmp,
+                        'DATABASE_URL': _pg_url(
+                            APP_USER, APP_PASSWORD, cluster.host, cluster.port, cluster.dbname
+                        ),
+                        'RESTORE_ASSUME_YES': 'yes',
+                        'TMPDIR': tmp,
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(restored.returncode, 0, restored.stdout + restored.stderr)
+                still_app = _psql(
+                    cluster.host, cluster.port, APP_USER, APP_PASSWORD, cluster.dbname,
+                    '-tAqc',
+                    'SELECT rolsuper, rolbypassrls FROM pg_roles WHERE rolname = current_user',
+                )
+                self.assertEqual(still_app.stdout.strip(), 'f|f')
+                tables = _psql(
+                    cluster.host, cluster.port, APP_USER, APP_PASSWORD, cluster.dbname,
+                    '-tAqc', "SELECT to_regclass('public._prisma_migrations') IS NOT NULL",
+                )
+                self.assertEqual(tables.stdout.strip(), 't')
+                replace_after = _psql(
+                    cluster.host, cluster.port, APP_USER, APP_PASSWORD, cluster.dbname,
+                    sql=_revocation_guard_sql(), check=False,
+                )
+                self.assertEqual(replace_after.returncode, 0, replace_after.stdout + replace_after.stderr)
+            elif _database_url():
+                self.fail('pg_dump is required when DATABASE_URL is set, but it is not installed')
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
             cluster.close()

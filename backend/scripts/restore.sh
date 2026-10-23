@@ -57,9 +57,11 @@ fi
 # instead of public (format('%I'), never a concatenated identifier). The
 # dump follows, without the lines this server would reject or that name the
 # database user of the instance the backup came from (SET transaction_timeout,
+# SET row_security = off, COMMENT ON EXTENSION, ALTER EXTENSION, DROP EXTENSION,
 # ALTER ... OWNER TO, GRANT, REVOKE) and without the dump's own \restrict
-# lines. Table rows (COPY blocks) are copied through untouched. The file ends
-# by emptying public.session and public.revoked_login_session (and the same
+# lines. Table comments stay. Table rows (COPY blocks) are copied through
+# untouched. The file ends by emptying public.session and
+# public.revoked_login_session (and the same
 # tables in DATABASE_URL's ?schema= when that is not public), in the same
 # transaction as the load: every backup made before those rows were left out
 # of backups carries them, and restoring one would sign back in whoever had
@@ -179,7 +181,33 @@ gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preambl
     } else {
       print custom_preamble
     }
-    in_copy = 0; complete = 0; has_user = 0; has_migrations = 0; refused = ""
+    in_copy = 0; in_dollar = 0; dtag = ""; complete = 0; has_user = 0; has_migrations = 0; refused = ""
+  }
+  function next_dollar(s,    i, rest, closer, at) {
+    i = 1
+    while (i <= length(s)) {
+      if (in_dollar) {
+        closer = "$" dtag "$"
+        at = index(substr(s, i), closer)
+        if (at == 0) return
+        i = i + at + length(closer) - 1
+        in_dollar = 0
+        dtag = ""
+        continue
+      }
+      rest = substr(s, i)
+      # pg_dump function bodies only: a line that is `AS $tag$` (often `AS $$`).
+      # `SELECT '$$'` or `-- $$` must not hide a following COMMIT.
+      if (match(rest, /^[[:space:]]*AS[ \t]+\$[A-Za-z0-9_]*\$/)) {
+        matched = substr(rest, RSTART, RLENGTH)
+        dollar = index(matched, "$")
+        dtag = substr(matched, dollar + 1, length(matched) - dollar - 1)
+        in_dollar = 1
+        i = i + RSTART + RLENGTH - 1
+        continue
+      }
+      return
+    }
   }
   {
     line = $0
@@ -188,6 +216,7 @@ gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preambl
       if (line == "\\.") in_copy = 0
       print; next
     }
+    if (in_dollar) { print; next_dollar(line); next }
     if (line ~ /^COPY .* FROM stdin;$/) { in_copy = 1; print; next }
     if (line ~ /^COPY /) { refused = "it runs a COPY that is not table data: " line; exit }
     if (line ~ /^\\(un)?restrict /) next
@@ -197,6 +226,8 @@ gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preambl
     }
     if (line == "-- PostgreSQL database dump complete") complete = 1
     if (line ~ /^SET transaction_timeout = /) next
+    if (line ~ /^SET row_security = off/) next
+    if (line ~ /^(COMMENT ON EXTENSION|ALTER EXTENSION|DROP EXTENSION) /) next
     # ALTER <kind> <name> OWNER TO <role>; on one line, the same lines
     # isOwnershipStatement in backend/src/utils/pgRestore.ts drops. Read in
     # one pass: a pattern that let the kind and the name overlap backtracked
@@ -214,6 +245,7 @@ gunzip -c "$BACKUP_FILE" | LC_ALL=C awk -v key="$RESTRICT_KEY" -v custom_preambl
     if (line ~ ("^CREATE TABLE (\"" app_schema "\"|" app_schema ")\\.(\"User\"|User) \\($")) has_user = 1
     if (line ~ ("^CREATE TABLE (\"" app_schema "\"|" app_schema ")\\.(\"_prisma_migrations\"|_prisma_migrations) \\($")) has_migrations = 1
     print
+    next_dollar(line)
   }
   END {
     if (refused == "") {

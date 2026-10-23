@@ -306,6 +306,18 @@ describe('backend/scripts/restore.sh', () => {
     // every line of the dump has gone through, and only once it has passed
     // the checks. Anywhere else, the sessions are emptied before the dump
     // brings them back, or not at all.
+    expect(program).toMatch(/SET row_security = off/);
+    expect(program).toMatch(/COMMENT ON EXTENSION/);
+    expect(program).toMatch(/ALTER EXTENSION/);
+    expect(program).toMatch(/DROP EXTENSION/);
+    expect(read('backend/src/utils/pgRestore.ts')).toMatch(/SET row_security = off/);
+    expect(read('backend/src/utils/pgRestore.ts')).toMatch(/COMMENT ON EXTENSION/);
+    expect(read('backend/src/utils/pgRestore.ts')).toMatch(/ALTER EXTENSION/);
+    expect(read('backend/src/utils/pgRestore.ts')).toMatch(/DROP EXTENSION/);
+    expect(read('backend/scripts/backup.sh')).toContain('--enable-row-security');
+    expect(read('backend/src/utils/pgRestore.ts')).toContain('--enable-row-security');
+    expect(read('docs/DEPLOYMENT.md')).toContain('--enable-row-security');
+
     expect(program.match(/\bprint trailer\b/g) ?? []).toHaveLength(1);
     const end = /\n\s*END \{\n([\s\S]*)\n\s*\}\s*$/.exec(program);
     if (!end) throw new Error("restore.sh's awk step no longer ends with an END block; update this test with the script");

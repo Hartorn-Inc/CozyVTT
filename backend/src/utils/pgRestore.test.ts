@@ -28,6 +28,9 @@ import {
   isOwnershipStatement,
   isPrivilegeStatement,
   isSettingUnknownToServer,
+  isRowSecurityOff,
+  isCatalogExtensionStatement,
+  nextDollarQuoteTag,
   prepareDumpForRestore,
   RESTORE_PREAMBLE,
   RESTORE_TRAILER,
@@ -160,7 +163,7 @@ describe('buildDumpArgs and buildRestoreArgs', () => {
 describe('buildDumpArgs', () => {
   it('writes a dump that drops before it creates and names no owner or privilege', () => {
     const args = buildDumpArgs('postgresql://x', '/tmp/db.sql');
-    expect(args).toEqual(expect.arrayContaining(['--clean', '--if-exists', '--no-owner', '--no-privileges']));
+    expect(args).toEqual(expect.arrayContaining(['--clean', '--if-exists', '--no-owner', '--no-privileges', '--enable-row-security']));
     expect(args.slice(0, 4)).toEqual(['--dbname', 'postgresql://x', '--file', '/tmp/db.sql']);
   });
 
@@ -389,6 +392,38 @@ describe('isSettingUnknownToServer', () => {
   });
 });
 
+describe('isRowSecurityOff', () => {
+  it('names the SET the schema owner cannot run', () => {
+    expect(isRowSecurityOff('SET row_security = off;')).toBe(true);
+    expect(isRowSecurityOff('SET row_security = on;')).toBe(false);
+    expect(isRowSecurityOff('-- SET row_security = off;')).toBe(false);
+  });
+});
+
+describe('nextDollarQuoteTag', () => {
+  it('opens on AS $$ and stays open until the closing $$', () => {
+    expect(nextDollarQuoteTag('    AS $$', null)).toBe('');
+    expect(nextDollarQuoteTag('BEGIN', '')).toBe('');
+    expect(nextDollarQuoteTag('END;', '')).toBe('');
+    expect(nextDollarQuoteTag('$$;', '')).toBeNull();
+  });
+
+  it('does not open on a string or comment that merely contains $$', () => {
+    expect(nextDollarQuoteTag("SELECT '$$';", null)).toBeNull();
+    expect(nextDollarQuoteTag('-- $$', null)).toBeNull();
+  });
+});
+
+describe('isCatalogExtensionStatement', () => {
+  it('names extension catalog statements and leaves table comments', () => {
+    expect(isCatalogExtensionStatement("COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';")).toBe(true);
+    expect(isCatalogExtensionStatement('ALTER EXTENSION plpgsql UPDATE;')).toBe(true);
+    expect(isCatalogExtensionStatement('DROP EXTENSION plpgsql;')).toBe(true);
+    expect(isCatalogExtensionStatement('CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;')).toBe(false);
+    expect(isCatalogExtensionStatement('COMMENT ON TABLE public."User" IS \'keep\';')).toBe(false);
+  });
+});
+
 describe('prepareDumpForRestore', () => {
   let dir: string;
   beforeEach(async () => {
@@ -423,11 +458,20 @@ describe('prepareDumpForRestore', () => {
     'SET transaction_timeout = 0;',
     "SET client_encoding = 'UTF8';",
     'SET row_security = off;',
+    "COMMENT ON EXTENSION plpgsql IS 'PL/pgSQL procedural language';",
+    'ALTER EXTENSION plpgsql UPDATE;',
     '',
     'DROP TABLE IF EXISTS public."Note";',
     "CREATE TYPE public.\"Mood\" AS ENUM ('calm', 'tense');",
     'ALTER TYPE public."Mood" OWNER TO "cozyvttAdmin";',
     'CREATE TABLE public."Note" (id text NOT NULL, body text);',
+    'CREATE FUNCTION public.reject_revoked_login_session() RETURNS trigger',
+    '    LANGUAGE plpgsql',
+    '    AS $$',
+    'BEGIN',
+    '  RETURN NEW;',
+    'END;',
+    '$$;',
     'ALTER TABLE public."Note" OWNER TO "cozyvttAdmin";',
     'ALTER SEQUENCE public."Note_id_seq" OWNER TO "cozyvttAdmin";',
     'GRANT ALL ON SCHEMA public TO PUBLIC;',
@@ -443,6 +487,7 @@ describe('prepareDumpForRestore', () => {
     'CREATE TABLE public."User" (',
     '    id text NOT NULL',
     ');',
+    'COMMENT ON TABLE public."User" IS \'instance user\';',
     'CREATE TABLE public._prisma_migrations (',
     '    id character varying(36) NOT NULL',
     ');',
@@ -487,6 +532,10 @@ describe('prepareDumpForRestore', () => {
 
   const isSkipped = (l: string) =>
     l === 'SET transaction_timeout = 0;' ||
+    l === 'SET row_security = off;' ||
+    l.startsWith('COMMENT ON EXTENSION ') ||
+    l.startsWith('ALTER EXTENSION ') ||
+    l.startsWith('DROP EXTENSION ') ||
     (l.startsWith('ALTER ') && l.includes(' OWNER TO ')) ||
     l.startsWith('GRANT ') ||
     /^\\(?:un)?restrict /.test(l);
@@ -513,7 +562,14 @@ describe('prepareDumpForRestore', () => {
     expect(restrict).toMatch(RESTRICT_LINE);
     expect(rest.join('\n')).toBe([...RESTORE_PREAMBLE, ...expectedBody(NEWER_CLIENT_DUMP), ...preparedTrailer()].join('\n') + '\n');
     expect(rest.join('\n')).toContain("to_regclass('public.session')");
-    expect(result.skipped).toEqual({ settings: ['SET transaction_timeout = 0;'], ownership: 3, privileges: 1 });
+    expect(result.skipped).toEqual({
+      settings: ['SET transaction_timeout = 0;', 'SET row_security = off;'],
+      ownership: 3,
+      privileges: 1,
+    });
+    expect(rest.join('\n')).toContain('COMMENT ON TABLE public."User" IS \'instance user\';');
+    expect(rest.join('\n')).not.toContain('COMMENT ON EXTENSION');
+    expect(rest.join('\n')).not.toContain('SET row_security = off;');
     expect(result.refused).toBeNull();
   });
 
@@ -684,6 +740,20 @@ describe('prepareDumpForRestore', () => {
 
         expect(refused).toMatch(/transaction/);
         expect(refused).toContain(line);
+      }
+    );
+
+    it.each(["SELECT '$$';", '-- $$'])(
+      'still refuses COMMIT after a line that contains $$ but is not a function body (%s)',
+      async (decoy) => {
+        const dump = [...NEWER_CLIENT_DUMP];
+        dump.splice(dump.indexOf('SET default_table_access_method = heap;'), 0, decoy, 'COMMIT;');
+        const src = await write('database.sql', dump);
+
+        const { refused } = await prepareDumpForRestore(src, path.join(dir, 'restore.sql'));
+
+        expect(refused).toMatch(/transaction/);
+        expect(refused).toContain('COMMIT;');
       }
     );
 
