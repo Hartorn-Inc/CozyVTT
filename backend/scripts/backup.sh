@@ -9,6 +9,9 @@
 #
 # The backup file is written to ./backups/ (created if it doesn't exist).
 # Filename format: cozyvtt_YYYYMMDD_HHMMSS.sql.gz
+#
+# This is a database dump, not an Admin Dashboard Instance backup. Instance
+# backups are encrypted with BACKUP_ENCRYPTION_KEY; these sql.gz dumps are not.
 
 set -euo pipefail
 

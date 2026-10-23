@@ -24,8 +24,9 @@ CozyVTT is a self-hosted, community-maintained project run **by you** on **your 
 - Front it with a **[Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)** (free, hides your origin IP, no open ports needed, automatic DDoS protection) or a similar reverse proxy / WAF
 - Keep the instance updated as security patches land — watch this repo
 - Set a strong `SESSION_SECRET` (32+ char random) and your own `DATABASE_PASSWORD` — the production build refuses to start while either is still the placeholder, or while `SESSION_SECRET` is shorter than 32 characters
+- Set `BACKUP_ENCRYPTION_KEY` (`openssl rand -hex 32`, not `SESSION_SECRET`) before using Admin Dashboard Create Backup — the instance still boots without it, and Create Backup is then refused
 - Use the built-in MFA: every administrator account must turn it on within 7 days, and it is worth having on every account
-- Configure regular database backups (`backend/scripts/backup.sh` + cron — see [DEPLOYMENT.md](docs/DEPLOYMENT.md))
+- Configure regular database dumps (`backend/scripts/backup.sh` + cron — see [DEPLOYMENT.md](docs/DEPLOYMENT.md))
 - Review the **Hardening Checklist** in [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) before flipping public
 
 If those words mean nothing to you, run CozyVTT **only on your local network** (e.g. via a Tailscale node, ZeroTier, or just LAN-accessible) until you've leveled up your sysadmin chops. That's a perfectly valid way to play — your campaigns aren't worse for being LAN-only, and you skip the whole attack-surface conversation.
@@ -40,7 +41,7 @@ If you find a security issue, please report it privately per [SECURITY.md](SECUR
 - **Multi-campaign** — one server, unlimited campaigns, isolated from each other
 - **Role-based access control** — Platform Admin, Campaign DM, Player, and Spectator roles; the DM seat can be handed to another member without losing ownership of the campaign
 - **Setup wizard** — guided first-run initialization; no manual database seeding required. It asks for a one-time setup token printed in the backend log, so only the person running the server can create the first administrator
-- **Admin dashboard** — user management, system settings, activity logs, uploaded files, database backups
+- **Admin dashboard** — user management, system settings, activity logs, uploaded files, Instance backups (encrypted)
 
 ### Campaign Tools
 - **Interactive map canvas** — upload map images, place tokens, click a token to pick it up and click a square to put it down, with every move shown to the table in real time

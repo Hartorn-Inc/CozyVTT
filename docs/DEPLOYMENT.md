@@ -66,11 +66,18 @@ DATABASE_PASSWORD=<paste the 32 characters that command prints>
 # Security — paste the output of: openssl rand -hex 32
 SESSION_SECRET=<paste the 64 characters that command prints>
 
+# Instance backups — a *different* output of: openssl rand -hex 32
+# Not SESSION_SECRET. Leave unset and the Instance still boots; Create Backup
+# is refused so a plaintext archive is not written.
+BACKUP_ENCRYPTION_KEY=<paste the 64 characters that command prints>
+
 # Your public URL (used for CORS and email links)
 CORS_ORIGIN=https://your-domain.com
 
 NODE_ENV=production
 ```
+
+**`BACKUP_ENCRYPTION_KEY` is not `SESSION_SECRET`.** Generate it with the same `openssl rand -hex 32` command, as a separate value. A missing or unusable key (unset, not 64 hexadecimal characters, or equal to `SESSION_SECRET`) still boots the Instance; **Create Backup** is refused so a plaintext archive is not written. Restore still reads a legacy plaintext ZIP and an archive encrypted with a previous key (`BACKUP_ENCRYPTION_PREVIOUS_KEYS` after you rotate).
 
 **Use letters and digits only in `DATABASE_PASSWORD`**, which is what `openssl rand -hex 16` gives you. The stack writes the password into the database's address, so a character such as `/`, `#`, `?` or `%` breaks that address. The database container still starts and looks healthy, but the backend cannot connect: `docker compose logs backend` shows `Database connection successful`, because that first check does not use the password, and then `Migration failed`, and the container keeps restarting. If you see that, check the password's characters first. A `$` has a different problem: Docker Compose reads a `$` in `.env` as the start of a variable name, so the password it uses is not the one you typed.
 
@@ -816,8 +823,9 @@ sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE cozyvtt TO cozyvtt;"
 # Backend
 cd backend
 cp .env.example .env
-# Edit .env: set DATABASE_URL, SESSION_SECRET (openssl rand -hex 32) and
-# NODE_ENV=production, and put your site's address, such as
+# Edit .env: set DATABASE_URL, SESSION_SECRET (openssl rand -hex 32),
+# BACKUP_ENCRYPTION_KEY (a different openssl rand -hex 32; not SESSION_SECRET)
+# and NODE_ENV=production, and put your site's address, such as
 # https://your-domain.com, in CORS_ORIGIN and APP_URL (email links use APP_URL)
 npm install
 npx prisma migrate deploy
@@ -1021,9 +1029,12 @@ It should print three lines. These lines are a copy of `frontend/security-header
 ### Generating Secrets
 
 ```bash
-# Generates a SESSION_SECRET. Run once and paste into .env.
+# Generates SESSION_SECRET or BACKUP_ENCRYPTION_KEY. Run once per secret
+# and paste into .env. They must be different values.
 openssl rand -hex 32
 ```
+
+`BACKUP_ENCRYPTION_KEY` is 64 hexadecimal characters. It is **not** `SESSION_SECRET`. A missing or unusable key still boots the Instance; **Create Backup** is refused so a plaintext archive is not written. After a rotation, keep the old key in `BACKUP_ENCRYPTION_PREVIOUS_KEYS` (comma and/or whitespace separated, same format) so restore can still read archives encrypted with it.
 
 ### Setup token (optional)
 
@@ -1139,6 +1150,8 @@ The rest of what the backend reads from its environment. Every one is optional; 
 | `NODE_ENV` | none, which runs the backend as `development` | Set it to `production` on a real instance. Anything else accepts a weak `SESSION_SECRET` with only a warning and writes no files to `backend/logs/` | No: the compose file sets `production` |
 | `UPLOAD_DIR` | `uploads` | Where uploaded files are stored, relative to the backend folder | No: change the uploads volume in `docker-compose.override.yml` instead; [Database Backups](#database-backups) shows how that file works |
 | `BACKUP_DIR` | `backups` | Where the Admin Dashboard writes backups (see [File Storage](#file-storage)) | No: change the backups volume instead |
+| `BACKUP_ENCRYPTION_KEY` | none | 64 hex characters (`openssl rand -hex 32`) that encrypt Admin Dashboard Instance backups. **Not** `SESSION_SECRET`. Missing or unusable: the Instance still boots; **Create Backup** is refused so a plaintext archive is not written | Yes |
+| `BACKUP_ENCRYPTION_PREVIOUS_KEYS` | none | Previous backup keys, comma and/or whitespace separated, same 64-hex format. Restore tries the current key then these. Never `SESSION_SECRET` | Yes |
 | `INSTANCE_NAME` | none | The name emails use while the **Instance Name** in **Admin → Settings** is empty or still CozyVTT | No |
 | `FRONTEND_URL` | none | An older name for `APP_URL`, read only when `APP_URL` is not set | No: the compose file always sets `APP_URL` |
 
@@ -1174,7 +1187,7 @@ Without Docker, `backend/backups/` appears the first time the Backups tab is ope
 
 On an install without Docker the backend writes them to a `backups` folder in its working directory (`backend/backups`, beside `uploads`); set the `BACKUP_DIR` environment variable to put them somewhere else. A folder inside the uploads directory is refused, and the backend will not start with one. The Docker setup keeps them at `backend/backups/` on the host and does not pass `BACKUP_DIR` through.
 
-Because a backup holds every credential on the instance, the backend keeps the folder and each file in it readable by its own user alone (the folder is mode `700`, each backup `600`), and `backup.sh` does the same for its folder and the dumps in it, including any an earlier version left readable. While a backup or a restore runs, the working copy of the database it keeps in the system's temporary folder (`/tmp` unless `TMPDIR` says otherwise) sits in a folder of its own with the same protection, and is removed when it finishes, whether it worked or not. On a Docker host that user is the container's `appuser`, so copying a backup off the machine by hand needs `sudo`; downloading it from the dashboard needs nothing. The database password is never on a tool's command line either: `pg_dump` and `psql` read it from their environment, where the process list cannot show it.
+New Admin Dashboard Instance backups are encrypted with `BACKUP_ENCRYPTION_KEY`. Because a decrypted backup still holds every credential on the instance, the backend keeps the folder and each file in it readable by its own user alone (the folder is mode `700`, each backup `600`) as defence in depth, and `backup.sh` does the same for its folder and the dumps in it, including any an earlier version left readable. While a backup or a restore runs, the working copy of the database it keeps in the system's temporary folder (`/tmp` unless `TMPDIR` says otherwise) sits in a folder of its own with the same protection, and is removed when it finishes, whether it worked or not. On a Docker host that user is the container's `appuser`, so copying a backup off the machine by hand needs `sudo`; downloading it from the dashboard needs nothing. The database password is never on a tool's command line either: `pg_dump` and `psql` read it from their environment, where the process list cannot show it.
 
 If the backend is stopped part-way through a backup or a restore (killed, or the machine loses power), its temporary folder (`cozyvtt-db-…` or `cozyvtt-restore-…`) is left behind. On Docker, the backend's `/tmp` is a volume of its own, `backend_tmp`, which outlives the container, and the backend removes such a folder each time it starts, for example with `docker compose restart backend`. On a manual install it stays until you delete it.
 
@@ -1203,7 +1216,9 @@ An instance always keeps at least one admin. While you are the only one, you can
 
 ### Via Admin Dashboard
 
-**Admin Dashboard → Backups → Create Backup** generates a ZIP holding a `pg_dump` of the database and every uploaded file, which you can download for offsite storage. It is written to `backend/backups/` on the host, which the backend creates and takes ownership of on its first start, so there is nothing to make by hand. The bin beside a backup in the list deletes that file for good; it asks first, naming the file.
+**Admin Dashboard → Backups → Create Backup** generates an encrypted archive holding a `pg_dump` of the database and every uploaded file, which you can download for offsite storage. The filename is still `backup-….zip`, but a new archive is not a ZIP until it is decrypted: `unzip` will not open it. It is written to `backend/backups/` on the host, which the backend creates and takes ownership of on its first start, so there is nothing to make by hand. The bin beside a backup in the list deletes that file for good; it asks first, naming the file.
+
+**Create Backup** needs `BACKUP_ENCRYPTION_KEY` (64 hex characters from `openssl rand -hex 32`, **not** `SESSION_SECRET`). Leave it unset, or set a value that is not 64 hex or that equals `SESSION_SECRET`, and the Instance still boots; Create Backup is refused so a plaintext archive is not written. The backend log warns `BACKUP_ENCRYPTION_KEY` at start. Restore from the dashboard still accepts a legacy plaintext ZIP and an archive encrypted with a previous key (`BACKUP_ENCRYPTION_PREVIOUS_KEYS` after you rotate).
 
 **Backups are never deleted automatically.** Every backup made with **Create Backup**, and the database-only backup each restore makes first, stays in the folder until you delete it with the bin. A backup holds every uploaded file, so each one is about as large as `backend/uploads/`, and the folder grows with every backup: delete the ones you no longer need, or download them for safekeeping and then delete them. Watch the disk space with `df -h backend/backups`. (The 30-day pruning of the backup script below applies only to the script's own `cozyvtt_*.sql.gz` files.)
 
@@ -1278,28 +1293,31 @@ sudo sh -c 'mv backend/backups/*.zip /srv/cozyvtt-backups/'
 
 **Admin Dashboard → Backups → Restore** replaces the database with the backup's, copies the backup's uploaded files over the existing ones (a file the backup does not have is left where it is), then runs this version's migrations, so a backup from an older CozyVTT can be restored into a newer one and is brought up to date on its own.
 
-Before anything is touched, the file is checked: its name must end in `.zip`, it must be a ZIP archive of at most 4 GB that unpacks to at most 10 GiB in at most 100,000 files, and its database must be a complete `pg_dump` of a CozyVTT database, holding nothing but SQL. A file that fails any of these is refused with the reason on screen, and nothing has changed. Only one restore runs at a time: while one is running, a second restore, and **Create Backup**, are refused until it has finished. A backup of the database as it is at that moment is then written to the backup list (database only, named like any other backup), so restoring the wrong file can be undone by restoring that one; the restore names it when it finishes. The database is loaded in a single step that is undone as a whole if any part of it fails, so a backup that cannot be applied leaves your existing data untouched, and the reason is in the backend log:
+Before anything is touched, the file is checked: its name must end in `.zip`. An archive encrypted with this Instance's current or previous backup key is decrypted first; a legacy plaintext ZIP is still accepted. After that it must be a ZIP archive of at most 4 GB that unpacks to at most 10 GiB in at most 100,000 files, and its database must be a complete `pg_dump` of a CozyVTT database, holding nothing but SQL. A file that fails any of these is refused with the reason on screen, and nothing has changed. An archive encrypted with a key this Instance does not have is refused the same way; set `BACKUP_ENCRYPTION_KEY` to the key that encrypted it, or list that key in `BACKUP_ENCRYPTION_PREVIOUS_KEYS`. Never `SESSION_SECRET`. Only one restore runs at a time: while one is running, a second restore, and **Create Backup**, are refused until it has finished. A backup of the database as it is at that moment is then written to the backup list (database only, named like any other backup), so restoring the wrong file can be undone by restoring that one; the restore names it when it finishes. The database is loaded in a single step that is undone as a whole if any part of it fails, so a backup that cannot be applied leaves your existing data untouched, and the reason is in the backend log:
 
 ```bash
 docker compose logs backend | grep -i restore
 ```
 
-**If the dashboard cannot back up the database as it is, it restores nothing.** That backup is what lets a restore be undone, so without it the dashboard stops and says so. It happens when the database itself is damaged, or when it runs a newer PostgreSQL than the backend's tools (the log then says `server version mismatch`). If the message names the backups folder instead, the backend cannot write there: fix the folder's owner or free space on its disk and try again, which keeps the undo. The same message, saying nothing was changed, can also come before any of this, when the uploaded backup itself cannot be saved in that folder. To restore anyway, take the database out of the dashboard backup and load it with the restore script, which asks you to confirm and makes no copy first. The commands below read the backup from `backend/backups/`. A backup you uploaded from your own computer is not kept on the server, so copy it there first (for example `scp backup-2026-01-01T03-00-00.zip you@your-server:`) and use its path in place of `backend/backups/…` in both `unzip` lines. With the file in your own home folder, the first `unzip` line needs no `sudo`; keep `sudo` on the second, because on Docker `backend/uploads` belongs to the container's user. From the CozyVTT folder, with the stack running and your backup's name in place of the example:
+**If the dashboard cannot back up the database as it is, it restores nothing.** That backup is what lets a restore be undone, so without it the dashboard stops and says so. It happens when the database itself is damaged, or when it runs a newer PostgreSQL than the backend's tools (the log then says `server version mismatch`). If the message names the backups folder instead, the backend cannot write there: fix the folder's owner or free space on its disk and try again, which keeps the undo. The same message, saying nothing was changed, can also come before any of this, when the uploaded backup itself cannot be saved in that folder. To restore anyway, take the database out of the dashboard backup and load it with the restore script, which asks you to confirm and makes no copy first. New Admin Dashboard Instance backups are encrypted (still named `.zip`, but they are not a ZIP until unlocked). Unlock first; a legacy plaintext ZIP copies through. The commands below read the backup from the backend container's `/app/backups/`. A backup you uploaded from your own computer is not kept on the server, so copy it there first (for example `scp backup-2026-01-01T03-00-00.zip you@your-server:`) and put it in `backend/backups/` (or pass its path inside the container). Keep `sudo` on the `unzip` that writes into `backend/uploads`, because on Docker that folder belongs to the container's user. From the CozyVTT folder, with the stack running and your backup's name in place of the example:
 
 ```bash
-(umask 077; sudo unzip -p backend/backups/backup-2026-01-01T03-00-00.zip database.sql | gzip > restore-me.sql.gz)
+(umask 077; docker compose exec -T -u appuser backend \
+  node scripts/unlock-instance-backup.mjs /app/backups/backup-2026-01-01T03-00-00.zip \
+  > unlocked-backup.zip)
+(umask 077; unzip -p unlocked-backup.zip database.sql | gzip > restore-me.sql.gz)
 ./backend/scripts/restore.sh restore-me.sql.gz
 ```
 
-Then put the backup's uploaded files back over the existing ones, restart the backend (which also brings an older backup up to this version), and delete the working copy, which holds every credential:
+Then put the backup's uploaded files back over the existing ones, restart the backend (which also brings an older backup up to this version), and delete the working copies, which hold every credential:
 
 ```bash
-sudo unzip -o backend/backups/backup-2026-01-01T03-00-00.zip 'uploads/*' -d backend/
+sudo unzip -o unlocked-backup.zip 'uploads/*' -d backend/
 docker compose restart backend
-rm restore-me.sql.gz
+rm restore-me.sql.gz unlocked-backup.zip
 ```
 
-A database-only backup (the kind a restore makes first) has no uploaded files, and the `unzip` for the uploaded files then says nothing matched; that is expected. If `unzip` is missing, install it (`sudo apt install unzip` on Debian or Ubuntu). Without Docker, run `restore.sh` with `DATABASE_URL` set, as in [Via the included scripts](#via-the-included-scripts), unpack the uploaded files into your uploads folder, run `cd backend && npx prisma migrate deploy` to bring an older backup up to this version (without Docker the backend does not do this when it starts), and restart the backend the way you run it.
+A database-only backup (the kind a restore makes first) has no uploaded files, and the `unzip` for the uploaded files then says nothing matched; that is expected. If `unzip` is missing, install it (`sudo apt install unzip` on Debian or Ubuntu). If unlock says the file is not an Instance backup, it is neither encrypted (`CVTTBK01`) nor a legacy ZIP. If it says the Instance does not have the key, set `BACKUP_ENCRYPTION_KEY` to the key that encrypted it, or list that key in `BACKUP_ENCRYPTION_PREVIOUS_KEYS`. Never `SESSION_SECRET`. Without Docker, export `BACKUP_ENCRYPTION_KEY` (and `BACKUP_ENCRYPTION_PREVIOUS_KEYS` after a rotation) from `backend/.env` into the environment — do not put the key on the command line — then from the `backend` folder run `node scripts/unlock-instance-backup.mjs backups/backup-2026-01-01T03-00-00.zip unlocked-backup.zip`, run `restore.sh` with `DATABASE_URL` set, as in [Via the included scripts](#via-the-included-scripts), unpack the uploaded files into your uploads folder, run `cd backend && npx prisma migrate deploy` to bring an older backup up to this version (without Docker the backend does not do this when it starts), and restart the backend the way you run it.
 
 **A restore signs everyone out.** Backups made from now on leave the login sessions out, and a restore empties whatever sessions an older backup carried, so a sign-in that was ended after the backup was made (a password change, a removed account) cannot come back with it. Every open game connection is dropped just before the database is replaced, and until the restore has finished nobody can reconnect and every page's requests are answered "The instance is being restored from a backup. Try again in a minute": a change someone made during the load would otherwise be written over the restored data. Everyone signs in again afterwards. Stopping play before you restore spares your players the interruption.
 
@@ -1328,9 +1346,12 @@ Run these from the folder you installed CozyVTT into, with the stack running:
 ./backend/scripts/restore.sh ./backups/cozyvtt_20260101_030000.sql.gz
 ```
 
-Both notice that you are running under Docker and do the work inside the
-database container, so you do **not** need PostgreSQL installed on the host.
-Backups older than 30 days are pruned; set `BACKUP_RETAIN_DAYS` to change that.
+These scripts write and load `cozyvtt_*.sql.gz` database dumps. They are not
+Admin Dashboard Instance backups and are not encrypted with
+`BACKUP_ENCRYPTION_KEY`. Both notice that you are running under Docker and do
+the work inside the database container, so you do **not** need PostgreSQL
+installed on the host. Backups older than 30 days are pruned; set
+`BACKUP_RETAIN_DAYS` to change that.
 
 **A restore either works completely or changes nothing.** The restore script
 checks the backup file before it touches your database: the archive has to be
@@ -1594,6 +1615,10 @@ docker compose logs backend | grep FATAL
 
 Use `docker compose up -d`, which reads `.env` again; `docker compose restart` keeps the old value. Once the backend starts, `docker compose ps` shows it as `healthy` within a minute.
 
+### Create Backup says "Backup Unavailable"
+
+The Instance is running; new Admin Dashboard Instance backups need `BACKUP_ENCRYPTION_KEY`. `docker compose logs backend` warns `BACKUP_ENCRYPTION_KEY` at start (not set, not 64 hexadecimal characters, or must not equal `SESSION_SECRET`). Generate a key with `openssl rand -hex 32`, put it in `.env` as `BACKUP_ENCRYPTION_KEY=` (a different value from `SESSION_SECRET`), and run `docker compose up -d`. Create Backup is refused so a plaintext archive is not written.
+
 ### A container stops with "Permission denied", "Operation not permitted" or "Read-only file system"
 
 Each container gets only the Linux capabilities its start-up needs, and some have read-only files (see [Build and start the stack](#3-build-and-start-the-stack)). Something that needs one of the other capabilities, or writes where nothing may be written, fails, and the container's log says so. Find the line:
@@ -1748,6 +1773,7 @@ sudo -u postgres psql -d cozyvtt -c "ALTER SCHEMA public OWNER TO cozyvtt;"
 Before going live:
 
 - [ ] **Strong secret** — `SESSION_SECRET` is a 32+ character random string, not the placeholder value from `.env.example`. A production instance refuses to start on a placeholder or on anything shorter than 32 characters
+- [ ] **Instance backup key** — `BACKUP_ENCRYPTION_KEY` is a 64-character hex value from `openssl rand -hex 32`, and is **not** `SESSION_SECRET`. Optional for boot: the Instance still starts without it; **Create Backup** is then refused so a plaintext archive is not written
 - [ ] **Real database password** — `DATABASE_PASSWORD` is not the placeholder from `.env.example`. A production instance refuses to start on it, the same way it does for `SESSION_SECRET`
 - [ ] **HTTPS only** — SSL certificate installed, and your `nginx/conf.d/https.conf` sends plain-HTTP visitors to HTTPS (see [SSL/TLS with Let's Encrypt](#ssltls-with-lets-encrypt)), or a Cloudflare Tunnel provides HTTPS. With Let's Encrypt, `sudo certbot renew --dry-run` ends with `all simulated renewals succeeded`: a certificate that cannot renew expires after about 90 days
 - [ ] **Firewall** — Only ports 80 and 443 (or your configured `HTTP_PORT`/`HTTPS_PORT`) are publicly reachable; backend (4000) and database (5432) are not exposed to the internet

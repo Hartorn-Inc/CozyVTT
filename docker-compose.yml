@@ -134,6 +134,11 @@ services:
       SESSION_SECRET: ${SESSION_SECRET}
       # Optional: the setup wizard's token; unset, the backend prints one in its log
       SETUP_TOKEN: ${SETUP_TOKEN:-}
+      # Optional: encrypts Admin Dashboard Instance backups. Empty: the
+      # Instance still boots; Create Backup is refused so a plaintext archive
+      # is not written. Never SESSION_SECRET.
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_ENCRYPTION_PREVIOUS_KEYS: ${BACKUP_ENCRYPTION_PREVIOUS_KEYS:-}
       CORS_ORIGIN: ${CORS_ORIGIN}
       # SMTP
       SMTP_HOST: ${SMTP_HOST:-}

@@ -33,7 +33,7 @@ const UPLOAD_DIR = path.join(SCRATCH, 'uploads');
 process.env.BACKUP_DIR = BACKUP_DIR;
 process.env.UPLOAD_DIR = UPLOAD_DIR;
 
-import { PassThrough } from 'stream';
+import { PassThrough, Readable } from 'stream';
 import { ZipArchive } from 'archiver';
 import unzipper from 'unzipper';
 import request from 'supertest';
@@ -45,6 +45,14 @@ import { io as ioc } from 'socket.io-client';
 import * as archive from '../../utils/archive';
 import { removeLeftoverRestoreUploads } from '../../services/restoreState';
 import { expectFileMode, expectModeBits } from '../../__tests__/helpers/fileModes';
+import {
+  BACKUP_ARCHIVE_MAGIC,
+  BackupEncryptedWithUnknownKeyError,
+  ZIP_LOCAL_FILE_MAGIC,
+  decryptBackupFile,
+  encryptBackupToFile,
+} from '../../utils/backupEncryption';
+import { currentBackupEncryptionKey } from '../../config/backupEncryptionKey';
 import {
   clearState as clearCombatState,
   getState as getCombatState,
@@ -163,7 +171,7 @@ async function leftIn(dir: string): Promise<string[]> {
 /** What the stubbed pg_dump writes when the route takes its safety copy. */
 const SAFETY_DUMP = '-- the database as it was before the restore\n';
 
-/** A backup archive holding the given files. */
+/** A legacy plaintext ZIP holding the given files. */
 async function backupZip(entries: Record<string, string>): Promise<Buffer> {
   const archive = new ZipArchive();
   const chunks: Buffer[] = [];
@@ -176,6 +184,44 @@ async function backupZip(entries: Record<string, string>): Promise<Buffer> {
   await archive.finalize();
   await ended;
   return Buffer.concat(chunks);
+}
+
+/** Decrypt a created Instance backup with the production decrypt, then read the ZIP. */
+async function readCreatedBackup(file: string): Promise<{ paths: string[]; files: Record<string, string> }> {
+  const dest = `${file}.plain.zip`;
+  await decryptBackupFile(file, dest);
+  try {
+    const zip = await unzipper.Open.file(dest);
+    const files: Record<string, string> = {};
+    const paths: string[] = [];
+    for (const entry of zip.files) {
+      paths.push(entry.path);
+      if (entry.type === 'File') files[entry.path] = (await entry.buffer()).toString('utf8');
+    }
+    return { paths, files };
+  } finally {
+    await fs.unlink(dest).catch(() => undefined);
+  }
+}
+
+async function withEnv(
+  patch: Record<string, string | undefined>,
+  run: () => Promise<void>
+): Promise<void> {
+  const previous: Record<string, string | undefined> = {};
+  for (const key of Object.keys(patch)) previous[key] = process.env[key];
+  try {
+    for (const [key, value] of Object.entries(patch)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    await run();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
 }
 
 /** What pg_dump 18 writes for a PostgreSQL 15 database: the header names a setting 15 rejects. */
@@ -258,6 +304,77 @@ const restore = (agent: ReturnType<typeof request.agent>, zip: Buffer) =>
   agent.post('/api/admin/backups/restore').attach('backup', zip, 'backup.zip');
 
 describe('POST /api/admin/backups/restore', () => {
+  it('restores a legacy plaintext ZIP when a current backup key is set', async () => {
+    expect(currentBackupEncryptionKey()).not.toBeNull();
+    const calls = stubTools();
+    const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
+
+    const res = await restore(admin, zip);
+
+    expect(res.status).toBe(200);
+    expect(calls.map((c) => c.cmd)).toEqual(['pg_dump', 'psql', MIGRATE]);
+    const safety = path.join(BACKUP_DIR, res.body.safetyBackup);
+    const header = Buffer.alloc(8);
+    const handle = await fs.open(safety, 'r');
+    try {
+      await handle.read(header, 0, 8, 0);
+    } finally {
+      await handle.close();
+    }
+    expect(header.equals(BACKUP_ARCHIVE_MAGIC)).toBe(true);
+  });
+
+  it('restores an archive encrypted with a previous backup key', async () => {
+    const oldKey = 'bb'.repeat(32);
+    const newKey = 'cc'.repeat(32);
+    const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
+    const encPath = path.join(SCRATCH, `prev-${Date.now()}.zip`);
+    await encryptBackupToFile(Readable.from(zip), encPath, Buffer.from(oldKey, 'hex'));
+    const encrypted = await fs.readFile(encPath);
+
+    await withEnv(
+      { BACKUP_ENCRYPTION_KEY: newKey, BACKUP_ENCRYPTION_PREVIOUS_KEYS: oldKey },
+      async () => {
+        const calls = stubTools();
+        const res = await restore(admin, encrypted);
+        expect(res.status).toBe(200);
+        expect(calls.map((c) => c.cmd)).toEqual(['pg_dump', 'psql', MIGRATE]);
+      }
+    );
+  });
+
+  it('refuses restore when the current backup key is missing so the safety copy is not written in plaintext', async () => {
+    await withEnv({ BACKUP_ENCRYPTION_KEY: undefined, BACKUP_ENCRYPTION_PREVIOUS_KEYS: undefined }, async () => {
+      const calls = stubTools();
+      const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
+      const res = await restore(admin, zip);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Backup Unavailable');
+      expect(res.body.code).toBe('BACKUP_ENCRYPTION_KEY_MISSING');
+      expect(res.body.message).toContain('BACKUP_ENCRYPTION_KEY');
+      expect(res.body.message).toMatch(/Nothing was restored/);
+      expect(calls).toEqual([]);
+    });
+  });
+
+  it('refuses an archive encrypted with a key this Instance does not have', async () => {
+    const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
+    const encPath = path.join(SCRATCH, `unknown-${Date.now()}.zip`);
+    await encryptBackupToFile(Readable.from(zip), encPath, Buffer.from('99'.repeat(32), 'hex'));
+    const encrypted = await fs.readFile(encPath);
+    const calls = stubTools();
+
+    const res = await restore(admin, encrypted);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('Invalid Backup');
+    expect(res.body.message).toMatch(/encrypted with a key this Instance does not have/);
+    expect(res.body.message).toContain('BACKUP_ENCRYPTION_KEY');
+    expect(res.body.message).toContain('BACKUP_ENCRYPTION_PREVIOUS_KEYS');
+    expect(res.body.message).toMatch(/Nothing was changed/);
+    expect(calls).toEqual([]);
+  });
+
   it('loads the prepared dump, not the raw one, and then runs the migrations', async () => {
     const calls = stubTools();
     const zip = await backupZip({ 'database.sql': DUMP_FROM_NEWER_CLIENT });
@@ -342,8 +459,7 @@ describe('POST /api/admin/backups/restore', () => {
     const list = await admin.get('/api/admin/backups');
     expect(list.body.backups.map((b: { filename: string }) => b.filename)).toContain(named);
     const file = path.join(BACKUP_DIR, named!);
-    const entries = (await unzipper.Open.file(file)).files.map((f) => f.path);
-    expect(entries).toEqual(['database.sql']);
+    expect((await readCreatedBackup(file)).paths).toEqual(['database.sql']);
 
     // Readable by the backend's user alone: it holds every credential on the instance.
     await expectFileMode(file, 0o777, 0o600);
@@ -1051,11 +1167,7 @@ describe('POST /api/admin/backups', () => {
       expect(res.status).toBe(201);
       made = path.join(BACKUP_DIR, res.body.filename);
 
-      const zip = await unzipper.Open.file(made);
-      const held: Record<string, string> = {};
-      for (const entry of zip.files) {
-        if (entry.type === 'File') held[entry.path] = (await entry.buffer()).toString('utf8');
-      }
+      const held = (await readCreatedBackup(made)).files;
       expect(held).toEqual({
         'database.sql': SAFETY_DUMP,
         'uploads/maps/global/cellar.png': 'a map',
@@ -1068,5 +1180,85 @@ describe('POST /api/admin/backups', () => {
       await fs.rm(UPLOAD_DIR, { recursive: true, force: true });
       await fs.mkdir(UPLOAD_DIR, { recursive: true });
     }
+  });
+
+  it('writes an encrypted Instance backup, not a plaintext ZIP', async () => {
+    stubTools();
+    const res = await admin.post('/api/admin/backups');
+    expect(res.status).toBe(201);
+    const file = path.join(BACKUP_DIR, res.body.filename);
+    const header = Buffer.alloc(8);
+    const handle = await fs.open(file, 'r');
+    try {
+      await handle.read(header, 0, 8, 0);
+    } finally {
+      await handle.close();
+    }
+    expect(header.equals(BACKUP_ARCHIVE_MAGIC)).toBe(true);
+    expect(header.subarray(0, 4).equals(ZIP_LOCAL_FILE_MAGIC)).toBe(false);
+    const opened = await readCreatedBackup(file);
+    expect(opened.files['database.sql']).toBe(SAFETY_DUMP);
+    await expectFileMode(file, 0o777, 0o600);
+  });
+
+  it('does not decrypt with SESSION_SECRET, and does not use it when the backup key is missing', async () => {
+    const sessionHex = 'e5'.repeat(32);
+    const backupKey = process.env.BACKUP_ENCRYPTION_KEY!;
+    await withEnv({ SESSION_SECRET: sessionHex }, async () => {
+      stubTools();
+      const created = await admin.post('/api/admin/backups');
+      expect(created.status).toBe(201);
+      const file = path.join(BACKUP_DIR, created.body.filename);
+      const wrong = `${file}.session.zip`;
+      await expect(
+        decryptBackupFile(file, wrong, [Buffer.from(sessionHex, 'hex')])
+      ).rejects.toBeInstanceOf(BackupEncryptedWithUnknownKeyError);
+      const right = `${file}.ok.zip`;
+      await decryptBackupFile(file, right, [Buffer.from(backupKey, 'hex')]);
+      await fs.unlink(right);
+    });
+
+    await withEnv({ BACKUP_ENCRYPTION_KEY: undefined, SESSION_SECRET: sessionHex }, async () => {
+      const before = await fs.readdir(BACKUP_DIR).catch(() => [] as string[]);
+      const calls = stubTools();
+      const res = await admin.post('/api/admin/backups');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Backup Unavailable');
+      expect(res.body.code).toBe('BACKUP_ENCRYPTION_KEY_MISSING');
+      expect(res.body.message).toContain('BACKUP_ENCRYPTION_KEY');
+      expect(res.body.message).toMatch(/Instance still runs/);
+      expect(res.body.message).toMatch(/plaintext archive is not written/);
+      expect(calls).toEqual([]);
+      const after = await fs.readdir(BACKUP_DIR).catch(() => [] as string[]);
+      expect(after).toEqual(before);
+      expect(after.filter((f) => f.endsWith('.partial'))).toEqual([]);
+    });
+  });
+
+  it('refuses a new backup when BACKUP_ENCRYPTION_KEY is missing, without calling pg_dump', async () => {
+    await withEnv({ BACKUP_ENCRYPTION_KEY: undefined }, async () => {
+      const before = await fs.readdir(BACKUP_DIR).catch(() => [] as string[]);
+      const calls = stubTools();
+      const res = await admin.post('/api/admin/backups');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Backup Unavailable');
+      expect(res.body.code).toBe('BACKUP_ENCRYPTION_KEY_MISSING');
+      expect(res.body.message).toContain('BACKUP_ENCRYPTION_KEY');
+      expect(res.body.message).toMatch(/Instance still runs/);
+      expect(res.body.message).toMatch(/plaintext archive is not written/);
+      expect(calls).toEqual([]);
+      expect(await fs.readdir(BACKUP_DIR).catch(() => [] as string[])).toEqual(before);
+    });
+  });
+
+  it('treats a backup key equal to SESSION_SECRET as unusable', async () => {
+    const shared = 'd4'.repeat(32);
+    await withEnv({ BACKUP_ENCRYPTION_KEY: shared, SESSION_SECRET: shared }, async () => {
+      const calls = stubTools();
+      const res = await admin.post('/api/admin/backups');
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe('BACKUP_ENCRYPTION_KEY_MISSING');
+      expect(calls).toEqual([]);
+    });
   });
 });
