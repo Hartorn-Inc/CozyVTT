@@ -993,7 +993,8 @@ it('does not apply a DM catch-up getMap after the session role drops to PLAYER',
     catchUpResult = await catching;
   });
 
-  expect(catchUpResult).toEqual({ discarded: true });
+  expect(catchUpResult).toEqual({ ok: false, message: 'Failed to refresh the current map' });
+  expect(latest!.syncError).toBe('Failed to refresh the current map');
   expect(latest!.userRole).toBe('PLAYER');
   expect(latest!.playerSpiritVisible).toBe(false);
   expect(Object.keys(useGameStore.getState().tokens)).not.toContain('spirit-1');
@@ -1606,4 +1607,348 @@ it('does not let refreshCurrentMap of A steal a catch-up claim of B', async () =
   expect(latest!.campaign?.currentMapId).toBe('m2');
   expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-b']);
   expect(Object.keys(useGameStore.getState().tokens)).not.toContain('from-a');
+});
+
+const onRoleChangedHandler = () =>
+  socketOn.mock.calls
+    .filter(([event]) => event === 'campaign.role.changed')
+    .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
+
+const holdGetMap = () => {
+  let releaseMap: (value?: { map: { id: string; tokens: Token[]; spiritLayerUrl?: string }; spiritVisible: boolean }) => void = () => {};
+  let failMap: (err: unknown) => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve, reject) => {
+    releaseMap = (value) => resolve(value ?? { map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false });
+    failMap = reject;
+  }));
+  return {
+    release: () => releaseMap(),
+    releaseWith: (value: { map: { id: string; tokens: Token[]; spiritLayerUrl?: string }; spiritVisible: boolean }) => releaseMap(value),
+    fail: (err: unknown) => failMap(err),
+  };
+};
+
+const mapUnavailable = () =>
+  Object.assign(new Error('map down'), { response: { status: 500, data: { message: 'Map unavailable' } } });
+
+// Pause, end, and another member's role bump sessionEpoch for campaign-row
+// copies. They must not abort an in-flight map hydrate: the body is still
+// filtered for this user's role. This user's own role change still rejects
+// a DM body and surfaces Retry.
+
+it('hydrates the first getMap after a pause while it was in flight', async () => {
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  const mapHold = holdGetMap();
+  renderCampaign();
+  await waitFor(() => expect(getCampaign).toHaveBeenCalled());
+  await waitFor(() => expect(latest).not.toBeNull());
+
+  await act(async () => { releaseCampaign(campaignAs('ACTIVE', 'm1', 'DM')); });
+  await waitFor(() => expect(latest?.campaign?.id).toBe('c1'));
+  await waitFor(() => expect(getMap).toHaveBeenCalledWith('c1', 'm1'));
+  expect(latest!.currentMap).toBeNull();
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+  });
+
+  await act(async () => { mapHold.release(); });
+
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+  expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
+  expect(latest!.mapLoadError).toBeNull();
+});
+
+it('hydrates the first getMap after the session ends while it was in flight', async () => {
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  const mapHold = holdGetMap();
+  renderCampaign();
+  await waitFor(() => expect(getCampaign).toHaveBeenCalled());
+  await waitFor(() => expect(latest).not.toBeNull());
+
+  await act(async () => { releaseCampaign(campaignAs('ACTIVE', 'm1', 'DM')); });
+  await waitFor(() => expect(latest?.campaign?.id).toBe('c1'));
+  await waitFor(() => expect(getMap).toHaveBeenCalledWith('c1', 'm1'));
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.INACTIVE);
+    latest!.setActiveSession(null);
+  });
+
+  await act(async () => { mapHold.release(); });
+
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+  expect(latest!.campaign?.status).toBe(CampaignStatus.INACTIVE);
+  expect(latest!.activeSession).toBeNull();
+  expect(latest!.mapLoadError).toBeNull();
+});
+
+it('sets mapLoadError when first getMap fails after a pause', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  const mapHold = holdGetMap();
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.id).toBe('c1'));
+  await waitFor(() => expect(getMap).toHaveBeenCalledWith('c1', 'm1'));
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+  });
+
+  await act(async () => { mapHold.fail(mapUnavailable()); });
+
+  expect(latest!.mapLoadError).toEqual({ mapId: 'm1', message: 'Map unavailable' });
+  expect(latest!.currentMap).toBeNull();
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+});
+
+it('hydrates catch-up map B when paused during the claimed getMap', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+  const mapHold = holdGetMap();
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm2'));
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+  });
+
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    mapHold.release();
+    catchUpResult = await catching;
+  });
+
+  expect(catchUpResult).toEqual({ ok: true, message: 'Table synced' });
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
+  expect(latest!.syncError).toBeNull();
+});
+
+it('sets syncError when catch-up getMap of claimed B fails after a pause', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+  const mapHold = holdGetMap();
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm2'));
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+  });
+
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    mapHold.fail(mapUnavailable());
+    catchUpResult = await catching;
+  });
+
+  expect(catchUpResult).toEqual({ ok: false, message: 'Map unavailable' });
+  expect(latest!.syncError).toBe('Map unavailable');
+  expect(latest!.currentMap?.id).toBe('m1');
+});
+
+it('does not apply a DM first-load getMap after this user is demoted and offers Retry', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  const mapHold = holdGetMap();
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.id).toBe('c1'));
+  await waitFor(() => expect(getMap).toHaveBeenCalledWith('c1', 'm1'));
+  expect(latest!.userRole).toBe('DM');
+
+  const onRoleChanged = onRoleChangedHandler();
+  expect(onRoleChanged).toBeDefined();
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+  });
+  expect(latest!.userRole).toBe('PLAYER');
+
+  await act(async () => {
+    mapHold.releaseWith({
+      map: {
+        id: 'm1',
+        tokens: [tokenAt('visible', 1, 1), { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+      },
+      spiritVisible: true,
+    });
+  });
+
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.currentMap).toBeNull();
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+  expect(latest!.mapLoadError).toEqual({ mapId: 'm1', message: 'Failed to load map' });
+  expect(latest!.playerSpiritVisible).toBe(false);
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('spirit-1');
+});
+
+it('does not apply a DM catch-up getMap of claimed B after demotion and offers Retry', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('visible', 1, 1)],
+        spiritLayerUrl: 'https://example/spirit-m1.png',
+      },
+      spiritVisible: false,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('DM');
+
+  const onRoleChanged = onRoleChangedHandler();
+  expect(onRoleChanged).toBeDefined();
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'DM'));
+  const mapHold = holdGetMap();
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm2'));
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+    latest!.setPlayerSpiritVisible(false);
+    useGameStore.getState().setTokens([tokenAt('visible', 1, 1)]);
+  });
+  expect(latest!.userRole).toBe('PLAYER');
+
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    mapHold.releaseWith({
+      map: {
+        id: 'm2',
+        tokens: [tokenAt('visible', 1, 1), { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+      },
+      spiritVisible: true,
+    });
+    catchUpResult = await catching;
+  });
+
+  expect(catchUpResult).toEqual({ ok: false, message: 'Failed to refresh the current map' });
+  expect(latest!.syncError).toBe('Failed to refresh the current map');
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+  expect(latest!.playerSpiritVisible).toBe(false);
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('spirit-1');
+  expect(latest!.currentMap?.spiritLayerUrl).not.toBe('https://example/spirit-dm.png');
+});
+
+it('hydrates the first getMap when another member\'s role changes while it is in flight', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    memberships: [{ userId: 'me', role: 'DM' }, { userId: 'other', role: 'PLAYER' }],
+  });
+  const mapHold = holdGetMap();
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.id).toBe('c1'));
+  await waitFor(() => expect(getMap).toHaveBeenCalledWith('c1', 'm1'));
+
+  const onRoleChanged = onRoleChangedHandler();
+  expect(onRoleChanged).toBeDefined();
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'other', role: 'SPECTATOR' });
+  });
+  expect(latest!.userRole).toBe('DM');
+
+  await act(async () => { mapHold.release(); });
+
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.campaign?.currentMapId).toBe('m1');
+  expect(latest!.mapLoadError).toBeNull();
+  expect(latest!.userRole).toBe('DM');
+});
+
+it('hydrates retryMapLoad when paused while getMap is in flight', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockRejectedValueOnce(mapUnavailable());
+  renderCampaign();
+  await waitFor(() => expect(latest?.mapLoadError).toEqual({ mapId: 'm1', message: 'Map unavailable' }));
+
+  const mapHold = holdGetMap();
+  let retryResult: TableRetryOutcome | undefined;
+  act(() => { void latest!.retryMapLoad().then((result) => { retryResult = result; }); });
+  await waitFor(() => expect(getMap).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+  });
+
+  await act(async () => { mapHold.release(); });
+  await waitFor(() => expect(retryResult).toEqual({ ok: true, message: 'Map loaded' }));
+
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.mapLoadError).toBeNull();
+});
+
+it('sets mapLoadError when retryMapLoad fails after a pause', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockRejectedValueOnce(mapUnavailable());
+  renderCampaign();
+  await waitFor(() => expect(latest?.mapLoadError).toEqual({ mapId: 'm1', message: 'Map unavailable' }));
+
+  const mapHold = holdGetMap();
+  let retryResult: TableRetryOutcome | undefined;
+  act(() => { void latest!.retryMapLoad().then((result) => { retryResult = result; }); });
+  await waitFor(() => expect(getMap).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+  });
+
+  await act(async () => { mapHold.fail(mapUnavailable()); });
+  await waitFor(() => expect(retryResult).toEqual({ ok: false, message: 'Map unavailable' }));
+
+  expect(latest!.mapLoadError).toEqual({ mapId: 'm1', message: 'Map unavailable' });
+  expect(latest!.currentMap).toBeNull();
+});
+
+it('hydrates refreshCurrentMap when paused while getMap is in flight', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('old', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  const mapHold = holdGetMap();
+  act(() => { void latest!.refreshCurrentMap(); });
+  await waitFor(() => expect(getMap).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+  });
+
+  await act(async () => {
+    mapHold.releaseWith({
+      map: { id: 'm1', tokens: [tokenAt('fresh', 8, 8)] },
+      spiritVisible: false,
+    });
+  });
+
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(useGameStore.getState().tokens['fresh']?.position).toEqual({ x: 8, y: 8 });
+  expect(latest!.syncError).toBeNull();
+  expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
 });

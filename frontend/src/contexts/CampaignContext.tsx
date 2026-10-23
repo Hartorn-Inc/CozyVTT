@@ -31,8 +31,10 @@ import { withMemberRole } from '@/utils/campaignRoles';
 /**
  * Settled result of Retry map load / Retry sync. Success uses a fixed
  * phrase; failure returns the string just stored on the matching error.
- * A discarded reply (stale generation, live map switch, overlapping map
- * read, or session/role change) is distinct and must not be announced.
+ * A discarded reply (stale generation, live map switch, or overlapping map
+ * read) is distinct and must not be announced. Pause/end/resume/start and
+ * another member's role change do not discard an in-flight map hydrate.
+ * This user's own role change rejects the body and surfaces Retry.
  */
 export type TableRetryOutcome =
   | { ok: true; message: string }
@@ -222,7 +224,10 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   const mapEpoch = useRef(0);
   // Live session/role updates: pause, resume, DM transfer, role change.
   // Independent of mapEpoch. roster.updated GET, refreshCampaign, and
-  // vibe/spirit do not bump this.
+  // vibe/spirit do not bump this. Campaign-row GETs (status / memberships /
+  // activeSession) still consult this clock. Map hydrates snapshot this
+  // user's own role instead: pause/end/resume/start and another member's
+  // role change must not abort an in-flight getMap.
   const sessionEpoch = useRef(0);
   // Overlapping map REST reads (load, refresh, retry, catch-up) and empty-map
   // clears. Independent of loadGeneration (campaign switch / unmount) and
@@ -342,15 +347,47 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     return currentMapIdRef.current === fetchedMapId;
   };
 
+  const ownRoleMoved = (whenStarted: CampaignRole | null) =>
+    liveRoleRef.current !== whenStarted;
+
+  /**
+   * This map GET may apply: latest read, this user's own role is unchanged
+   * (a pause or another member's role does not abort), and the live map
+   * id still matches mayApplyFetchedMap.
+   */
   const mapReadIsCurrent = (
     seq: number,
-    sessionEpochWhenStarted: number,
+    ownRoleWhenStarted: CampaignRole | null,
     fetchedMapId: string,
     mapEpochWhenStarted: number,
   ) =>
     seq === mapReadSeq.current
-    && sessionEpoch.current === sessionEpochWhenStarted
+    && !ownRoleMoved(ownRoleWhenStarted)
     && mayApplyFetchedMap(fetchedMapId, mapEpochWhenStarted);
+
+  /**
+   * This user's role changed while a map GET was in flight. The body is
+   * filtered for the old role — do not apply it (spirit tokens,
+   * spiritLayerUrl). Surface Retry so the table can load the body for the
+   * new role. Returns true when this was the reason the hydrate was dropped.
+   */
+  const rejectStaleOwnRoleHydrate = (
+    seq: number,
+    ownRoleWhenStarted: CampaignRole | null,
+    mapId: string,
+    mapEpochWhenStarted: number,
+    kind: 'mapLoad' | 'sync',
+  ): boolean => {
+    if (seq !== mapReadSeq.current) return false;
+    if (!mayApplyFetchedMap(mapId, mapEpochWhenStarted)) return false;
+    if (!ownRoleMoved(ownRoleWhenStarted)) return false;
+    if (kind === 'mapLoad') {
+      setMapLoadError({ mapId, message: MAP_LOAD_FALLBACK });
+    } else {
+      setSyncError(MAP_REFRESH_FALLBACK);
+    }
+    return true;
+  };
 
   const hasConflictingMapClaim = (mapId: string) => {
     const claimed = claimedMapRef.current;
@@ -524,11 +561,14 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       if (!roleMismatch && data.currentMapId) {
         const requestedMapId = data.currentMapId;
         const seq = bumpMapReadSeq();
-        const sessionEpochWhenMapStarted = sessionEpoch.current;
+        const ownRoleWhenStarted = liveRoleRef.current;
         try {
           const { map, spiritVisible } = await api.getMap(data.id, requestedMapId);
           if (!replyIsCurrent(campaignId, generation) || map.id !== requestedMapId) return;
-          if (!mapReadIsCurrent(seq, sessionEpochWhenMapStarted, map.id, mapEpochWhenStarted)) return;
+          if (!mapReadIsCurrent(seq, ownRoleWhenStarted, map.id, mapEpochWhenStarted)) {
+            rejectStaleOwnRoleHydrate(seq, ownRoleWhenStarted, requestedMapId, mapEpochWhenStarted, 'mapLoad');
+            return;
+          }
           applyHydratedMap(map, spiritVisible);
         } catch (err) {
           if (!replyIsCurrent(campaignId, generation)) return;
@@ -537,6 +577,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
           if (mapEpoch.current !== mapEpochWhenStarted) return;
           if (currentMapIdRef.current && currentMapIdRef.current !== requestedMapId) return;
           // Failed first getMap is an error with retry, never a successful empty table.
+          // A pause that bumped sessionEpoch is not discarded: the map is still applicable.
           setMapLoadError({
             mapId: requestedMapId,
             message: apiErrorMessage(err) || MAP_LOAD_FALLBACK,
@@ -614,12 +655,15 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     const generation = loadGeneration.current;
     const mapEpochWhenStarted = mapEpoch.current;
     const seq = bumpMapReadSeq();
-    const sessionEpochWhenStarted = sessionEpoch.current;
+    const ownRoleWhenStarted = liveRoleRef.current;
     try {
       const { map, spiritVisible } = await api.getMap(campaignId, mapId);
       if (!replyIsCurrent(campaignId, generation)) return;
       if (map.id !== mapId) return;
-      if (!mapReadIsCurrent(seq, sessionEpochWhenStarted, map.id, mapEpochWhenStarted)) return;
+      if (!mapReadIsCurrent(seq, ownRoleWhenStarted, map.id, mapEpochWhenStarted)) {
+        rejectStaleOwnRoleHydrate(seq, ownRoleWhenStarted, mapId, mapEpochWhenStarted, 'sync');
+        return;
+      }
       applyHydratedMap(map, spiritVisible);
     } catch (err) {
       if (!replyIsCurrent(campaignId, generation)) return;
@@ -638,13 +682,16 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     const generation = loadGeneration.current;
     const mapEpochWhenStarted = mapEpoch.current;
     const seq = bumpMapReadSeq();
-    const sessionEpochWhenStarted = sessionEpoch.current;
+    const ownRoleWhenStarted = liveRoleRef.current;
     try {
       const { map, spiritVisible } = await api.getMap(campaignId, mapId);
       if (!replyIsCurrent(campaignId, generation) || map.id !== mapId) {
         return { discarded: true };
       }
-      if (!mapReadIsCurrent(seq, sessionEpochWhenStarted, map.id, mapEpochWhenStarted)) {
+      if (!mapReadIsCurrent(seq, ownRoleWhenStarted, map.id, mapEpochWhenStarted)) {
+        if (rejectStaleOwnRoleHydrate(seq, ownRoleWhenStarted, mapId, mapEpochWhenStarted, 'mapLoad')) {
+          return { ok: false, message: MAP_LOAD_FALLBACK };
+        }
         return { discarded: true };
       }
       applyHydratedMap(map, spiritVisible);
@@ -654,9 +701,6 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         return { discarded: true };
       }
       if (seq !== mapReadSeq.current) {
-        return { discarded: true };
-      }
-      if (sessionEpoch.current !== sessionEpochWhenStarted) {
         return { discarded: true };
       }
       if (!mayApplyFetchedMap(mapId, mapEpochWhenStarted)) {
@@ -765,7 +809,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     // Catch-up is now the latest read of this id (same map or a learned
     // switch). An in-flight getMap of the previous id has the older seq.
     const seq = bumpMapReadSeq();
-    const sessionEpochWhenMapStarted = sessionEpoch.current;
+    const ownRoleWhenStarted = liveRoleRef.current;
     const claimingDifferent = mapId !== currentMapIdRef.current;
     if (claimingDifferent) {
       claimedMapRef.current = { id: mapId, seq };
@@ -775,7 +819,10 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       if (!stillShown() || map.id !== mapId) {
         return { discarded: true };
       }
-      if (!mapReadIsCurrent(seq, sessionEpochWhenMapStarted, map.id, mapEpochWhenStarted)) {
+      if (!mapReadIsCurrent(seq, ownRoleWhenStarted, map.id, mapEpochWhenStarted)) {
+        if (rejectStaleOwnRoleHydrate(seq, ownRoleWhenStarted, mapId, mapEpochWhenStarted, 'sync')) {
+          return { ok: false, message: MAP_REFRESH_FALLBACK };
+        }
         return { discarded: true };
       }
       applyHydratedMap(map, spiritVisible);
@@ -786,7 +833,6 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     } catch (err) {
       if (!stillShown()) return { discarded: true };
       if (seq !== mapReadSeq.current) return { discarded: true };
-      if (sessionEpoch.current !== sessionEpochWhenMapStarted) return { discarded: true };
       if (!mayApplyFetchedMap(mapId, mapEpochWhenStarted)) return { discarded: true };
       console.error('[CampaignContext] Failed to refresh the current map after reconnect:', err);
       const message = apiErrorMessage(err) || MAP_REFRESH_FALLBACK;
