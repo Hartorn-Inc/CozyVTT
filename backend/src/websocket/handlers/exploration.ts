@@ -110,6 +110,23 @@ function bumpExplorationEpoch(mapId: string): number {
   return next;
 }
 
+/**
+ * Reset won the map's explored-memory clock while this write still held a
+ * row (or thought it did). Throwing rolls the upsert back so forgotten
+ * cells are not committed at the new epoch.
+ */
+class ExplorationEpochConflict extends Error {
+  override name = 'ExplorationEpochConflict';
+  constructor() {
+    super('exploration epoch changed during write');
+  }
+}
+
+function isExplorationEpochConflict(error: unknown): boolean {
+  return error instanceof ExplorationEpochConflict
+    || (error instanceof Error && error.name === 'ExplorationEpochConflict');
+}
+
 async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal): Promise<void> {
   queued.timer = null;
   queued.writing = true;
@@ -122,8 +139,9 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
   try {
     // Read again: memory can be turned off, or the map moved or resized past
     // what memory can hold, within the second. A reset that lands while this
-    // write is in flight bumps the map's epoch; we then abort so forgotten
-    // cells are not stored or broadcast as a post-reset replace.
+    // write is in flight bumps the map's epoch under the explored-memory
+    // lock; we then abort so forgotten cells are not stored or broadcast as
+    // a post-reset replace.
     const map = await prisma.map.findUnique({ where: { id: mapId }, select: MAP_SELECT });
     if (!map || map.campaignId !== campaignId || !map.explorationEnabled || !fogFits(map)) return;
     if (explorationEpochFor(mapId) !== epochAtStart) return;
@@ -132,10 +150,14 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
     const held = await prisma.mapExploration.findUnique({ where: { mapId_userId: { mapId, userId } }, select: { explored: true } });
     const known = loadFogState(map, (held?.explored as FogState | null) ?? null);
     if (cells.length === 0 || cells.every((cell) => cell >= known.revealed.length || known.revealed[cell])) return;
-    // One writer per (map, user) at a time. Two tabs, or two reports in
-    // flight, would each read the row and write back only their own cells;
-    // the lock is released when the transaction ends.
+    // Exclusive explored-memory lock first, same two-argument key as reset
+    // (not the single-key map JSON lock), so deleteMany and this upsert
+    // cannot interleave. Then one writer per (map, user): two tabs, or two
+    // reports in flight, would each read the row and write back only their
+    // own cells; both locks are released when the transaction ends.
     const cellsNow = await prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${mapId}), hashtext('explored-memory'))`;
+      if (explorationEpochFor(mapId) !== epochAtStart) throw new ExplorationEpochConflict();
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${mapId}), hashtext(${userId}))`;
       const owner = await tx.campaignMembership.findUnique({
         where: { userId_campaignId: { userId, campaignId } },
@@ -168,22 +190,28 @@ async function writeQueuedReveal(io: Server, key: string, queued: QueuedReveal):
       const after = revealedCellIndices(explored);
       // Nothing new: nothing to write, and nobody's memory to resend.
       if (after.length === before) return null;
-      if (explorationEpochFor(mapId) !== epochAtStart) return null;
       await tx.mapExploration.upsert({
         where: { mapId_userId: { mapId, userId } },
         create: { mapId, userId, explored: toJson(explored) },
         update: { explored: toJson(explored) },
       });
+      if (explorationEpochFor(mapId) !== epochAtStart) throw new ExplorationEpochConflict();
       return after;
     });
     if (explorationEpochFor(mapId) !== epochAtStart) {
-      // Reset won: the upsert may have raced past deleteMany. Drop this
-      // user's row and do not broadcast cells under a post-reset epoch.
-      await prisma.mapExploration.deleteMany({ where: { mapId, userId } });
+      // Reset took the explored-memory lock after this commit, deleted the
+      // row, and already broadcast empty at the new epoch. Do not delete
+      // or broadcast here: a later reveal at that epoch may already hold
+      // the row, and an unlocked delete would wipe it.
       return;
     }
     if (cellsNow) await broadcastExplorationState(io, campaignId, mapId, userId, cellsNow, epochAtStart);
   } catch (error) {
+    if (isExplorationEpochConflict(error)) {
+      // Upsert rolled back. Reset's deleteMany and empty broadcast are the
+      // correction; an unlocked delete here can wipe a post-reset reveal.
+      return;
+    }
     logger.error('exploration:reveal failed', { err: error });
   } finally {
     queued.writing = false;
@@ -316,16 +344,22 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
       if (!canReadMap(socket.role, mapId, map.campaign.currentMapId)) return;
       if (!map.explorationEnabled) return;
 
-      const row = await prisma.mapExploration.findUnique({
-        where: { mapId_userId: { mapId, userId } },
-        select: { explored: true },
+      // Shared explored-memory lock: cannot observe a row a reset/write is
+      // mid-replacing. Two-argument key, so this does not stall token/fog JSON.
+      const snapshot = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock_shared(hashtext(${mapId}), hashtext('explored-memory'))`;
+        const row = await tx.mapExploration.findUnique({
+          where: { mapId_userId: { mapId, userId } },
+          select: { explored: true },
+        });
+        const explored: FogState = loadFogState(map, (row?.explored as FogState | null) ?? null);
+        return { cells: revealedCellIndices(explored), epoch: explorationEpochFor(mapId) };
       });
-      const explored: FogState = loadFogState(map, (row?.explored as FogState | null) ?? null);
       socket.emit('exploration:state', {
         mapId,
         userId,
-        cells: revealedCellIndices(explored),
-        epoch: explorationEpochFor(mapId),
+        cells: snapshot.cells,
+        epoch: snapshot.epoch,
       });
     } catch (error) {
       if (error instanceof FogTooLargeError) {
@@ -338,8 +372,10 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
 
   /**
    * exploration:reset — DM forgets every player's explored areas on a map.
-   * Increments only this map's explored-memory epoch. Does not touch tokens,
-   * fog, or pings, and does not bump join or current-map identity.
+   * Increments only this map's explored-memory epoch, under the same
+   * explored-memory advisory lock as a reveal write, so forgotten cells
+   * cannot land after deleteMany. Does not take the map JSON lock, and does
+   * not touch tokens, fog, or pings, or bump join or current-map identity.
    */
   socket.on('exploration:reset', async (data: { mapId?: unknown }) => {
     try {
@@ -366,9 +402,13 @@ export function registerExplorationHandlers(io: Server, socket: AuthenticatedSoc
         socket.emit('error', { message: 'Only DMs can reset explored areas' });
         return;
       }
-      const epoch = bumpExplorationEpoch(mapId);
-      forgetQueuedReveals(mapId);
-      await prisma.mapExploration.deleteMany({ where: { mapId } });
+      const epoch = await prisma.$transaction(async (tx) => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${mapId}), hashtext('explored-memory'))`;
+        const next = bumpExplorationEpoch(mapId);
+        forgetQueuedReveals(mapId);
+        await tx.mapExploration.deleteMany({ where: { mapId } });
+        return next;
+      });
       await emitToMapReaders(io, campaignId, mapId, 'exploration:state', {
         mapId,
         userId: null,

@@ -381,6 +381,15 @@ describe('exploration:reset', () => {
     const reply = await asked;
     expect(reply.cells).toEqual([]);
     expect(reply.epoch).toBe(reset.epoch);
+    expect(await prisma.mapExploration.count({ where: { mapId } })).toBe(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const askedAgain = waitForEvent<StateEvent>(p1, 'exploration:state');
+    p1.emit('exploration:request', { mapId });
+    const later = await askedAgain;
+    expect(later.cells).toEqual([]);
+    expect(later.epoch).toBe(reset.epoch);
+    expect(await prisma.mapExploration.count({ where: { mapId } })).toBe(0);
 
     expect((await prisma.campaign.findUniqueOrThrow({
       where: { id: campaignId },

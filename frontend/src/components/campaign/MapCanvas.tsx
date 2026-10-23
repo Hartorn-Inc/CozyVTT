@@ -59,6 +59,7 @@ import { cachedTokenImage, placeholderColor } from './map/layers/drawTokens';
 import { fogRectFromDrag, fogCellsInRect, revealedSetFromFogState } from './map/fogSelection';
 import { chunkFogCells, FOG_MESSAGE_MAX_CELLS, FOG_OPERATION_CHUNK_GAP_MS } from './map/chunkFogCells';
 import { createFogOperationQueue } from './map/fogOperationQueue';
+import { fogRevealedEquals, overlayFogOperations } from './map/overlayFogOperations';
 import { exploredCellsFromCoverage, diffNew } from './map/exploration';
 import { rectFromDrag, segmentsInRect } from './map/mapSelection';
 import { useWallSelection } from './map/useWallSelection';
@@ -609,9 +610,10 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
    * pending-cells buffer and its 80ms flush interval are gone — those existed
    * only to batch the continuous stream a brush stroke produced. The local
    * grid still flips the whole set at once; the wire is split into messages
-   * of at most 20,000 cells, queued and spaced so the 10/s fog limiter does
-   * not drop them. A later rectangle is appended; it does not cancel earlier
-   * chunks. Rejoin / map change / unmount clear the queue (catch-up snapshots).
+   * of at most 20,000 cells, queued and spaced to stay inside the 10/1000ms
+   * fog limiter with a safety margin so a tail chunk is not silently dropped.
+   * A later rectangle is appended; it does not cancel earlier chunks.
+   * Rejoin / map change / unmount clear the queue (catch-up snapshots).
    */
   const socketRef = useRef(socket);
   socketRef.current = socket;
@@ -1277,16 +1279,24 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
 
     const handleFogUpdated = (data: { mapId: string; fogState: FogState }) => {
       if (!currentMap || data.mapId !== currentMap.id) return;
-      // Track newly-revealed cells for fade animation
+      // Chunked own ops echo as a full grid that is only as far as that
+      // chunk. Re-apply in-flight already-emitted ops and pending unsent
+      // ops in order so an optimistic rectangle (or a second stroke) is not
+      // snapped back. Drop in-flight only when the snapshot already matches
+      // that overlay (the server has caught up); a late partial chunk must
+      // not clear reveal_all and snap the grid back.
+      const queue = fogOpQueueRef.current;
+      const next = overlayFogOperations(data.fogState, queue?.overlayOps() ?? []);
+      queue?.ackEcho(fogRevealedEquals(data.fogState, next));
       setFogState((prev) => {
         if (prev) {
-          data.fogState.revealed.forEach((revealed, i) => {
+          next.revealed.forEach((revealed, i) => {
             if (revealed && !prev.revealed[i]) {
               revealOpacityRef.current.set(i, 1.0); // Start fade animation
             }
           });
         }
-        return data.fogState;
+        return next;
       });
     };
 
@@ -3587,21 +3597,11 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
               }
             }}
             onRevealAll={() => {
-              fogOpQueueRef.current?.clear();
-              const socketInstance = socket?.getSocket();
-              if (socketInstance && currentMap) {
-                socketInstance.emit('fog:operation', { mapId: currentMap.id, operation: { op: 'reveal_all' } });
-                fogOpQueueRef.current?.noteEmit();
-              }
+              if (currentMap) fogOpQueueRef.current?.enqueueAll(currentMap.id, 'reveal_all');
               setFogState((prev) => prev ? { ...prev, revealed: new Array(prev.revealed.length).fill(true) } : prev);
             }}
             onHideAll={() => {
-              fogOpQueueRef.current?.clear();
-              const socketInstance = socket?.getSocket();
-              if (socketInstance && currentMap) {
-                socketInstance.emit('fog:operation', { mapId: currentMap.id, operation: { op: 'hide_all' } });
-                fogOpQueueRef.current?.noteEmit();
-              }
+              if (currentMap) fogOpQueueRef.current?.enqueueAll(currentMap.id, 'hide_all');
               setFogState((prev) => prev ? { ...prev, revealed: new Array(prev.revealed.length).fill(false) } : prev);
             }}
           />
