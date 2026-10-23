@@ -167,6 +167,20 @@ class SchemaOwnerStatic(unittest.TestCase):
         self.assertIn('schema owner', migrations.lower())
         self.assertLess(migrations.lower().index('schema owner'), migrations.index('prisma migrate deploy'))
 
+    def test_live_upgrade_creates_restore_marker_tables(self):
+        # Docs CI has PostgreSQL tools, not prisma. Backend CI has prisma, so
+        # dropping these stubs would stay green there and fail only on Docs.
+        live = read(__file__)
+        live = live[live.index('class SchemaOwnerLivePostgres'):]
+        self.assertIn(
+            'CREATE TABLE IF NOT EXISTS public."User" (id text NOT NULL)',
+            live,
+        )
+        self.assertIn(
+            'CREATE TABLE IF NOT EXISTS public._prisma_migrations (id character varying(36) NOT NULL)',
+            live,
+        )
+
 
 class SchemaOwnerHelper(unittest.TestCase):
     def setUp(self):
@@ -689,6 +703,19 @@ class SchemaOwnerLivePostgres(unittest.TestCase):
                 self.assertEqual(migrate.returncode, 0, migrate.stdout + migrate.stderr)
             elif _database_url():
                 self.fail('prisma migrate deploy is required when DATABASE_URL is set, but %s is missing' % PRISMA)
+
+            # Docs CI has PostgreSQL tools, not prisma, so migrate is skipped.
+            # Create the tables restore.sh requires so a dump of the seeded
+            # function/enum still contains those CREATE TABLE lines.
+            stub_tables = _psql(
+                cluster.host, cluster.port, APP_USER, APP_PASSWORD, cluster.dbname,
+                sql=(
+                    'CREATE TABLE IF NOT EXISTS public."User" (id text NOT NULL);\n'
+                    'CREATE TABLE IF NOT EXISTS public._prisma_migrations (id character varying(36) NOT NULL);\n'
+                ),
+                check=False,
+            )
+            self.assertEqual(stub_tables.returncode, 0, stub_tables.stdout + stub_tables.stderr)
 
             pg_dump = _pg_bin('pg_dump')
             if pg_dump:
