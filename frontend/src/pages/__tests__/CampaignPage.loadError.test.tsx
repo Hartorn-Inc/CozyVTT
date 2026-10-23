@@ -87,6 +87,7 @@ vi.mock('@/components/campaign/TokenRoster', nothing);
 vi.mock('@/components/campaign/NpcQuickEditor', nothing);
 
 import CampaignPage from '../CampaignPage';
+import type { TableRetryOutcome } from '@/contexts/CampaignContext';
 
 const loadedCampaign = {
   id: 'campaign-1',
@@ -201,9 +202,9 @@ describe('CampaignPage load and recovery', () => {
   });
 
   it('keeps Retry map load focusable while the request is in flight', async () => {
-    let release: (value: { ok: boolean; message: string }) => void = () => {};
+    let release: (value: TableRetryOutcome) => void = () => {};
     retryMapLoad.mockImplementation(
-      () => new Promise<{ ok: boolean; message: string }>((resolve) => { release = resolve; }),
+      () => new Promise<TableRetryOutcome>((resolve) => { release = resolve; }),
     );
     ctx.campaign = loadedCampaign;
     ctx.mapLoadError = { mapId: 'map-1', message: 'Map unavailable' };
@@ -223,9 +224,9 @@ describe('CampaignPage load and recovery', () => {
   });
 
   it('announces a successful map retry in the live region', async () => {
-    let release: (value: { ok: boolean; message: string }) => void = () => {};
+    let release: (value: TableRetryOutcome) => void = () => {};
     retryMapLoad.mockImplementation(
-      () => new Promise<{ ok: boolean; message: string }>((resolve) => { release = resolve; }),
+      () => new Promise<TableRetryOutcome>((resolve) => { release = resolve; }),
     );
     ctx.campaign = loadedCampaign;
     ctx.mapLoadError = { mapId: 'map-1', message: 'Map unavailable' };
@@ -239,9 +240,9 @@ describe('CampaignPage load and recovery', () => {
   });
 
   it('announces a successful sync retry in the live region', async () => {
-    let release: (value: { ok: boolean; message: string }) => void = () => {};
+    let release: (value: TableRetryOutcome) => void = () => {};
     catchUpAfterReconnect.mockImplementation(
-      () => new Promise<{ ok: boolean; message: string }>((resolve) => { release = resolve; }),
+      () => new Promise<TableRetryOutcome>((resolve) => { release = resolve; }),
     );
     ctx.campaign = loadedCampaign;
     ctx.currentMap = { id: 'map-1', name: 'Map', tokens: [] };
@@ -287,13 +288,13 @@ describe('CampaignPage load and recovery', () => {
   });
 
   it('keeps map and sync retry announcements independent while both are in flight', async () => {
-    let releaseMap: (value: { ok: boolean; message: string }) => void = () => {};
-    let releaseSync: (value: { ok: boolean; message: string }) => void = () => {};
+    let releaseMap: (value: TableRetryOutcome) => void = () => {};
+    let releaseSync: (value: TableRetryOutcome) => void = () => {};
     retryMapLoad.mockImplementation(
-      () => new Promise<{ ok: boolean; message: string }>((resolve) => { releaseMap = resolve; }),
+      () => new Promise<TableRetryOutcome>((resolve) => { releaseMap = resolve; }),
     );
     catchUpAfterReconnect.mockImplementation(
-      () => new Promise<{ ok: boolean; message: string }>((resolve) => { releaseSync = resolve; }),
+      () => new Promise<TableRetryOutcome>((resolve) => { releaseSync = resolve; }),
     );
     ctx.campaign = loadedCampaign;
     ctx.currentMap = { id: 'map-1', name: 'Map', tokens: [] };
@@ -319,5 +320,51 @@ describe('CampaignPage load and recovery', () => {
       expect(document.getElementById('campaign-sync-retry-status')).toHaveTextContent('Table busy');
     });
     expect(document.getElementById('campaign-map-retry-status')).toHaveTextContent('Map timed out');
+  });
+
+  it('does not announce a discarded map retry in the live region', async () => {
+    let release: (value: TableRetryOutcome) => void = () => {};
+    retryMapLoad.mockImplementation(
+      () => new Promise<TableRetryOutcome>((resolve) => { release = resolve; }),
+    );
+    ctx.campaign = loadedCampaign;
+    ctx.mapLoadError = { mapId: 'map-1', message: 'Map unavailable' };
+    render(<CampaignPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry map load' }));
+    await waitFor(() => {
+      expect(document.getElementById('campaign-map-retry-status')).toHaveTextContent('Retrying map load');
+    });
+
+    await act(async () => { release({ discarded: true }); });
+    expect(document.getElementById('campaign-map-retry-status')).toHaveTextContent('Retrying map load');
+    expect(document.getElementById('campaign-map-retry-status')).not.toHaveTextContent('Failed to load map');
+  });
+
+  it('does not announce a discarded catch-up after a later map retry started', async () => {
+    let releaseSync: (value: TableRetryOutcome) => void = () => {};
+    catchUpAfterReconnect.mockImplementation(
+      () => new Promise<TableRetryOutcome>((resolve) => { releaseSync = resolve; }),
+    );
+    retryMapLoad.mockResolvedValue({ ok: true, message: 'Map loaded' });
+    ctx.campaign = loadedCampaign;
+    ctx.currentMap = { id: 'map-1', name: 'Map', tokens: [] };
+    ctx.mapLoadError = { mapId: 'map-1', message: 'Map unavailable' };
+    ctx.syncError = 'Failed to refresh the current map';
+    render(<CampaignPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
+    await waitFor(() => {
+      expect(document.getElementById('campaign-sync-retry-status')).toHaveTextContent('Retrying sync');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry map load' }));
+    await waitFor(() => {
+      expect(document.getElementById('campaign-map-retry-status')).toHaveTextContent('Retrying map load');
+    });
+
+    await act(async () => { releaseSync({ discarded: true }); });
+    expect(document.getElementById('campaign-sync-retry-status')).toHaveTextContent('Retrying sync');
+    expect(document.getElementById('campaign-sync-retry-status')).not.toHaveTextContent('Failed to catch up after reconnect');
   });
 });

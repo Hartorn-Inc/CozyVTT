@@ -32,7 +32,7 @@ vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'me' } 
 
 import { CampaignProvider, useCampaign, type TableRetryOutcome } from '../CampaignContext';
 import { useGameStore } from '@/stores/gameStore';
-import { CampaignStatus, type Campaign, type Map as CampaignMap, type Token } from '@/types';
+import { CampaignStatus, TokenLayer, type Campaign, type Map as CampaignMap, type Token } from '@/types';
 
 const campaignAs = (status: string, currentMapId: string, role: string) => ({
   id: 'c1', name: 'Test', status, currentMapId, maps: [], memberships: [{ userId: 'me', role }],
@@ -774,4 +774,398 @@ it('still applies a missed pause when reconnect authenticated repeats the same r
   expect(latest!.campaign?.status).toBe('PAUSED');
   expect(latest!.userRole).toBe('PLAYER');
   expect(latest!.currentMap?.id).toBe('m1');
+});
+
+it('does not apply an older getMap after catch-up adopted a different map', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  let releaseA: () => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
+    releaseA = () => resolve({ map: { id: mapId, tokens: [tokenAt('from-a', 1, 1)] }, spiritVisible: false });
+  }));
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.id).toBe('c1'));
+  await waitFor(() => expect(getMap).toHaveBeenCalledWith('c1', 'm1'));
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('from-b', 2, 2)] }, spiritVisible: false }),
+  );
+  await act(async () => { await latest!.catchUpAfterReconnect(); });
+
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+
+  await act(async () => { releaseA(); });
+
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-b']);
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('from-a');
+});
+
+it('does not apply an older catch-up after a newer catch-up adopted a different map', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseOlder: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseOlder = resolve;
+  }));
+  let older: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { older = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('from-b', 2, 2)] }, spiritVisible: false }),
+  );
+  await act(async () => { await latest!.catchUpAfterReconnect(); });
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-b']);
+
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('from-a', 1, 1)] }, spiritVisible: false }),
+  );
+  let olderResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    releaseOlder(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+    olderResult = await older;
+  });
+
+  expect(olderResult).toEqual({ discarded: true });
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-b']);
+});
+
+it('does not apply a refreshCurrentMap started on A after catch-up adopted B', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseA: () => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
+    releaseA = () => resolve({ map: { id: mapId, tokens: [tokenAt('from-a', 1, 1)] }, spiritVisible: false });
+  }));
+  act(() => { void latest!.refreshCurrentMap(); });
+  await waitFor(() => expect(getMap).toHaveBeenCalledTimes(2));
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('from-b', 2, 2)] }, spiritVisible: false }),
+  );
+  await act(async () => { await latest!.catchUpAfterReconnect(); });
+  expect(latest!.currentMap?.id).toBe('m2');
+
+  await act(async () => { releaseA(); });
+
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-b']);
+});
+
+it('does not apply an older getMap after catch-up cleared the table', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  let releaseA: () => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
+    releaseA = () => resolve({ map: { id: mapId, tokens: [tokenAt('from-a', 1, 1)] }, spiritVisible: false });
+  }));
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.id).toBe('c1'));
+  await waitFor(() => expect(getMap).toHaveBeenCalledWith('c1', 'm1'));
+
+  getCampaign.mockResolvedValueOnce({ ...campaignAs('ACTIVE', 'm1', 'PLAYER'), currentMapId: null });
+  await act(async () => { await latest!.catchUpAfterReconnect(); });
+
+  expect(latest!.currentMap).toBeNull();
+  expect(latest!.campaign?.currentMapId).toBeNull();
+
+  await act(async () => { releaseA(); });
+
+  expect(latest!.currentMap).toBeNull();
+  expect(latest!.currentMap?.id).not.toBe('m1');
+  expect(latest!.campaign?.currentMapId).toBeNull();
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('from-a');
+});
+
+it('does not apply a DM map body after the session role drops to PLAYER', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('visible', 1, 1), { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+        spiritLayerUrl: 'https://example/spirit-initial.png',
+      },
+      spiritVisible: true,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('DM');
+
+  const onRoleChanged = socketOn.mock.calls
+    .filter(([event]) => event === 'campaign.role.changed')
+    .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
+  expect(onRoleChanged).toBeDefined();
+
+  let releaseMap: () => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
+    releaseMap = () => resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('visible', 1, 1), { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+        spiritVisible: true,
+      },
+      spiritVisible: true,
+    });
+  }));
+  act(() => { void latest!.refreshCurrentMap(); });
+  await waitFor(() => expect(getMap).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+    latest!.setPlayerSpiritVisible(false);
+    useGameStore.getState().setTokens([tokenAt('visible', 1, 1)]);
+  });
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.playerSpiritVisible).toBe(false);
+
+  await act(async () => { releaseMap(); });
+
+  expect(latest!.playerSpiritVisible).toBe(false);
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('spirit-1');
+  expect(latest!.currentMap?.spiritLayerUrl).not.toBe('https://example/spirit-dm.png');
+});
+
+it('does not apply a DM catch-up getMap after the session role drops to PLAYER', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('visible', 1, 1)],
+        spiritLayerUrl: 'https://example/spirit-player.png',
+      },
+      spiritVisible: false,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  const onRoleChanged = socketOn.mock.calls
+    .filter(([event]) => event === 'campaign.role.changed')
+    .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
+  expect(onRoleChanged).toBeDefined();
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  let releaseMap: () => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
+    releaseMap = () => resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('visible', 1, 1), { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+        spiritVisible: true,
+      },
+      spiritVisible: true,
+    });
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getMap).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+    latest!.setPlayerSpiritVisible(false);
+    useGameStore.getState().setTokens([tokenAt('visible', 1, 1)]);
+  });
+  expect(latest!.userRole).toBe('PLAYER');
+
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    releaseMap();
+    catchUpResult = await catching;
+  });
+
+  expect(catchUpResult).toEqual({ discarded: true });
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.playerSpiritVisible).toBe(false);
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('spirit-1');
+  expect(latest!.currentMap?.spiritLayerUrl).not.toBe('https://example/spirit-dm.png');
+});
+
+it('does not restore DM from a stale roster GET after a live role drop', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  renderCampaign();
+  await waitFor(() => expect(latest?.userRole).toBe('DM'));
+
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  const onRoleChanged = socketOn.mock.calls
+    .filter(([event]) => event === 'campaign.role.changed')
+    .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
+  expect(onRoster).toBeDefined();
+  expect(onRoleChanged).toBeDefined();
+
+  let releaseRoster: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseRoster = resolve;
+  }));
+  await act(async () => { onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newcomer' }); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'SPECTATOR' });
+  });
+  expect(latest!.userRole).toBe('SPECTATOR');
+
+  await act(async () => {
+    releaseRoster({
+      ...campaignAs('ACTIVE', 'm1', 'DM'),
+      memberships: [{ userId: 'me', role: 'DM' }, { userId: 'newcomer', role: 'PLAYER' }],
+      characters: [{ id: 'char-new', userId: 'newcomer', name: 'Aldra' }],
+    });
+  });
+
+  expect(latest!.userRole).toBe('SPECTATOR');
+  expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-new']);
+});
+
+it('does not apply an older roster GET after a newer one', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.id).toBe('c1'));
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+
+  let releaseOlder: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseOlder = resolve;
+  }));
+  await act(async () => { onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'old' }); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    memberships: [{ userId: 'me', role: 'DM' }, { userId: 'newer', role: 'PLAYER' }],
+  });
+  await act(async () => { onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newer' }); });
+  await waitFor(() => expect(latest!.campaign?.memberships?.map((m) => m.userId)).toEqual(['me', 'newer']));
+
+  await act(async () => {
+    releaseOlder({
+      ...campaignAs('ACTIVE', 'm1', 'DM'),
+      memberships: [{ userId: 'me', role: 'DM' }, { userId: 'old', role: 'PLAYER' }],
+    });
+  });
+
+  expect(latest!.campaign?.memberships?.map((m) => m.userId)).toEqual(['me', 'newer']);
+});
+
+it('refreshCampaign does not restore memberships after a live role drop', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  renderCampaign();
+  await waitFor(() => expect(latest?.userRole).toBe('DM'));
+
+  const onRoleChanged = socketOn.mock.calls
+    .filter(([event]) => event === 'campaign.role.changed')
+    .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
+  expect(onRoleChanged).toBeDefined();
+
+  let releaseRefresh: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseRefresh = resolve;
+  }));
+  let refreshing: Promise<void> = Promise.resolve();
+  act(() => { refreshing = latest!.refreshCampaign(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'SPECTATOR' });
+  });
+  expect(latest!.userRole).toBe('SPECTATOR');
+
+  await act(async () => {
+    releaseRefresh({
+      ...campaignAs('ACTIVE', 'm1', 'DM'),
+      name: 'Renamed Keep',
+      memberships: [{ userId: 'me', role: 'DM' }],
+    });
+    await refreshing;
+  });
+
+  expect(latest!.userRole).toBe('SPECTATOR');
+  expect(latest!.campaign?.name).toBe('Renamed Keep');
+});
+
+it('does not abort in-flight catch-up when retryMapLoad starts', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockRejectedValueOnce(
+    Object.assign(new Error('down'), { response: { status: 500, data: { message: 'Map unavailable' } } }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.mapLoadError).toEqual({ mapId: 'm1', message: 'Map unavailable' }));
+
+  let releaseCatchUp: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCatchUp = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => { void latest!.retryMapLoad(); });
+
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    releaseCatchUp(campaignAs('PAUSED', 'm1', 'PLAYER'));
+    catchUpResult = await catching;
+  });
+
+  expect(latest!.campaign?.status).toBe('PAUSED');
+  expect(latest!.userRole).toBe('PLAYER');
+  // Retry map load is a newer map read, so the catch-up hydrate is discarded
+  // without speaking a fallback. Pause/role from GET still land.
+  expect(catchUpResult).toEqual({ discarded: true });
+});
+
+it('returns discarded from retryMapLoad when the live map id changed and leaves banners unchanged', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockRejectedValueOnce(
+    Object.assign(new Error('down'), { response: { status: 500, data: { message: 'Map unavailable' } } }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.mapLoadError).toEqual({ mapId: 'm1', message: 'Map unavailable' }));
+
+  getCampaign.mockRejectedValueOnce(
+    Object.assign(new Error('catch-up failed'), { response: { status: 503, data: { message: 'Table busy' } } }),
+  );
+  await act(async () => { await latest!.catchUpAfterReconnect(); });
+  expect(latest!.syncError).toBe('Table busy');
+
+  let releaseMap: () => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
+    releaseMap = () => resolve({ map: { id: mapId, tokens: [tokenAt('stale', 1, 2)] }, spiritVisible: false });
+  }));
+  let retryResult: TableRetryOutcome | undefined;
+  act(() => { void latest!.retryMapLoad().then((result) => { retryResult = result; }); });
+  await waitFor(() => expect(getMap).toHaveBeenCalled());
+
+  act(() => {
+    latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('live', 9, 9)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('live', 9, 9)]);
+  });
+  const mapLoadErrorAfterSwitch = latest!.mapLoadError;
+  const syncErrorAfterSwitch = latest!.syncError;
+
+  await act(async () => { releaseMap(); });
+  await waitFor(() => expect(retryResult).toEqual({ discarded: true }));
+
+  expect(latest!.mapLoadError).toEqual(mapLoadErrorAfterSwitch);
+  expect(latest!.syncError).toBe(syncErrorAfterSwitch);
+  expect(latest!.syncError).toBe('Table busy');
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['live']);
 });

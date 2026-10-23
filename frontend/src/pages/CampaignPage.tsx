@@ -523,7 +523,9 @@ function CampaignPageContent() {
               setRetryingSync(true);
               announceSyncRetry('Retrying sync', true);
               void Promise.resolve(catchUpAfterReconnect()).then((result) => {
-                announceSyncRetry(result.message);
+                if ('message' in result) {
+                  announceSyncRetry(result.message);
+                }
               }).finally(() => setRetryingSync(false));
             }}
             busyKeepFocus={retryingSync}
@@ -579,7 +581,9 @@ function CampaignPageContent() {
                         setRetryingMap(true);
                         announceMapRetry('Retrying map load', true);
                         void Promise.resolve(retryMapLoad()).then((result) => {
-                          announceMapRetry(result.message);
+                          if ('message' in result) {
+                            announceMapRetry(result.message);
+                          }
                         }).finally(() => setRetryingMap(false));
                       }}
                       busyKeepFocus={retryingMap}

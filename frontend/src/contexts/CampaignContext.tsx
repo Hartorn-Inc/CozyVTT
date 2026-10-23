@@ -30,13 +30,14 @@ import { withMemberRole } from '@/utils/campaignRoles';
 
 /**
  * Settled result of Retry map load / Retry sync. Success uses a fixed
- * phrase; failure returns the string just stored on the matching error
- * (or a stable fallback when the reply was discarded).
+ * phrase; failure returns the string just stored on the matching error.
+ * A discarded reply (stale generation, live map switch, overlapping map
+ * read, or session/role change) is distinct and must not be announced.
  */
-export interface TableRetryOutcome {
-  ok: boolean;
-  message: string;
-}
+export type TableRetryOutcome =
+  | { ok: true; message: string }
+  | { ok: false; message: string }
+  | { discarded: true };
 
 const MAP_LOADED_MESSAGE = 'Map loaded';
 const TABLE_SYNCED_MESSAGE = 'Table synced';
@@ -95,7 +96,8 @@ interface CampaignContextState {
    * Refetch the map named by `mapLoadError` without remounting the campaign.
    * Resolves `{ ok: true, message: 'Map loaded' }` when a hydrate is applied;
    * `{ ok: false, message }` on failure (the string just stored on
-   * `mapLoadError`) or a discarded reply (stable fallback, no new toast).
+   * `mapLoadError`); `{ discarded: true }` when the reply is stale (no new
+   * toast, no fallback phrase). Does not bump `loadGeneration`.
    */
   retryMapLoad: () => Promise<TableRetryOutcome>;
   /**
@@ -110,8 +112,8 @@ interface CampaignContextState {
    * state, members' roles, the map the table is on) and reload that map.
    * Resolves `{ ok: true, message: 'Table synced' }` when a hydrate is applied
    * or catch-up otherwise succeeds; `{ ok: false, message }` on failure (the
-   * string just stored on `syncError`) or a discarded reply (stable fallback,
-   * no new toast).
+   * string just stored on `syncError`); `{ discarded: true }` when the reply
+   * is stale (no new toast, no fallback phrase).
    */
   catchUpAfterReconnect: () => Promise<TableRetryOutcome>;
   /**
@@ -219,9 +221,21 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // Independent of mapEpoch. roster.updated GET, refreshCampaign, and
   // vibe/spirit do not bump this.
   const sessionEpoch = useRef(0);
+  // Overlapping map REST reads (load, refresh, retry, catch-up) and empty-map
+  // clears. Independent of loadGeneration (campaign switch / unmount) and
+  // mapEpoch (live id switches). A hydrate or clear applies only while this
+  // read's sequence is still the latest.
+  const mapReadSeq = useRef(0);
+  // Overlapping roster.updated GETs. An older memberships/characters body
+  // must not overwrite a newer one.
+  const rosterReadSeq = useRef(0);
   const bumpGeneration = () => {
     loadGeneration.current += 1;
     return loadGeneration.current;
+  };
+  const bumpMapReadSeq = () => {
+    mapReadSeq.current += 1;
+    return mapReadSeq.current;
   };
   const replyIsCurrent = (campaignId: string, generation: number) =>
     generation === loadGeneration.current && shownCampaignId.current === campaignId;
@@ -267,6 +281,16 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     return currentMapIdRef.current === fetchedMapId;
   };
 
+  const mapReadIsCurrent = (
+    seq: number,
+    sessionEpochWhenStarted: number,
+    fetchedMapId: string,
+    mapEpochWhenStarted: number,
+  ) =>
+    seq === mapReadSeq.current
+    && sessionEpoch.current === sessionEpochWhenStarted
+    && mayApplyFetchedMap(fetchedMapId, mapEpochWhenStarted);
+
   const applyHydratedMap = (map: Map, spiritVisible?: boolean) => {
     currentMapIdRef.current = map.id;
     setCurrentMapState(map);
@@ -305,7 +329,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // would overwrite socket updates that landed while the PUT was in flight.
   // Vibe and spirit stay on the socket; catch-up re-reads status,
   // memberships, and currentMapId (the id only with a live-map hydrate).
-  const applyCampaignDocument = useCallback((fresh: Campaign) => {
+  const applyCampaignDocument = useCallback((fresh: Campaign, keepMemberships = false) => {
     setCampaign((prev) => {
       if (!prev || prev.id !== fresh.id) return prev;
       return {
@@ -314,7 +338,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         description: fresh.description,
         chatCooldownEnabled: fresh.chatCooldownEnabled ?? prev.chatCooldownEnabled,
         chatCooldownSeconds: fresh.chatCooldownSeconds ?? prev.chatCooldownSeconds,
-        memberships: fresh.memberships ?? prev.memberships,
+        memberships: keepMemberships ? prev.memberships : (fresh.memberships ?? prev.memberships),
         characters: fresh.characters ?? prev.characters,
         maps: fresh.maps ?? prev.maps,
         ownerId: fresh.ownerId ?? prev.ownerId,
@@ -379,13 +403,16 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       // token JSON — we must NOT use those tokens directly.
       if (data.currentMapId) {
         const requestedMapId = data.currentMapId;
+        const seq = bumpMapReadSeq();
+        const sessionEpochWhenStarted = sessionEpoch.current;
         try {
           const { map, spiritVisible } = await api.getMap(data.id, requestedMapId);
           if (!replyIsCurrent(campaignId, generation) || map.id !== requestedMapId) return;
-          if (!mayApplyFetchedMap(map.id, mapEpochWhenStarted)) return;
+          if (!mapReadIsCurrent(seq, sessionEpochWhenStarted, map.id, mapEpochWhenStarted)) return;
           applyHydratedMap(map, spiritVisible);
         } catch (err) {
           if (!replyIsCurrent(campaignId, generation)) return;
+          if (seq !== mapReadSeq.current) return;
           // Catch-up or a live switch already put a map on the table: keep it.
           if (mapEpoch.current !== mapEpochWhenStarted) return;
           if (currentMapIdRef.current && currentMapIdRef.current !== requestedMapId) return;
@@ -396,6 +423,8 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
           });
         }
       } else if (mapEpoch.current === mapEpochWhenStarted) {
+        const seq = bumpMapReadSeq();
+        if (seq !== mapReadSeq.current) return;
         currentMapIdRef.current = null;
         setCurrentMapState(null);
       }
@@ -423,10 +452,11 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     const campaignId = campaign?.id ?? shownCampaignId.current;
     if (!campaignId) return;
     const generation = loadGeneration.current;
+    const sessionEpochWhenStarted = sessionEpoch.current;
     try {
       const fresh = document ?? await campaignService.getCampaign(campaignId);
       if (!replyIsCurrent(campaignId, generation) || fresh.id !== campaignId) return;
-      applyCampaignDocument(fresh);
+      applyCampaignDocument(fresh, sessionEpoch.current !== sessionEpochWhenStarted);
     } catch (err) {
       if (!replyIsCurrent(campaignId, generation)) return;
       console.error('[CampaignContext] Failed to refresh campaign:', err);
@@ -443,13 +473,17 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     if (!campaignId || !mapId) return;
     const generation = loadGeneration.current;
     const mapEpochWhenStarted = mapEpoch.current;
+    const seq = bumpMapReadSeq();
+    const sessionEpochWhenStarted = sessionEpoch.current;
     try {
       const { map, spiritVisible } = await api.getMap(campaignId, mapId);
       if (!replyIsCurrent(campaignId, generation)) return;
-      if (map.id !== mapId || !mayApplyFetchedMap(map.id, mapEpochWhenStarted)) return;
+      if (map.id !== mapId) return;
+      if (!mapReadIsCurrent(seq, sessionEpochWhenStarted, map.id, mapEpochWhenStarted)) return;
       applyHydratedMap(map, spiritVisible);
     } catch (err) {
       if (!replyIsCurrent(campaignId, generation)) return;
+      if (seq !== mapReadSeq.current) return;
       console.error('[CampaignContext] Failed to refresh current map after reconnect:', err);
       // Keep the last frame. Never treat a failed refresh as a successful empty table.
       setSyncError(apiErrorMessage(err) || MAP_REFRESH_FALLBACK);
@@ -460,21 +494,32 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     const campaignId = campaign?.id ?? shownCampaignId.current;
     const mapId = mapLoadError?.mapId ?? campaign?.currentMapId;
     if (!campaignId || !mapId) return { ok: false, message: MAP_LOAD_FALLBACK };
-    const generation = bumpGeneration();
+    const generation = loadGeneration.current;
     const mapEpochWhenStarted = mapEpoch.current;
+    const seq = bumpMapReadSeq();
+    const sessionEpochWhenStarted = sessionEpoch.current;
     try {
       const { map, spiritVisible } = await api.getMap(campaignId, mapId);
       if (!replyIsCurrent(campaignId, generation) || map.id !== mapId) {
-        return { ok: false, message: MAP_LOAD_FALLBACK };
+        return { discarded: true };
       }
-      if (!mayApplyFetchedMap(map.id, mapEpochWhenStarted)) {
-        return { ok: false, message: MAP_LOAD_FALLBACK };
+      if (!mapReadIsCurrent(seq, sessionEpochWhenStarted, map.id, mapEpochWhenStarted)) {
+        return { discarded: true };
       }
       applyHydratedMap(map, spiritVisible);
       return { ok: true, message: MAP_LOADED_MESSAGE };
     } catch (err) {
       if (!replyIsCurrent(campaignId, generation)) {
-        return { ok: false, message: MAP_LOAD_FALLBACK };
+        return { discarded: true };
+      }
+      if (seq !== mapReadSeq.current) {
+        return { discarded: true };
+      }
+      if (sessionEpoch.current !== sessionEpochWhenStarted) {
+        return { discarded: true };
+      }
+      if (!mayApplyFetchedMap(mapId, mapEpochWhenStarted)) {
+        return { discarded: true };
       }
       const message = apiErrorMessage(err) || MAP_LOAD_FALLBACK;
       setMapLoadError({
@@ -499,11 +544,15 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     const stillShown = () => replyIsCurrent(campaignId, generation);
     const mapEpochWhenStarted = mapEpoch.current;
     const sessionEpochWhenStarted = sessionEpoch.current;
+    // One sequence with refresh/retry/initial getMap. Bump when catch-up
+    // starts so a later overlapping catch-up or map read cannot be overwritten
+    // by this one's hydrate or empty-map clear.
+    const seq = bumpMapReadSeq();
     let mapId: string | null;
     try {
       const fresh = await campaignService.getCampaign(campaignId);
       if (!stillShown() || fresh.id !== campaignId) {
-        return { ok: false, message: CATCH_UP_FALLBACK };
+        return { discarded: true };
       }
       // Pause/role still land even if getMap later fails, but only when no
       // live session/role update arrived while GET was in flight. Do not write
@@ -519,7 +568,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       }
       mapId = fresh.currentMapId ?? null;
     } catch (err) {
-      if (!stillShown()) return { ok: false, message: CATCH_UP_FALLBACK };
+      if (!stillShown()) return { discarded: true };
       console.error('[CampaignContext] Failed to refresh the campaign after reconnect:', err);
       if (leaveOnCampaignAccessError(err)) {
         const status = apiErrorStatus(err);
@@ -535,7 +584,8 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       return { ok: false, message };
     }
     if (!mapId) {
-      if (!stillShown()) return { ok: false, message: CATCH_UP_FALLBACK };
+      if (!stillShown()) return { discarded: true };
+      if (seq !== mapReadSeq.current) return { discarded: true };
       if (mapEpoch.current === mapEpochWhenStarted) {
         currentMapIdRef.current = null;
         setCurrentMapState(null);
@@ -547,18 +597,20 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       }
       // Live table already switched maps while GET was in flight (including
       // A→B→A): do not rewind or clear.
-      return { ok: false, message: CATCH_UP_FALLBACK };
+      return { discarded: true };
     }
     if (!mayApplyFetchedMap(mapId, mapEpochWhenStarted)) {
-      return { ok: false, message: CATCH_UP_FALLBACK };
+      return { discarded: true };
     }
+    if (seq !== mapReadSeq.current) return { discarded: true };
+    const sessionEpochWhenMapStarted = sessionEpoch.current;
     try {
       const { map, spiritVisible } = await api.getMap(campaignId, mapId);
       if (!stillShown() || map.id !== mapId) {
-        return { ok: false, message: CATCH_UP_FALLBACK };
+        return { discarded: true };
       }
-      if (!mayApplyFetchedMap(map.id, mapEpochWhenStarted)) {
-        return { ok: false, message: CATCH_UP_FALLBACK };
+      if (!mapReadIsCurrent(seq, sessionEpochWhenMapStarted, map.id, mapEpochWhenStarted)) {
+        return { discarded: true };
       }
       applyHydratedMap(map, spiritVisible);
       setCampaign((prev) =>
@@ -566,7 +618,10 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       );
       return { ok: true, message: TABLE_SYNCED_MESSAGE };
     } catch (err) {
-      if (!stillShown()) return { ok: false, message: CATCH_UP_FALLBACK };
+      if (!stillShown()) return { discarded: true };
+      if (seq !== mapReadSeq.current) return { discarded: true };
+      if (sessionEpoch.current !== sessionEpochWhenMapStarted) return { discarded: true };
+      if (!mayApplyFetchedMap(mapId, mapEpochWhenStarted)) return { discarded: true };
       console.error('[CampaignContext] Failed to refresh the current map after reconnect:', err);
       const message = apiErrorMessage(err) || MAP_REFRESH_FALLBACK;
       setSyncError(message);
@@ -749,13 +804,21 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       const campaignId = data?.campaignId;
       if (!campaignId) return;
       const generation = loadGeneration.current;
+      const sessionEpochWhenStarted = sessionEpoch.current;
+      const seq = ++rosterReadSeq.current;
       campaignService
         .getCampaign(campaignId)
         .then((fresh) => {
           if (generation !== loadGeneration.current) return;
           if (shownCampaignId.current !== fresh.id) return;
+          if (seq !== rosterReadSeq.current) return;
+          const keepMemberships = sessionEpoch.current !== sessionEpochWhenStarted;
           setCampaign((prev) => (prev && prev.id === fresh.id
-            ? { ...prev, memberships: fresh.memberships, characters: fresh.characters ?? prev.characters }
+            ? {
+                ...prev,
+                memberships: keepMemberships ? prev.memberships : fresh.memberships,
+                characters: fresh.characters ?? prev.characters,
+              }
             : prev));
         })
         .catch((err: unknown) => console.error('[CampaignContext] Failed to refresh members:', err));
