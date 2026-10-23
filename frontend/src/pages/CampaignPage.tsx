@@ -6,7 +6,7 @@
 // Right: Chat, dice roller, controls
 // ============================================
 
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { isCampaignOwner } from '@/utils/campaignRoles';
 import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate, useParams } from 'react-router';
@@ -87,6 +87,40 @@ function CampaignPageContent() {
   const { user } = useAuth();
   const [retryingMap, setRetryingMap] = useState(false);
   const [retryingSync, setRetryingSync] = useState(false);
+  const [tableStatusAnnouncement, setTableStatusAnnouncement] = useState('');
+  const campaignErrorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const announceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showBlockingCampaignError = Boolean(error && (!campaign || !errorRetryable));
+
+  useEffect(() => {
+    if (showBlockingCampaignError && errorRetryable === false) {
+      campaignErrorHeadingRef.current?.focus();
+    }
+  }, [showBlockingCampaignError, errorRetryable, error]);
+
+  useEffect(() => {
+    return () => {
+      if (announceTimerRef.current !== null) {
+        clearTimeout(announceTimerRef.current);
+      }
+    };
+  }, []);
+
+  const announceTableStatus = (message: string, immediate = false) => {
+    if (announceTimerRef.current !== null) {
+      clearTimeout(announceTimerRef.current);
+      announceTimerRef.current = null;
+    }
+    if (immediate) {
+      setTableStatusAnnouncement(message);
+      return;
+    }
+    setTableStatusAnnouncement('');
+    announceTimerRef.current = setTimeout(() => {
+      setTableStatusAnnouncement(message);
+      announceTimerRef.current = null;
+    }, 0);
+  };
 
   /**
    * Owning a campaign and running it are different things once the DM seat can
@@ -252,13 +286,23 @@ function CampaignPageContent() {
   }
 
   // Error state — campaign GET failed, or catch-up learned we may no longer
-  // read this campaign (403/404). Retryable failures keep Retry; 403/404 leave.
+  // read this campaign (403/404). Retryable failures keep Retry; 403/404 stay
+  // on this error until Back to Dashboard is activated.
   if (error && (!campaign || !errorRetryable)) {
     const campaignErrorId = 'campaign-load-error';
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-soft-cream via-parchment to-warm-amber/20">
         <div className="card-cozy max-w-md text-center space-y-4">
-          <p id={campaignErrorId} role="alert" className="text-danger-ink font-medium">{error}</p>
+          <div role="alert">
+            <h1
+              ref={campaignErrorHeadingRef}
+              id={campaignErrorId}
+              tabIndex={-1}
+              className="text-danger-ink font-medium focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+            >
+              {error}
+            </h1>
+          </div>
           <div className="flex flex-col sm:flex-row gap-3 justify-center">
             {errorRetryable && (
               <Button
@@ -298,6 +342,9 @@ function CampaignPageContent() {
 
   return (
     <div className="h-screen flex flex-col bg-gradient-to-br from-soft-cream via-parchment to-warm-amber/20">
+      <div id="campaign-table-status" className="sr-only" aria-live="polite" aria-atomic="true">
+        {tableStatusAnnouncement}
+      </div>
       {/* Header Bar */}
       <header className="flex items-center justify-between px-4 py-3 bg-moss-green/10 border-b border-moss-green/20 shadow-sm">
         <div className="flex items-center gap-3">
@@ -451,13 +498,17 @@ function CampaignPageContent() {
           <Button
             size="sm"
             onClick={() => {
+              if (retryingSync) return;
               setRetryingSync(true);
-              void Promise.resolve(catchUpAfterReconnect()).finally(() => setRetryingSync(false));
+              announceTableStatus('Retrying sync', true);
+              void Promise.resolve(catchUpAfterReconnect()).then((ok) => {
+                announceTableStatus(ok ? 'Table synced' : (syncError || 'Failed to catch up after reconnect'));
+              }).finally(() => setRetryingSync(false));
             }}
-            loading={retryingSync}
+            busyKeepFocus={retryingSync}
             aria-describedby="campaign-sync-error"
           >
-            Retry
+            Retry sync
           </Button>
         </div>
       )}
@@ -503,13 +554,17 @@ function CampaignPageContent() {
                     </p>
                     <Button
                       onClick={() => {
+                        if (retryingMap) return;
                         setRetryingMap(true);
-                        void Promise.resolve(retryMapLoad()).finally(() => setRetryingMap(false));
+                        announceTableStatus('Retrying map load', true);
+                        void Promise.resolve(retryMapLoad()).then((ok) => {
+                          announceTableStatus(ok ? 'Map loaded' : (mapLoadError?.message || 'Failed to load map'));
+                        }).finally(() => setRetryingMap(false));
                       }}
-                      loading={retryingMap}
+                      busyKeepFocus={retryingMap}
                       aria-describedby="map-load-error"
                     >
-                      Retry
+                      Retry map load
                     </Button>
                   </div>
                 </div>

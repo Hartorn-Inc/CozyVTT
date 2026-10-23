@@ -13,7 +13,7 @@ import {
   useRef,
   ReactNode,
 } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams } from 'react-router';
 import campaignService from '@/services/campaign.service';
 import api from '@/services/api';
 import { useAuth } from '@/contexts/AuthContext';
@@ -46,7 +46,8 @@ interface CampaignContextState {
   error: string | null;
   /**
    * Campaign-row GET failed with something other than 403/404. Retry reloads
-   * the campaign; 403/404 leave for the dashboard and are not retryable.
+   * the campaign; 403/404 stay on the error until Back to Dashboard and are
+   * not retryable.
    */
   errorRetryable: boolean;
   /**
@@ -64,14 +65,21 @@ interface CampaignContextState {
   // Actions
   loadCampaign: (id: string) => Promise<void>;
   /**
-   * Patch the campaign REST document in Context (name, description, chat
-   * settings, memberships). Does not set `loading` or rewrite tokens.
-   * Given a document (the body a settings PUT already returned), apply it;
-   * otherwise GET the row and apply that.
+   * Patch roster/settings fields on the campaign REST document in Context
+   * (name, description, chat settings, memberships, characters, maps,
+   * owner, game system). Does not copy live table fields: status,
+   * currentMapId, vibe, and spirit stay on the socket. Catch-up re-reads
+   * status, memberships, and currentMapId (the id only with a live-map
+   * hydrate). Does not set `loading` or rewrite tokens. Given a document
+   * (the body a settings PUT already returned), apply it; otherwise GET
+   * the row and apply that.
    */
   refreshCampaign: (document?: Campaign) => Promise<void>;
-  /** Refetch the map named by `mapLoadError` without remounting the campaign. */
-  retryMapLoad: () => Promise<void>;
+  /**
+   * Refetch the map named by `mapLoadError` without remounting the campaign.
+   * Resolves true when a hydrate is applied; false on failure or a discarded reply.
+   */
+  retryMapLoad: () => Promise<boolean>;
   /**
    * Re-fetch ONLY the current map (tokens, walls, lights, fog) without
    * reloading the whole campaign envelope. Used after a WebSocket reconnect
@@ -82,8 +90,10 @@ interface CampaignContextState {
   /**
    * After a reconnect: re-read what arrives only as events (the session's
    * state, members' roles, the map the table is on) and reload that map.
+   * Resolves true when a hydrate is applied or catch-up otherwise succeeds;
+   * false on failure or a discarded reply.
    */
-  catchUpAfterReconnect: () => Promise<void>;
+  catchUpAfterReconnect: () => Promise<boolean>;
   /**
    * Switch to a map, or clear it. Given a function, changes the map already
    * showing from its latest value, as a listener registered once must: a
@@ -168,7 +178,6 @@ interface VibeSettingsBlob {
 
 export function CampaignProvider({ children }: CampaignProviderProps) {
   const { id } = useParams<{ id: string }>();
-  const navigate = useNavigate();
   const { user } = useAuth();
 
   const [campaign, setCampaign] = useState<Campaign | null>(null);
@@ -242,18 +251,21 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     if (status === 403) {
       setError('You do not have permission to view this campaign');
       setErrorRetryable(false);
-      setTimeout(() => navigate('/dashboard'), 2000);
       return true;
     }
     if (status === 404) {
       setError('Campaign not found');
       setErrorRetryable(false);
-      setTimeout(() => navigate('/dashboard'), 2000);
       return true;
     }
     return false;
-  }, [navigate]);
+  }, []);
 
+  // Roster/settings fields only. A settings PUT is a Prisma row, not a live
+  // table document: copying status, currentMapId, vibe, or spirit from it
+  // would overwrite socket updates that landed while the PUT was in flight.
+  // Vibe and spirit stay on the socket; catch-up re-reads status,
+  // memberships, and currentMapId (the id only with a live-map hydrate).
   const applyCampaignDocument = useCallback((fresh: Campaign) => {
     setCampaign((prev) => {
       if (!prev || prev.id !== fresh.id) return prev;
@@ -265,13 +277,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         chatCooldownSeconds: fresh.chatCooldownSeconds ?? prev.chatCooldownSeconds,
         memberships: fresh.memberships ?? prev.memberships,
         characters: fresh.characters ?? prev.characters,
-        status: fresh.status ?? prev.status,
-        currentMapId: fresh.currentMapId ?? prev.currentMapId,
         maps: fresh.maps ?? prev.maps,
-        vibeSettings: fresh.vibeSettings ?? prev.vibeSettings,
-        currentVibe: fresh.currentVibe ?? prev.currentVibe,
-        spiritLayerEnabled: fresh.spiritLayerEnabled ?? prev.spiritLayerEnabled,
-        spiritLayerStyle: fresh.spiritLayerStyle ?? prev.spiritLayerStyle,
         ownerId: fresh.ownerId ?? prev.ownerId,
         gameSystem: fresh.gameSystem ?? prev.gameSystem,
       };
@@ -366,9 +372,10 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     }
   }, [leaveOnCampaignAccessError]);
 
-  // Patch the campaign REST document without the page's loading state and
-  // without rewriting live tokens. A settings PUT already returns the row;
-  // member remove and DM transfer GET it again.
+  // Patch roster/settings fields without the page's loading state and
+  // without rewriting live tokens or live table fields (status, map, vibe,
+  // spirit). A settings PUT already returns the row; member remove and DM
+  // transfer GET it again.
   const refreshCampaign = useCallback(async (document?: Campaign) => {
     const campaignId = campaign?.id ?? shownCampaignId.current;
     if (!campaignId) return;
@@ -406,23 +413,25 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     }
   }, [campaign?.id, currentMap?.id]);
 
-  const retryMapLoad = useCallback(async () => {
+  const retryMapLoad = useCallback(async (): Promise<boolean> => {
     const campaignId = campaign?.id ?? shownCampaignId.current;
     const mapId = mapLoadError?.mapId ?? campaign?.currentMapId;
-    if (!campaignId || !mapId) return;
+    if (!campaignId || !mapId) return false;
     const generation = bumpGeneration();
     const mapWhenStarted = currentMapIdRef.current;
     try {
       const { map, spiritVisible } = await api.getMap(campaignId, mapId);
-      if (!replyIsCurrent(campaignId, generation) || map.id !== mapId) return;
-      if (!liveMapDidNotMoveOn(map.id, mapWhenStarted)) return;
+      if (!replyIsCurrent(campaignId, generation) || map.id !== mapId) return false;
+      if (!liveMapDidNotMoveOn(map.id, mapWhenStarted)) return false;
       applyHydratedMap(map, spiritVisible);
+      return true;
     } catch (err) {
-      if (!replyIsCurrent(campaignId, generation)) return;
+      if (!replyIsCurrent(campaignId, generation)) return false;
       setMapLoadError({
         mapId,
         message: apiErrorMessage(err) || 'Failed to load map',
       });
+      return false;
     }
   }, [campaign?.id, campaign?.currentMapId, mapLoadError?.mapId]);
 
@@ -430,9 +439,9 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // end, a member's role, a switch to another map. Re-read them without the
   // full reload's loading screen, then load the map the table is on now,
   // which may not be the one this page had (a player may no longer read it).
-  const catchUpAfterReconnect = useCallback(async () => {
+  const catchUpAfterReconnect = useCallback(async (): Promise<boolean> => {
     const campaignId = campaign?.id;
-    if (!campaignId) return;
+    if (!campaignId) return false;
     const generation = loadGeneration.current;
     // Each answer is applied only while the page still shows this campaign
     // at this load generation: one arriving after a switch or unmount would
@@ -442,37 +451,52 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     let mapId: string | null;
     try {
       const fresh = await campaignService.getCampaign(campaignId);
-      if (!stillShown() || fresh.id !== campaignId) return;
+      if (!stillShown() || fresh.id !== campaignId) return false;
+      // Pause/role still land even if getMap later fails. Do not write
+      // currentMapId until a hydrate passes liveMapDidNotMoveOn — a GET
+      // that started on map A must not rewind the table after a live switch.
       setCampaign((prev) =>
         prev && prev.id === fresh.id
-          ? { ...prev, status: fresh.status, memberships: fresh.memberships, currentMapId: fresh.currentMapId }
+          ? { ...prev, status: fresh.status, memberships: fresh.memberships }
           : prev
       );
       setActiveSession(fresh.activeSession ?? null);
       mapId = fresh.currentMapId ?? null;
     } catch (err) {
-      if (!stillShown()) return;
+      if (!stillShown()) return false;
       console.error('[CampaignContext] Failed to refresh the campaign after reconnect:', err);
-      if (leaveOnCampaignAccessError(err)) return;
+      if (leaveOnCampaignAccessError(err)) return false;
       setSyncError(apiErrorMessage(err) || 'Failed to catch up after reconnect');
-      return;
+      return false;
     }
     if (!mapId) {
-      if (stillShown()) {
+      if (!stillShown()) return false;
+      if (currentMapIdRef.current === mapWhenStarted) {
+        setCurrentMapState(null);
+        useGameStore.getState().setTokens([]);
+        setCampaign((prev) => (prev ? { ...prev, currentMapId: null } : prev));
         setSyncError(null);
         setMapLoadError(null);
+        return true;
       }
-      return;
+      // Live table already switched maps while GET was in flight: do not rewind.
+      return false;
     }
+    if (!liveMapDidNotMoveOn(mapId, mapWhenStarted)) return false;
     try {
       const { map, spiritVisible } = await api.getMap(campaignId, mapId);
-      if (!stillShown() || map.id !== mapId) return;
-      if (!liveMapDidNotMoveOn(map.id, mapWhenStarted)) return;
+      if (!stillShown() || map.id !== mapId) return false;
+      if (!liveMapDidNotMoveOn(map.id, mapWhenStarted)) return false;
       applyHydratedMap(map, spiritVisible);
+      setCampaign((prev) =>
+        prev && prev.currentMapId !== map.id ? { ...prev, currentMapId: map.id } : prev,
+      );
+      return true;
     } catch (err) {
-      if (!stillShown()) return;
+      if (!stillShown()) return false;
       console.error('[CampaignContext] Failed to refresh the current map after reconnect:', err);
       setSyncError(apiErrorMessage(err) || 'Failed to refresh the current map');
+      return false;
     }
   }, [campaign?.id, leaveOnCampaignAccessError]);
 

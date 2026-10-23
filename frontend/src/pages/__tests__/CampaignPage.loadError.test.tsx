@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 
 const anySocket = vi.hoisted(() => new Proxy({}, { get: () => () => undefined }));
 const loadCampaign = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
@@ -134,7 +134,13 @@ describe('CampaignPage load and recovery', () => {
     ctx.errorRetryable = false;
     render(<CampaignPage />);
 
+    const heading = screen.getByRole('heading', {
+      level: 1,
+      name: 'You do not have permission to view this campaign',
+    });
     expect(screen.getByRole('alert')).toHaveTextContent('You do not have permission to view this campaign');
+    expect(heading).toHaveAttribute('tabIndex', '-1');
+    expect(document.activeElement).toBe(heading);
     expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
     expect(screen.getByRole('button', { name: /Back to Dashboard/ })).toBeTruthy();
   });
@@ -166,7 +172,7 @@ describe('CampaignPage load and recovery', () => {
 
     expect(screen.getByRole('heading', { name: 'The Keep' })).toBeTruthy();
     expect(screen.getByRole('alert')).toHaveTextContent('Map unavailable');
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry map load' }));
     expect(retryMapLoad).toHaveBeenCalledTimes(1);
     expect(loadCampaign).not.toHaveBeenCalled();
   });
@@ -179,7 +185,74 @@ describe('CampaignPage load and recovery', () => {
 
     expect(screen.getByRole('heading', { name: 'The Keep' })).toBeTruthy();
     expect(screen.getByRole('alert')).toHaveTextContent('Failed to refresh the current map');
-    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
     expect(catchUpAfterReconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows distinct Retry names when both map and sync errors are set', () => {
+    ctx.campaign = loadedCampaign;
+    ctx.currentMap = { id: 'map-1', name: 'Map', tokens: [] };
+    ctx.mapLoadError = { mapId: 'map-1', message: 'Map unavailable' };
+    ctx.syncError = 'Failed to refresh the current map';
+    render(<CampaignPage />);
+
+    expect(screen.getByRole('button', { name: 'Retry map load' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Retry sync' })).toBeTruthy();
+  });
+
+  it('keeps Retry map load focusable while the request is in flight', async () => {
+    let release: (value: boolean) => void = () => {};
+    retryMapLoad.mockImplementation(
+      () => new Promise<boolean>((resolve) => { release = resolve; }),
+    );
+    ctx.campaign = loadedCampaign;
+    ctx.mapLoadError = { mapId: 'map-1', message: 'Map unavailable' };
+    render(<CampaignPage />);
+
+    const retry = screen.getByRole('button', { name: 'Retry map load' });
+    fireEvent.click(retry);
+    expect(retry).not.toBeDisabled();
+    expect(retry).toHaveAttribute('aria-busy', 'true');
+    expect(retry).toHaveAttribute('aria-disabled', 'true');
+    expect(retry).toBeTruthy();
+    await waitFor(() => {
+      expect(document.getElementById('campaign-table-status')).toHaveTextContent('Retrying map load');
+    });
+
+    await act(async () => { release(false); });
+  });
+
+  it('announces a successful map retry in the live region', async () => {
+    let release: (value: boolean) => void = () => {};
+    retryMapLoad.mockImplementation(
+      () => new Promise<boolean>((resolve) => { release = resolve; }),
+    );
+    ctx.campaign = loadedCampaign;
+    ctx.mapLoadError = { mapId: 'map-1', message: 'Map unavailable' };
+    render(<CampaignPage />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry map load' }));
+    await act(async () => { release(true); });
+    await waitFor(() => {
+      expect(document.getElementById('campaign-table-status')).toHaveTextContent('Map loaded');
+    });
+  });
+
+  it('announces a repeated map-load failure even when the error text is unchanged', async () => {
+    retryMapLoad.mockResolvedValue(false);
+    ctx.campaign = loadedCampaign;
+    ctx.mapLoadError = { mapId: 'map-1', message: 'Map unavailable' };
+    render(<CampaignPage />);
+
+    const retry = screen.getByRole('button', { name: 'Retry map load' });
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(document.getElementById('campaign-table-status')).toHaveTextContent('Map unavailable');
+    });
+    fireEvent.click(retry);
+    await waitFor(() => {
+      expect(document.getElementById('campaign-table-status')).toHaveTextContent('Map unavailable');
+    });
+    expect(retryMapLoad).toHaveBeenCalledTimes(2);
   });
 });

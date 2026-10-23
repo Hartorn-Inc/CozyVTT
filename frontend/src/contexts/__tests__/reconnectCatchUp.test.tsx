@@ -30,7 +30,7 @@ vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'me' } 
 
 import { CampaignProvider, useCampaign } from '../CampaignContext';
 import { useGameStore } from '@/stores/gameStore';
-import type { Campaign, Map as CampaignMap, Token } from '@/types';
+import { CampaignStatus, type Campaign, type Map as CampaignMap, type Token } from '@/types';
 
 const campaignAs = (status: string, currentMapId: string, role: string) => ({
   id: 'c1', name: 'Test', status, currentMapId, maps: [], memberships: [{ userId: 'me', role }],
@@ -69,6 +69,7 @@ it('picks up the session state, the role and the map the table is now on', async
   expect(latest!.campaign?.status).toBe('PAUSED');
   expect(latest!.userRole).toBe('SPECTATOR');
   expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
   expect(getMap).toHaveBeenLastCalledWith('c1', 'm2');
 });
 
@@ -191,7 +192,7 @@ it('writes nothing once the page has moved to another campaign', async () => {
   getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
     releaseMap = () => resolve({ map: { id: mapId, tokens: [] }, spiritVisible: false });
   }));
-  let catching: Promise<void> = Promise.resolve();
+  let catching: Promise<boolean> = Promise.resolve(false);
   act(() => { catching = latest!.catchUpAfterReconnect(); });
   await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm1'));
 
@@ -224,7 +225,7 @@ it('writes nothing once the page has closed', async () => {
   getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
     releaseMap = () => resolve({ map: { id: mapId, tokens: [{ id: 'from-c1' }] }, spiritVisible: false });
   }));
-  let catching: Promise<void> = Promise.resolve();
+  let catching: Promise<boolean> = Promise.resolve(false);
   act(() => { catching = latest!.catchUpAfterReconnect(); });
   await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm1'));
 
@@ -413,7 +414,7 @@ it('clears a first-map error when catch-up hydrates the map', async () => {
   expect(useGameStore.getState().tokens['t1']?.position).toEqual({ x: 1, y: 1 });
 });
 
-it('leaves on a 403 during catch-up without emptying tokens', async () => {
+it('sets a non-retryable 403 during catch-up without emptying tokens or navigating away', async () => {
   getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
   getMap.mockImplementationOnce((_c: string, mapId: string) =>
     Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 3, 4)] }, spiritVisible: false }),
@@ -428,5 +429,166 @@ it('leaves on a 403 during catch-up without emptying tokens', async () => {
 
   expect(latest!.error).toBe('You do not have permission to view this campaign');
   expect(latest!.errorRetryable).toBe(false);
+  expect(latest!.campaign?.id).toBe('c1');
   expect(Object.keys(useGameStore.getState().tokens)).toEqual(['t1']);
+
+  vi.useFakeTimers();
+  try {
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); });
+    expect(latest!.error).toBe('You do not have permission to view this campaign');
+    expect(latest!.errorRetryable).toBe(false);
+    expect(latest!.campaign?.id).toBe('c1');
+    expect(latest!.currentMap?.id).toBe('m1');
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('does not rewind currentMapId when catch-up GET is stale after a live map switch', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  let catching: Promise<boolean> = Promise.resolve(false);
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('live', 9, 9)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('live', 9, 9)]);
+  });
+
+  await act(async () => {
+    releaseCampaign(campaignAs('ACTIVE', 'm3', 'PLAYER'));
+    await catching;
+  });
+
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['live']);
+  expect(useGameStore.getState().tokens['live']?.position).toEqual({ x: 9, y: 9 });
+  expect(getMap.mock.calls.some(([, mapId]) => mapId === 'm3')).toBe(false);
+});
+
+it('discards a late catch-up getMap after the table has already switched maps', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm3', 'PLAYER'));
+  let releaseMap: () => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
+    releaseMap = () => resolve({ map: { id: mapId, tokens: [tokenAt('stale', 1, 2)] }, spiritVisible: false });
+  }));
+  let catching: Promise<boolean> = Promise.resolve(false);
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm3'));
+
+  act(() => {
+    latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('live', 9, 9)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('live', 9, 9)]);
+  });
+  await act(async () => { releaseMap(); await catching; });
+
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['live']);
+});
+
+it('clears the mounted map when catch-up GET has no current map and the live map did not move on', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  getCampaign.mockResolvedValueOnce({ ...campaignAs('ACTIVE', 'm1', 'PLAYER'), currentMapId: null });
+  await act(async () => { await latest!.catchUpAfterReconnect(); });
+
+  expect(latest!.currentMap).toBeNull();
+  expect(latest!.campaign?.currentMapId).toBeNull();
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual([]);
+  expect(latest!.syncError).toBeNull();
+  expect(latest!.mapLoadError).toBeNull();
+});
+
+it('does not clear the live map when catch-up GET has no current map after a live switch', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseCampaign: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCampaign = resolve;
+  }));
+  let catching: Promise<boolean> = Promise.resolve(false);
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  act(() => {
+    latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('live', 9, 9)] } as unknown as CampaignMap);
+    useGameStore.getState().setTokens([tokenAt('live', 9, 9)]);
+  });
+  await act(async () => {
+    releaseCampaign({ ...campaignAs('ACTIVE', 'm1', 'PLAYER'), currentMapId: null });
+    await catching;
+  });
+
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['live']);
+});
+
+it('refreshCampaign settings PUT does not overwrite live map, status, or spirit', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    spiritLayerEnabled: false,
+  });
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('t1', 4, 5)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  act(() => {
+    latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('t1', 4, 5)] } as unknown as CampaignMap);
+    latest!.updateCampaignSpiritLayer(true);
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+    latest!.updateVibe('night', '#112233', 'brightness(0.6)');
+  });
+
+  await act(async () => {
+    await latest!.refreshCampaign({
+      ...campaignAs('INACTIVE', 'm1', 'PLAYER'),
+      name: 'Settings Name',
+      description: 'Settings blurb',
+      chatCooldownEnabled: true,
+      chatCooldownSeconds: 8,
+      spiritLayerEnabled: false,
+    } as unknown as Campaign);
+  });
+
+  expect(latest!.campaign?.name).toBe('Settings Name');
+  expect(latest!.campaign?.description).toBe('Settings blurb');
+  expect(latest!.campaign?.chatCooldownEnabled).toBe(true);
+  expect(latest!.campaign?.chatCooldownSeconds).toBe(8);
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(latest!.campaign?.spiritLayerEnabled).toBe(true);
+  expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
+  expect(latest!.campaign?.currentVibe).toBe('night');
+  expect(useGameStore.getState().tokens['t1']?.position).toEqual({ x: 4, y: 5 });
 });
