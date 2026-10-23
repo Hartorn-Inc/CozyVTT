@@ -570,6 +570,7 @@ it('refreshCampaign settings PUT does not overwrite live map, status, or spirit'
     latest!.setCurrentMap({ id: 'm2', tokens: [tokenAt('t1', 4, 5)] } as unknown as CampaignMap);
     latest!.updateCampaignSpiritLayer(true);
     latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+    latest!.setActiveSession({ id: 'live-sess', sessionNumber: 4, startedAt: '2026-01-01T00:00:00.000Z' });
     latest!.updateVibe('night', '#112233', 'brightness(0.6)');
   });
 
@@ -581,6 +582,7 @@ it('refreshCampaign settings PUT does not overwrite live map, status, or spirit'
       chatCooldownEnabled: true,
       chatCooldownSeconds: 8,
       spiritLayerEnabled: false,
+      activeSession: { id: 'put-sess', sessionNumber: 9, startedAt: '2026-02-01T00:00:00.000Z' },
     } as unknown as Campaign);
   });
 
@@ -591,6 +593,7 @@ it('refreshCampaign settings PUT does not overwrite live map, status, or spirit'
   expect(latest!.campaign?.currentMapId).toBe('m2');
   expect(latest!.campaign?.spiritLayerEnabled).toBe(true);
   expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
+  expect(latest!.activeSession?.id).toBe('live-sess');
   expect(latest!.campaign?.currentVibe).toBe('night');
   expect(useGameStore.getState().tokens['t1']?.position).toEqual({ x: 4, y: 5 });
 });
@@ -1393,4 +1396,214 @@ it('does not apply a DM load body after demotion while the campaign row is still
   expect(latest!.campaign?.maps ?? []).toEqual([]);
   expect(getMap).not.toHaveBeenCalled();
   expect(latest!.currentMap).toBeNull();
+});
+
+const loadMaps = [{ id: 'keep-map', name: 'The Keep' }];
+const loadMemberships = [{ userId: 'me', role: 'DM' }, { userId: 'other', role: 'PLAYER' }];
+const getSession = { id: 'sess-get', sessionNumber: 3, startedAt: '2026-01-01T00:00:00.000Z' };
+
+it('keeps GET maps and memberships when a live pause arrives during first load', async () => {
+  let releaseLoad: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseLoad = resolve;
+  }));
+  renderCampaign();
+  await waitFor(() => expect(getCampaign).toHaveBeenCalled());
+  await waitFor(() => expect(latest).not.toBeNull());
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.PAUSED);
+  });
+
+  await act(async () => {
+    releaseLoad({
+      ...campaignAs('ACTIVE', 'm1', 'DM'),
+      maps: loadMaps,
+      memberships: loadMemberships,
+      activeSession: getSession,
+    });
+  });
+
+  await waitFor(() => expect(latest!.campaign?.id).toBe('c1'));
+  expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
+  expect(latest!.campaign?.maps).toEqual(loadMaps);
+  expect(latest!.campaign?.memberships?.map((m) => m.userId)).toEqual(['me', 'other']);
+  expect(latest!.activeSession).toEqual(getSession);
+});
+
+it('keeps a live ended session over a stale GET session after first load', async () => {
+  let releaseLoad: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseLoad = resolve;
+  }));
+  renderCampaign();
+  await waitFor(() => expect(getCampaign).toHaveBeenCalled());
+  await waitFor(() => expect(latest).not.toBeNull());
+
+  act(() => {
+    latest!.updateCampaignStatus(CampaignStatus.INACTIVE);
+    latest!.setActiveSession(null);
+  });
+
+  await act(async () => {
+    releaseLoad({
+      ...campaignAs('ACTIVE', 'm1', 'DM'),
+      maps: loadMaps,
+      memberships: loadMemberships,
+      activeSession: getSession,
+    });
+  });
+
+  await waitFor(() => expect(latest!.campaign?.id).toBe('c1'));
+  expect(latest!.campaign?.status).toBe(CampaignStatus.INACTIVE);
+  expect(latest!.activeSession).toBeNull();
+  expect(latest!.campaign?.maps).toEqual(loadMaps);
+  expect(latest!.campaign?.memberships?.map((m) => m.userId)).toEqual(['me', 'other']);
+});
+
+it('copies pause and ended session from a roster GET while catch-up is still in flight', async () => {
+  const liveSession = { id: 'sess-live', sessionNumber: 2, startedAt: '2026-01-02T00:00:00.000Z' };
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    activeSession: liveSession,
+  });
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.campaign?.status).toBe('ACTIVE');
+  expect(latest!.activeSession).toEqual(liveSession);
+
+  let releaseCatchUp: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCatchUp = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('PAUSED', 'm1', 'PLAYER'),
+    memberships: [{ userId: 'me', role: 'PLAYER' }, { userId: 'newcomer', role: 'PLAYER' }],
+    activeSession: null,
+  });
+  await act(async () => { onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newcomer' }); });
+  await waitFor(() => expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED));
+  expect(latest!.activeSession).toBeNull();
+  expect(latest!.campaign?.memberships?.map((m) => m.userId)).toEqual(['me', 'newcomer']);
+
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    releaseCatchUp({
+      ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+      activeSession: liveSession,
+    });
+    catchUpResult = await catching;
+  });
+
+  expect(catchUpResult).toEqual({ discarded: true });
+  expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
+  expect(latest!.activeSession).toBeNull();
+});
+
+it('sets syncError when a newer roster GET fails and discards the older catch-up', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    activeSession: { id: 'sess-live', sessionNumber: 1, startedAt: '2026-01-01T00:00:00.000Z' },
+  });
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseCatchUp: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCatchUp = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+
+  getCampaign.mockRejectedValueOnce(
+    Object.assign(new Error('roster failed'), { response: { status: 503, data: { message: 'Table busy' } } }),
+  );
+  await act(async () => { onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newcomer' }); });
+  await waitFor(() => expect(latest!.syncError).toBe('Table busy'));
+
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    releaseCatchUp(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+    catchUpResult = await catching;
+  });
+
+  expect(catchUpResult).toEqual({ discarded: true });
+  expect(latest!.syncError).toBe('Table busy');
+  expect(latest!.campaign?.status).toBe('ACTIVE');
+});
+
+it('copies status and activeSession from a refreshCampaign GET when the session epoch is unchanged', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    activeSession: { id: 'sess-live', sessionNumber: 1, startedAt: '2026-01-01T00:00:00.000Z' },
+  });
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('PAUSED', 'm1', 'PLAYER'),
+    name: 'Renamed Keep',
+    activeSession: null,
+  });
+  await act(async () => { await latest!.refreshCampaign(); });
+
+  expect(latest!.campaign?.name).toBe('Renamed Keep');
+  expect(latest!.campaign?.status).toBe(CampaignStatus.PAUSED);
+  expect(latest!.activeSession).toBeNull();
+});
+
+it('does not let refreshCurrentMap of A steal a catch-up claim of B', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+
+  let releaseCatchUp: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCatchUp = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ ok: false, message: '' });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  let releaseB: () => void = () => {};
+  getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve) => {
+    releaseB = () => resolve({ map: { id: mapId, tokens: [tokenAt('from-b', 2, 2)] }, spiritVisible: false });
+  }));
+  await act(async () => { releaseCatchUp(campaignAs('ACTIVE', 'm2', 'PLAYER')); });
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm2'));
+  expect(latest!.currentMap?.id).toBe('m1');
+
+  let releaseA: (() => void) | null = null;
+  getMap.mockImplementation((_c: string, mapId: string) => new Promise((resolve) => {
+    if (mapId === 'm1') {
+      releaseA = () => resolve({ map: { id: mapId, tokens: [tokenAt('from-a', 1, 1)] }, spiritVisible: false });
+    } else {
+      resolve({ map: { id: mapId, tokens: [tokenAt('other', 0, 0)] }, spiritVisible: false });
+    }
+  }));
+  act(() => { void latest!.refreshCurrentMap(); });
+
+  await act(async () => { releaseB(); await catching; });
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-b']);
+
+  if (releaseA) {
+    await act(async () => { releaseA!(); });
+  }
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-b']);
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('from-a');
 });
