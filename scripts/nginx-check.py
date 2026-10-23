@@ -18,12 +18,16 @@ also prints what it read), three times:
                   key is readable by the account running this check alone, as
                   the guide's `cp` and `chown` steps leave a real one.
 
-The image, environment, mounts and the settings that limit what the container
-may do (its capabilities, no-new-privileges, a read-only filesystem and its
-tmpfs folders) come from the nginx service in docker-compose.yml, so the check
-follows it and nginx starts as it does there; each value takes its default, as
-on an instance whose .env leaves it out. The repository's own nginx/conf.d/ and
-nginx/certs/ are never mounted: a developer's own HTTPS file stays out of it.
+The image is the linux/amd64 image Compose stored for the nginx service
+(not only the raw compose ``image:`` string); ``docker run`` is given
+``--platform linux/amd64``. If inspect cannot resolve linux/amd64, the
+check fails. The environment, mounts and the settings that limit what the
+container may do (its capabilities, no-new-privileges, a read-only
+filesystem and its tmpfs folders) come from the nginx service in
+docker-compose.yml, so the check follows it and nginx starts as it does
+there; each value takes its default, as on an instance whose .env leaves
+it out. The repository's own nginx/conf.d/ and nginx/certs/ are never
+mounted: a developer's own HTTPS file stays out of it.
 
 Needs Docker, openssl and PyYAML (pip install pyyaml). Run from the repository
 root; exits non-zero when nginx refuses any of the three:
@@ -32,6 +36,7 @@ root; exits non-zero when nginx refuses any of the three:
 """
 
 import collections
+import importlib.util
 import io
 import os
 import re
@@ -43,6 +48,15 @@ import textwrap
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 COMPOSE = os.path.join(ROOT, 'docker-compose.yml')
 GUIDE = os.path.join(ROOT, 'docs', 'DEPLOYMENT.md')
+PLATFORM = 'linux/amd64'
+
+_ia_spec = importlib.util.spec_from_file_location(
+    'image_advisories',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), 'ci', 'image-advisories.py'),
+)
+_ia = importlib.util.module_from_spec(_ia_spec)
+_ia_spec.loader.exec_module(_ia)
+amd64_image_id = _ia.amd64_image_id
 
 # Documentation addresses (RFC 5737 and RFC 3849), a list written the ways
 # .env allows: separated by a comma and by spaces.
@@ -124,13 +138,18 @@ def mounts(volumes, conf_d, certs):
     return out
 
 
-def nginx_t(service, environment, conf_d, certs):
-    """nginx -T in a throwaway container, as (passed, everything it printed)."""
-    args = ['docker', 'run', '--rm', '--network', 'none'] + service.flags
+def nginx_t_args(service, environment, conf_d, certs):
+    """docker run argv for nginx -T: linux/amd64, the service's limits, then the image id."""
+    args = ['docker', 'run', '--rm', '--platform', PLATFORM, '--network', 'none'] + service.flags
     for key, value in environment.items():
         args += ['-e', f'{key}={value}']
     args += mounts(service.volumes, conf_d, certs) + [service.image, 'nginx', '-T']
-    run = subprocess.run(args, capture_output=True, text=True)
+    return args
+
+
+def nginx_t(service, environment, conf_d, certs):
+    """nginx -T in a throwaway container, as (passed, everything it printed)."""
+    run = subprocess.run(nginx_t_args(service, environment, conf_d, certs), capture_output=True, text=True)
     printed = run.stdout + run.stderr
     return run.returncode == 0 and 'test is successful' in run.stderr, printed
 
@@ -138,6 +157,16 @@ def nginx_t(service, environment, conf_d, certs):
 def main():
     service = nginx_service(read(COMPOSE))
     image, environment = service.image, service.environment
+    image_id = amd64_image_id(image)
+    if not image_id:
+        print(
+            f'image {image} is not present locally as {PLATFORM}. CI pulls the '
+            'production compose nginx image before this check; GitHub CI is '
+            'the merge gate.',
+            file=sys.stderr,
+        )
+        return 1
+    service = service._replace(image=image_id)
     failed = False
     with tempfile.TemporaryDirectory() as tmp:
         empty, conf_d, certs = (os.path.join(tmp, name) for name in ('empty', 'conf.d', 'certs'))

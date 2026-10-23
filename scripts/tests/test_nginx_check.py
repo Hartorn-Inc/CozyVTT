@@ -84,6 +84,16 @@ class Mounts(unittest.TestCase):
         self.assertIn('nginx_temp:/var/cache/nginx', service.volumes)
 
 
+class NginxTArgs(unittest.TestCase):
+    def test_run_argv_includes_platform_linux_amd64(self):
+        service = nc.Service('sha256:abc123', {}, [], ['--read-only'])
+        args = nc.nginx_t_args(service, {}, '/tmp/conf', '/tmp/certs')
+        self.assertEqual(args[args.index('--platform') + 1], 'linux/amd64')
+        self.assertEqual(args[:4], ['docker', 'run', '--rm', '--platform'])
+        self.assertIn('--read-only', args)
+        self.assertEqual(args[-3:], ['sha256:abc123', 'nginx', '-T'])
+
+
 class RunFlags(unittest.TestCase):
     def test_passes_on_what_limits_the_container(self):
         self.assertEqual(nc.run_flags({

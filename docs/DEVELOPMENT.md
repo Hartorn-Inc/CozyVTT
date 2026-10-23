@@ -889,8 +889,9 @@ also does what self-hosters run and a developer usually does not:
 - **Scans the runtime images** an Instance starts (the production compose
   PostgreSQL and nginx digests, and the built `cozyvtt-backend:latest` and
   `cozyvtt-frontend:latest`) with Trivy (`trivy image --scanners vuln
-  --pkg-types os --severity HIGH,CRITICAL --exit-code 1`): a high or critical advisory
-  fails the images job. The scan is OS packages in those images;
+  --pkg-types os --severity HIGH,CRITICAL --exit-code 1 --platform linux/amd64`): a high or critical advisory
+  fails the images job. The scan is OS packages in the linux/amd64 image
+  Compose pulled or built, not the multi-arch index string.
   JavaScript stays on the npm audit above, and Trivy does not scan nested
   `package.json` files or helper binaries such as postgres's `gosu`. The
   scan runs after those images are pulled or built, and before the stack

@@ -731,6 +731,7 @@ describe('the dependency check SECURITY.md describes', () => {
     expect(script).toMatch(/--severity['\s,]+HIGH,CRITICAL|HIGH,CRITICAL/);
     expect(script).toMatch(/--exit-code['\s,]+1/);
     expect(script).toMatch(/--pkg-types['\s,]+os/);
+    expect(script).toMatch(/--platform['\s,]+linux\/amd64/);
     expect(read('SECURITY.md')).toMatch(/high or critical(?: advisory)? in(?: those)? runtime images.*fail/i);
     expect(read('docs/DEVELOPMENT.md')).toMatch(/high or critical(?: advisory)?\s+fails the images job/i);
   });

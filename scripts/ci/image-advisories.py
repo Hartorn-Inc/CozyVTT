@@ -3,7 +3,15 @@
 Scan the four runtime images an Instance starts for High and Critical
 advisories. Trivy is invoked as:
 
-    trivy image --scanners vuln --pkg-types os --severity HIGH,CRITICAL --exit-code 1 --format table --ignorefile /dev/null -- <image>
+    trivy image --scanners vuln --pkg-types os --severity HIGH,CRITICAL --exit-code 1 --format table --ignorefile /dev/null --platform linux/amd64 -- <id>
+
+The ``<id>`` is the linux/amd64 image Compose stored after ``docker compose
+pull`` / ``docker compose build``, not the raw multi-arch index string from
+compose ``image:``. Each compose ref is resolved with ``docker image
+inspect`` (``{{.Id}} {{.Os}}/{{.Architecture}}``); if inspecting
+``name:tag@sha256:…`` fails because a platform-filtered pull stored only
+the child, the same inspect is tried on ``name:tag``. A ref whose stored
+image is not linux/amd64 is treated as missing.
 
 Images, in this order:
 
@@ -22,9 +30,10 @@ are dropped, and ``--ignorefile /dev/null`` is passed, so a runner or a
 repo ignore file cannot skip CVEs. The last ``image:`` in each service
 block wins, as Compose does.
 
-Every image is scanned even if an earlier one failed. Missing Trivy or a
-missing image fails with a message; CI installs Trivy and pulls or builds
-first. GitHub CI is the merge gate.
+Every image is scanned even if an earlier one failed. Missing Trivy, a
+missing image, an inspect failure, a Trivy error or a High/Critical
+finding fails the process; remaining images are still scanned. CI
+installs Trivy and pulls or builds first. GitHub CI is the merge gate.
 
 Run from the repository root after the production images exist locally:
 
@@ -42,6 +51,7 @@ COMPOSE = os.path.join(ROOT, 'docker-compose.yml')
 
 # Local tags compose builds; the postgres and nginx refs come from compose.
 BUILT = ('cozyvtt-backend:latest', 'cozyvtt-frontend:latest')
+PLATFORM = 'linux/amd64'
 # Tracked names that would change which compose file CI runs, or let Trivy
 # skip advisories, relative to the files this script reads.
 SKIP_FILES = (
@@ -68,7 +78,10 @@ TRIVY = (
     'table',
     '--ignorefile',
     '/dev/null',
+    '--platform',
+    PLATFORM,
 )
+INSPECT_FORMAT = '{{.Id}} {{.Os}}/{{.Architecture}}'
 
 
 def service_block(text, name):
@@ -117,18 +130,51 @@ def require_command(name, hint):
         raise SystemExit(f'{name} is not on PATH. {hint}')
 
 
-def image_present(image):
+def _inspect(ref):
     result = subprocess.run(
-        ['docker', 'image', 'inspect', image],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        ['docker', 'image', 'inspect', '--format', INSPECT_FORMAT, ref],
+        capture_output=True,
+        text=True,
     )
-    return result.returncode == 0
+    if result.returncode != 0:
+        sys.stderr.write(result.stderr)
+        return False, None
+    seen = []
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            print(f'docker image inspect {ref}: {line}', file=sys.stderr)
+            continue
+        image_id, platform = parts
+        if platform == PLATFORM:
+            return True, image_id
+        seen.append(platform)
+    if seen:
+        print(f'image {ref} is {", ".join(seen)}, not {PLATFORM}', file=sys.stderr)
+    else:
+        print(f'docker image inspect {ref} printed no image id', file=sys.stderr)
+    return True, None
 
 
-def scan(image):
-    print(f'Scanning {image}', flush=True)
-    result = subprocess.run(list(TRIVY) + ['--', image])
+def amd64_image_id(ref):
+    found, image_id = _inspect(ref)
+    if found:
+        return image_id
+    name_tag = ref.split('@', 1)[0]
+    if name_tag == ref:
+        return None
+    found, image_id = _inspect(name_tag)
+    if found:
+        return image_id
+    return None
+
+
+def scan(image_id):
+    print(f'Scanning {image_id}', flush=True)
+    result = subprocess.run(list(TRIVY) + ['--', image_id])
     return result.returncode
 
 
@@ -157,16 +203,18 @@ def main():
 
     status = 0
     for image in images:
-        if not image_present(image):
+        image_id = amd64_image_id(image)
+        if not image_id:
             print(
-                f'image {image} is not present locally. CI pulls the production '
-                'compose database and nginx images and runs docker compose '
-                'build before this script; GitHub CI is the merge gate.',
+                f'image {image} is not present locally as {PLATFORM}. CI pulls '
+                'the production compose database and nginx images and runs '
+                'docker compose build before this script; GitHub CI is the '
+                'merge gate.',
                 file=sys.stderr,
             )
             status = 1
             continue
-        if scan(image) != 0:
+        if scan(image_id) != 0:
             status = 1
     return status
 

@@ -11,7 +11,9 @@ import importlib.util
 import io
 import os
 import re
+import subprocess
 import unittest
+from unittest.mock import patch
 
 try:
     import yaml
@@ -76,8 +78,10 @@ class ImageAdvisories(unittest.TestCase):
         self.assertEqual(ia.TRIVY[ia.TRIVY.index('--pkg-types') + 1], 'os')
         self.assertIn('--ignorefile', ia.TRIVY)
         self.assertEqual(ia.TRIVY[ia.TRIVY.index('--ignorefile') + 1], '/dev/null')
+        self.assertIn('--platform', ia.TRIVY)
+        self.assertEqual(ia.TRIVY[ia.TRIVY.index('--platform') + 1], 'linux/amd64')
         self.assertNotIn('--ignore-unfixed', ia.TRIVY)
-        self.assertIn("'--', image]", self.script)
+        self.assertIn("'--', image_id]", self.script)
 
     @unittest.skipIf(yaml is None, 'PyYAML is not installed')
     def test_runtime_images_are_the_four_compose_refs_in_order(self):
@@ -206,3 +210,91 @@ class ImageAdvisories(unittest.TestCase):
             self.development,
             r'high or critical(?: advisory)?\s+fails the images job',
         )
+
+    def test_failed_inspect_skips_trivy_and_fails_main(self):
+        images = (
+            'postgres:18-alpine@sha256:' + 'ab' * 32,
+            'nginx:1.30-alpine@sha256:' + 'cd' * 32,
+            'cozyvtt-backend:latest',
+            'cozyvtt-frontend:latest',
+        )
+        with patch.object(ia, 'require_command'), patch.object(
+            ia, 'runtime_images', return_value=images
+        ), patch.object(ia, 'refuse_skip_files'), patch.object(
+            ia, 'drop_trivy_environment'
+        ), patch.object(
+            ia, 'amd64_image_id', return_value=None
+        ) as inspect, patch.object(
+            ia, 'scan'
+        ) as scan, patch.object(
+            ia.sys, 'stderr', io.StringIO()
+        ):
+            status = ia.main()
+        self.assertEqual(status, 1)
+        self.assertEqual(inspect.call_count, 4)
+        scan.assert_not_called()
+
+    def test_nonzero_trivy_fails_main_when_inspect_succeeded(self):
+        images = (
+            'postgres:18-alpine@sha256:' + 'ab' * 32,
+            'nginx:1.30-alpine@sha256:' + 'cd' * 32,
+            'cozyvtt-backend:latest',
+            'cozyvtt-frontend:latest',
+        )
+        ids = {
+            images[0]: 'sha256:db',
+            images[1]: 'sha256:nginx',
+            images[2]: 'sha256:backend',
+            images[3]: 'sha256:frontend',
+        }
+
+        def fake_scan(image_id):
+            return 1 if image_id == 'sha256:nginx' else 0
+
+        with patch.object(ia, 'require_command'), patch.object(
+            ia, 'runtime_images', return_value=images
+        ), patch.object(ia, 'refuse_skip_files'), patch.object(
+            ia, 'drop_trivy_environment'
+        ), patch.object(
+            ia, 'amd64_image_id', side_effect=lambda ref: ids[ref]
+        ), patch.object(
+            ia, 'scan', side_effect=fake_scan
+        ) as scan:
+            status = ia.main()
+        self.assertEqual(status, 1)
+        self.assertEqual(scan.call_count, 4)
+        scan.assert_any_call('sha256:nginx')
+
+    def test_amd64_image_id_prints_docker_stderr_and_falls_back_to_name_tag(self):
+        digest = 'nginx:1.30-alpine@sha256:' + 'ab' * 32
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append(args[-1])
+            if args[-1] == digest:
+                return subprocess.CompletedProcess(
+                    args, 1, stdout='', stderr='Error: No such object: %s\n' % digest
+                )
+            return subprocess.CompletedProcess(
+                args, 0, stdout='sha256:child linux/amd64\n', stderr=''
+            )
+
+        stderr = io.StringIO()
+        with patch.object(ia.subprocess, 'run', side_effect=fake_run), patch.object(
+            ia.sys, 'stderr', stderr
+        ):
+            self.assertEqual(ia.amd64_image_id(digest), 'sha256:child')
+        self.assertEqual(calls, [digest, 'nginx:1.30-alpine'])
+        self.assertIn('Error: No such object:', stderr.getvalue())
+
+    def test_amd64_image_id_treats_other_architectures_as_missing(self):
+        completed = subprocess.CompletedProcess(
+            ['docker', 'image', 'inspect'], 0, stdout='sha256:arm linux/arm64\n', stderr=''
+        )
+        stderr = io.StringIO()
+        with patch.object(ia.subprocess, 'run', return_value=completed), patch.object(
+            ia.sys, 'stderr', stderr
+        ):
+            self.assertIsNone(ia.amd64_image_id('nginx:1.30-alpine'))
+        self.assertIn('linux/arm64', stderr.getvalue())
+        self.assertIn('linux/amd64', stderr.getvalue())
