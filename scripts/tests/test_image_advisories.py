@@ -92,15 +92,31 @@ class ImageAdvisories(unittest.TestCase):
             services['backend']['image'],
             services['frontend']['image'],
         )
-        self.assertRegex(expected[0], r'^postgres:\S+@sha256:[0-9a-f]{64}$')
-        self.assertRegex(expected[1], r'^nginx:\S+@sha256:[0-9a-f]{64}$')
+        self.assertEqual(expected[0], 'cozyvtt-database:latest')
+        self.assertEqual(expected[1], 'cozyvtt-nginx:latest')
         self.assertEqual(expected[2], 'cozyvtt-backend:latest')
         self.assertEqual(expected[3], 'cozyvtt-frontend:latest')
         self.assertEqual(ia.runtime_images(), expected)
+        self.assertEqual(ia.BUILT, expected)
         self.assertEqual(services['database']['build']['context'], './database')
         self.assertEqual(services['database']['build']['dockerfile'], 'Dockerfile.prod')
         self.assertEqual(services['nginx']['build']['context'], './nginx')
         self.assertEqual(services['nginx']['build']['dockerfile'], 'Dockerfile.prod')
+        database_from = re.search(
+            r'^FROM (\S+)', read(os.path.join(ROOT, 'database/Dockerfile.prod')), re.M
+        )
+        nginx_from = re.search(
+            r'^FROM (\S+)', read(os.path.join(ROOT, 'nginx/Dockerfile.prod')), re.M
+        )
+        frontend_from = re.findall(
+            r'^FROM (\S+)', read(os.path.join(ROOT, 'frontend/Dockerfile.prod')), re.M
+        )
+        self.assertIsNotNone(database_from)
+        self.assertIsNotNone(nginx_from)
+        self.assertRegex(database_from.group(1), r'^postgres:\S+@sha256:[0-9a-f]{64}$')
+        self.assertRegex(nginx_from.group(1), r'^nginx:\S+@sha256:[0-9a-f]{64}$')
+        self.assertRegex(frontend_from[-1], r'^nginx:\S+@sha256:[0-9a-f]{64}$')
+        self.assertEqual(frontend_from[-1], nginx_from.group(1))
 
     def test_last_image_in_a_service_block_wins(self):
         digest = 'postgres:18-alpine@sha256:' + 'ab' * 32
@@ -134,12 +150,11 @@ class ImageAdvisories(unittest.TestCase):
         self.assertEqual(present, [])
         self.assertEqual(ia.SKIP_FILES, SKIP_FILES)
 
-    def test_images_job_pulls_builds_then_runs_the_script(self):
-        pull = self.images_job.find('docker compose pull database nginx')
-        build = self.images_job.find('docker compose build')
+    def test_images_job_builds_then_runs_the_script(self):
+        self.assertNotIn('docker compose pull database nginx', self.images_job)
+        build = self.images_job.find('docker compose build --pull')
         scan = self.images_job.find('python3 scripts/ci/image-advisories.py')
-        self.assertNotEqual(pull, -1)
-        self.assertGreater(build, pull)
+        self.assertNotEqual(build, -1)
         self.assertGreater(scan, build)
         scan_step = None
         for step in self.images_job.split('\n      - ')[1:]:
@@ -217,8 +232,8 @@ class ImageAdvisories(unittest.TestCase):
 
     def test_failed_inspect_skips_trivy_and_fails_main(self):
         images = (
-            'postgres:18-alpine@sha256:' + 'ab' * 32,
-            'nginx:1.30-alpine@sha256:' + 'cd' * 32,
+            'cozyvtt-database:latest',
+            'cozyvtt-nginx:latest',
             'cozyvtt-backend:latest',
             'cozyvtt-frontend:latest',
         )
@@ -240,8 +255,8 @@ class ImageAdvisories(unittest.TestCase):
 
     def test_nonzero_trivy_fails_main_when_inspect_succeeded(self):
         images = (
-            'postgres:18-alpine@sha256:' + 'ab' * 32,
-            'nginx:1.30-alpine@sha256:' + 'cd' * 32,
+            'cozyvtt-database:latest',
+            'cozyvtt-nginx:latest',
             'cozyvtt-backend:latest',
             'cozyvtt-frontend:latest',
         )
@@ -274,7 +289,7 @@ class ImageAdvisories(unittest.TestCase):
         for rel in ('database/Dockerfile.prod', 'nginx/Dockerfile.prod', 'frontend/Dockerfile.prod'):
             self.assertIn(expected, read(os.path.join(ROOT, rel)))
 
-    def test_amd64_image_id_prefers_name_tag_when_compose_build_retagged(self):
+    def test_amd64_image_id_prefers_digest_when_name_tag_also_exists(self):
         digest = 'nginx:1.30-alpine@sha256:' + 'ab' * 32
         calls = []
 
@@ -289,27 +304,8 @@ class ImageAdvisories(unittest.TestCase):
             )
 
         with patch.object(ia.subprocess, 'run', side_effect=fake_run):
-            self.assertEqual(ia.amd64_image_id(digest), 'sha256:rebuilt')
-        self.assertEqual(calls, [digest, 'nginx:1.30-alpine'])
-
-    def test_amd64_image_id_keeps_digest_when_name_tag_is_missing(self):
-        digest = 'nginx:1.30-alpine@sha256:' + 'ab' * 32
-
-        def fake_run(args, **kwargs):
-            if args[-1] == digest:
-                return subprocess.CompletedProcess(
-                    args, 0, stdout='sha256:hub linux/amd64\n', stderr=''
-                )
-            return subprocess.CompletedProcess(
-                args, 1, stdout='', stderr='Error: No such object: nginx:1.30-alpine\n'
-            )
-
-        stderr = io.StringIO()
-        with patch.object(ia.subprocess, 'run', side_effect=fake_run), patch.object(
-            ia.sys, 'stderr', stderr
-        ):
             self.assertEqual(ia.amd64_image_id(digest), 'sha256:hub')
-        self.assertIn('Error: No such object:', stderr.getvalue())
+        self.assertEqual(calls, [digest])
 
     def test_amd64_image_id_prints_docker_stderr_and_falls_back_to_name_tag(self):
         digest = 'nginx:1.30-alpine@sha256:' + 'ab' * 32

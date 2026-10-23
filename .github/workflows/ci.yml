@@ -200,14 +200,15 @@ jobs:
           exit $status
 
   # What an Operator's `docker compose up -d --build` runs: the compose file
-  # read, the pinned database and nginx images pulled, then database, nginx,
-  # backend and frontend built (the first two apk-upgrade brotli on the Hub
-  # pin), High and Critical advisories in those four runtime images, and the
-  # bundled nginx's configuration rendered as its container renders it and
-  # checked by nginx, the HTTPS example from docs/DEPLOYMENT.md included.
-  # Then the stack is started and a browser walks through it (frontend/e2e):
-  # the setup wizard, signing in and out, a campaign opened with its live
-  # connection, at desktop and phone sizes.
+  # read, then database, nginx, backend and frontend built with
+  # `docker compose build --pull` (Hub FROM pins are pulled during that
+  # build; database and nginx apk-upgrade brotli). High and Critical
+  # advisories in those four local runtime tags, and the bundled nginx's
+  # configuration rendered as its container renders it and checked by nginx,
+  # the HTTPS example from docs/DEPLOYMENT.md included. Then the stack is
+  # started and a browser walks through it (frontend/e2e): the setup wizard,
+  # signing in and out, a campaign opened with its live connection, at
+  # desktop and phone sizes.
   images:
     name: Production images, nginx and smoke tests
     runs-on: ubuntu-26.04
@@ -218,9 +219,7 @@ jobs:
           persist-credentials: false
       - name: Read docker-compose.yml with the example settings
         run: cp .env.example .env && docker compose config -q
-      - name: Pull the pinned database and nginx images
-        run: docker compose pull database nginx
-      - run: docker compose build
+      - run: docker compose build --pull
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
         with:

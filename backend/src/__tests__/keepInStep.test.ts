@@ -15,8 +15,9 @@
  * read from the service's own list of mounts.
  *
  * The database client. The backend image installs a pinned PostgreSQL client
- * major for pg_dump and psql, and the server image is pinned separately in
- * four files. A client older than the server cannot dump it.
+ * major for pg_dump and psql, and the server major is taken from the
+ * production database Dockerfile FROM and remaining compose/CI postgres
+ * image lines. A client older than the server cannot dump it.
  *
  * The restore script. backend/scripts/restore.sh prepares the file psql loads
  * in its own awk step, apart from the Admin Dashboard's restore, and has to
@@ -195,7 +196,7 @@ describe('NGINX_CONF_STAMP in docker-compose.yml', () => {
 
 describe('the PostgreSQL client the backend image installs', () => {
   const clientFiles = ['backend/Dockerfile', 'backend/Dockerfile.prod'];
-  const serverFiles = ['docker-compose.yml', 'docker-compose.dev.yml', '.github/workflows/ci.yml', 'database/Dockerfile.prod'];
+  const serverFiles = ['docker-compose.dev.yml', '.github/workflows/ci.yml', 'database/Dockerfile.prod'];
   const clients = clientFiles.flatMap((f) => majors(f, /postgresql(\d+)-client/g));
   const servers = serverFiles.flatMap((f) => majors(f, /(?:image:\s*|FROM\s+)postgres:(\d+)-alpine/g));
 
@@ -229,7 +230,7 @@ describe('the PostgreSQL client the backend image installs', () => {
     expect(missing).toEqual([]);
   });
 
-  it('is pinned against one server major, the same in both compose files, CI, and the production database image', () => {
+  it('is pinned against one server major, the same in Dockerfile FROM, remaining compose postgres image lines, and CI', () => {
     expect(new Set(servers).size).toBe(1);
   });
 

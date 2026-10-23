@@ -12,7 +12,7 @@ COPY . .
 RUN npm run build
 
 # Serve via Nginx (lightweight serving of built static files). nginx's stable
-# line, the same as the proxy's in docker-compose.yml; move both together.
+# line, the same as the proxy's in nginx/Dockerfile.prod; move both together.
 FROM nginx:1.30-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951 AS production
 
 # Hub linux/amd64 still ships brotli-libs 1.2.0-r1 (CVE-2026-111497).

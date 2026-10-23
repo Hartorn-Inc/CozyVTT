@@ -130,14 +130,13 @@ function images(rel: string): string[] {
 
 describe('the images', () => {
   const DIGEST = /^(?:[a-z0-9.-]+\/)?[a-z0-9.-]+:[a-zA-Z0-9._-]+@sha256:[0-9a-f]{64}$/;
-  const LOCAL = /^cozyvtt-(?:backend|frontend):latest$/;
+  const LOCAL = /^cozyvtt-(?:backend|frontend|database|nginx):latest$/;
 
   it('pin nginx to one stable line, the same for the proxy and the frontend', () => {
-    const nginx = [...images('docker-compose.yml'), ...images('frontend/Dockerfile.prod')].filter((i) => /^nginx[:@]/.test(i));
+    const nginx = [...images('nginx/Dockerfile.prod'), ...images('frontend/Dockerfile.prod')].filter((i) => /^nginx[:@]/.test(i));
     expect(nginx).toHaveLength(2);
     for (const image of nginx) expect(image).toMatch(/^nginx:1\.\d*[02468]-alpine@sha256:[0-9a-f]{64}$/);
     expect(new Set(nginx).size).toBe(1);
-    expect(images('nginx/Dockerfile.prod').filter((i) => /^nginx[:@]/.test(i))).toEqual([nginx[0]]);
   });
 
   it('pin every third-party production image to a tag and digest', () => {
