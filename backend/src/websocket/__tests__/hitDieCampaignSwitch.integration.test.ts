@@ -51,6 +51,23 @@ async function reauth(client: ClientSocket, campaignId: string): Promise<void> {
   expect((await done).campaignId).toBe(campaignId);
 }
 
+async function holdPreConfirm(): Promise<{ release: () => void; waiting: Promise<void>; restore: () => void }> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let reached!: () => void;
+  const waiting = new Promise<void>((resolve) => { reached = resolve; });
+  const original = writeAuthz.confirmWriteAuthorization.bind(writeAuthz);
+  const spy = jest.spyOn(writeAuthz, 'confirmWriteAuthorization').mockImplementationOnce(async (socket, options) => {
+    reached();
+    await gate;
+    return original(socket, options);
+  });
+  return { release, waiting, restore: () => spy.mockRestore() };
+}
+
+const storedSheet = async (): Promise<Sheet> =>
+  (await prisma.character.findUniqueOrThrow({ where: { id: characterId } })).data as unknown as Sheet;
+
 beforeAll(async () => {
   const [host, switcher] = await Promise.all(
     ['host', 'switcher'].map((name) =>
@@ -88,6 +105,17 @@ beforeAll(async () => {
 
   server = await createWsTestServer();
   [hostCookie, switcherCookie] = await Promise.all([server.loginAs(hostId), server.loginAs(switcherId)]);
+});
+
+beforeEach(async () => {
+  await prisma.character.update({
+    where: { id: characterId },
+    data: { campaignId: campaignA, data: toJson(sheet()) },
+  });
+  await prisma.campaignMembership.updateMany({
+    where: { userId: switcherId, campaignId: campaignA },
+    data: { characterIds: [characterId] },
+  });
 });
 
 afterAll(async () => {
@@ -132,6 +160,52 @@ describe('character.hitdice.spend while authenticate moves the socket into B', (
       host.disconnect();
       spender.disconnect();
       observer.disconnect();
+    }
+  });
+});
+
+describe('live HP / hit-die refuse a Character.campaignId move during confirm', () => {
+  it('does not store HP or tell A after the row moves to B during pre-confirm', async () => {
+    const dm = await server.connectAndAuth(hostCookie, campaignA);
+    const listener = await server.connectAndAuth(switcherCookie, campaignA);
+    const held = await holdPreConfirm();
+
+    try {
+      dm.emit('character.hp.update', { characterId, delta: -3 });
+      await held.waiting;
+      await prisma.character.update({ where: { id: characterId }, data: { campaignId: campaignB } });
+      await prisma.campaignMembership.updateMany({
+        where: { userId: switcherId, campaignId: campaignA },
+        data: { characterIds: [] },
+      });
+      const quiet = expectNoEvent(listener, 'character.hp.updated', 800);
+      held.release();
+      await expect(quiet).resolves.toBeUndefined();
+      expect((await storedSheet()).hp.current).toBe(10);
+    } finally {
+      held.restore();
+      dm.disconnect();
+      listener.disconnect();
+    }
+  });
+
+  it('does not store a hit die or tell A after the row is removed during pre-confirm', async () => {
+    const dm = await server.connectAndAuth(hostCookie, campaignA);
+    const listener = await server.connectAndAuth(switcherCookie, campaignA);
+    const held = await holdPreConfirm();
+
+    try {
+      dm.emit('character.hitdice.spend', { characterId, index: 0 });
+      await held.waiting;
+      await prisma.character.update({ where: { id: characterId }, data: { campaignId: null } });
+      const quiet = expectNoEvent(listener, 'character.updated', 800);
+      held.release();
+      await expect(quiet).resolves.toBeUndefined();
+      expect((await storedSheet()).hitDice[0].remaining).toBe(3);
+    } finally {
+      held.restore();
+      dm.disconnect();
+      listener.disconnect();
     }
   });
 });

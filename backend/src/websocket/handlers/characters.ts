@@ -178,9 +178,10 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
         if (authz.role === 'SPECTATOR') return { error: 'Spectators cannot change a character' } as const;
         const fresh = await tx.character.findUnique({
           where: { id: characterId },
-          select: { data: true, userId: true, gameSystem: true },
+          select: { data: true, userId: true, gameSystem: true, campaignId: true },
         });
         if (!fresh) return { error: 'Character not found' } as const;
+        if (fresh.campaignId !== campaignId) return { error: 'Character is not in this campaign' } as const;
         if (fresh.userId !== socket.userId && authz.role !== 'DM') {
           return { error: 'You do not have permission to update this character\'s HP' } as const;
         }
@@ -294,9 +295,10 @@ export function registerCharacterHandlers(io: Server, socket: AuthenticatedSocke
         if (authz.role === 'SPECTATOR') return { error: 'Spectators cannot change a character' } as const;
         const fresh = await tx.character.findUnique({
           where: { id: characterId },
-          select: { data: true, userId: true, gameSystem: true },
+          select: { data: true, userId: true, gameSystem: true, campaignId: true },
         });
         if (!fresh) return { error: 'Character not found' } as const;
+        if (fresh.campaignId !== campaignId) return { error: 'Character is not in this campaign' } as const;
         if (fresh.userId !== socket.userId && authz.role !== 'DM') {
           return { error: 'You do not have permission to spend this character\'s hit dice' } as const;
         }

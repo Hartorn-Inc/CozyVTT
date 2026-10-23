@@ -18,7 +18,7 @@
 import { randomUUID } from 'crypto';
 import type { Socket as ClientSocket } from 'socket.io-client';
 import { prisma } from '../../config/database';
-import { toJson } from '../../utils/prisma-json';
+import { toJson, readTokens } from '../../utils/prisma-json';
 import { withMapsLocked } from '../../utils/mapTokens';
 import { createWsTestServer, expectNoEvent, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
 import { setState, getState, clearState } from '../initiativeState';
@@ -47,6 +47,20 @@ const entry = (tokenId: string, type: 'npc' | 'player') => ({
   tokenId, mapId, name: tokenId, imageUrl: '', initiative: null, hp: null, type, disposition: null,
 });
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function holdPreConfirm(): Promise<{ release: () => void; waiting: Promise<void>; restore: () => void }> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let reached!: () => void;
+  const waiting = new Promise<void>((resolve) => { reached = resolve; });
+  const original = writeAuthz.confirmWriteAuthorization.bind(writeAuthz);
+  const spy = jest.spyOn(writeAuthz, 'confirmWriteAuthorization').mockImplementationOnce(async (socket, options) => {
+    reached();
+    await gate;
+    return original(socket, options);
+  });
+  return { release, waiting, restore: () => spy.mockRestore() };
+}
 
 /**
  * Until a roll is waiting for the map lock the test holds: it has read the
@@ -288,5 +302,55 @@ it('does not treat a token gone during the lock as a successful initiative write
   await holder;
   await quiet;
   expect(getState(campaignId).combatants.map((c) => c.tokenId)).not.toContain(GOBLIN);
+});
+
+it('does not send the player dice.rolled after the token is hidden during pre-confirm', async () => {
+  setState(campaignId, { active: false, round: 0, currentTokenId: null, combatants: [] });
+  const player = await server.connectAndAuth(await server.loginAs(playerId), campaignId);
+  const held = await holdPreConfirm();
+
+  try {
+    dm.emit('initiative.roll', { tokenId: GOBLIN, mapId });
+    await held.waiting;
+    const row = await prisma.map.findUniqueOrThrow({ where: { id: mapId }, select: { tokens: true } });
+    const next = readTokens(row.tokens).map((t) => (t.id === GOBLIN ? { ...t, visible: false } : t));
+    await prisma.map.update({ where: { id: mapId }, data: { tokens: toJson(next) } });
+    const quiet = expectNoEvent(player, 'dice.rolled', 1500);
+    const dmRolled = waitForEvent(dm, 'dice.rolled');
+    held.release();
+    await dmRolled;
+    await expect(quiet).resolves.toBeUndefined();
+  } finally {
+    held.restore();
+    player.disconnect();
+  }
+});
+
+it('does not name the creature in the player dice log after it is obscured during pre-confirm', async () => {
+  setState(campaignId, { active: false, round: 0, currentTokenId: null, combatants: [] });
+  const player = await server.connectAndAuth(await server.loginAs(playerId), campaignId);
+  const held = await holdPreConfirm();
+  const seen: Array<{ characterName?: string; purpose?: string }> = [];
+  player.on('dice.rolled', (data: { characterName?: string; purpose?: string }) => {
+    seen.push(data);
+  });
+
+  try {
+    dm.emit('initiative.roll', { tokenId: GOBLIN, mapId });
+    await held.waiting;
+    const row = await prisma.map.findUniqueOrThrow({ where: { id: mapId }, select: { tokens: true } });
+    const next = readTokens(row.tokens).map((t) => (t.id === GOBLIN ? { ...t, obscured: true } : t));
+    await prisma.map.update({ where: { id: mapId }, data: { tokens: toJson(next) } });
+    const dmRolled = waitForEvent(dm, 'dice.rolled');
+    held.release();
+    await dmRolled;
+    await pause(300);
+    for (const roll of seen) {
+      expect(`${roll.characterName ?? ''} ${roll.purpose ?? ''}`).not.toContain(GOBLIN);
+    }
+  } finally {
+    held.restore();
+    player.disconnect();
+  }
 });
 

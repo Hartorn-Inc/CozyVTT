@@ -177,12 +177,17 @@ async function setTokenInitiative(
   tokenId: string,
   value: number | null,
   allowed: (role: string, freshToken: Token, currentMapId: string | null) => true | string,
-): Promise<{ ok: true; role: string; written: boolean } | { ok: false; denied?: true; message?: string }> {
+): Promise<
+  | { ok: true; role: string; written: true; token: Token }
+  | { ok: true; role: string; written: false }
+  | { ok: false; denied?: true; message?: string }
+> {
   const pre = await confirmWriteAuthorization(socket, { campaignId });
   if (!pre.ok) return { ok: false, denied: true };
 
   type Locked =
-    | { ok: true; role: string; written: boolean }
+    | { ok: true; role: string; written: true; token: Token }
+    | { ok: true; role: string; written: false }
     | { ok: false; denied: true; dropCampaign?: true; campaignId?: string }
     | { ok: false; message: string };
   const outcome = await withMapsLocked([mapId], async (tx): Promise<Locked> => {
@@ -201,7 +206,7 @@ async function setTokenInitiative(
     if (permission !== true) return { ok: false, message: permission };
     tokens[index] = { ...freshToken, initiative: value };
     await tx.map.update({ where: { id: mapId }, data: { tokens: toJson(tokens) } });
-    return { ok: true, role: authz.role, written: true };
+    return { ok: true, role: authz.role, written: true, token: tokens[index] };
   });
   if (!outcome.ok) {
     await applyWriteAuthzDrop(socket, outcome);
@@ -588,6 +593,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // Token gone during the lock: left alone, not a success with a dice log
       // entry or an in-memory combatant insert.
       if (!persisted.written) return;
+      const lockedToken = persisted.token;
 
       // Update in-memory state — add to combatants if not already present.
       // Only for a DM, and only a token that was not in the order when the
@@ -618,12 +624,12 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
           current.combatants.push({
             tokenId,
             mapId,
-            name: token.name,
-            imageUrl: token.imageUrl || '',
+            name: lockedToken.name,
+            imageUrl: lockedToken.imageUrl || '',
             initiative: rolledValue,
-            hp: token.hp ?? null,
-            type: token.type ?? 'npc',
-            disposition: token.disposition ?? null,
+            hp: lockedToken.hp ?? null,
+            type: lockedToken.type ?? 'npc',
+            disposition: lockedToken.disposition ?? null,
           });
           current.combatants = sortCombatants(current.combatants);
           setCombatState(campaignId, current);
@@ -650,7 +656,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
           // their own obscured token sees it logged as "Unknown creature", while
           // a roll from their sheet names the character. Send the roller the
           // token's name and everyone else the placeholder.
-          const publicName = token.obscured === true ? 'Unknown creature' : token.name;
+          const publicName = lockedToken.obscured === true ? 'Unknown creature' : lockedToken.name;
           const rollData = {
             userId: socket.userId,
             userName: user?.displayName ?? 'DM',
@@ -662,7 +668,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
             timestamp: new Date().toISOString(),
             secret: false,
           };
-          for (const r of await recipientsSentToken(io, campaignId, token, mapId)) {
+          for (const r of await recipientsSentToken(io, campaignId, lockedToken, mapId)) {
             r.emit('dice.rolled', rollData);
           }
         });
@@ -670,7 +676,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         await broadcastInitiativeState(campaignId);
       }
       logger.debug('initiative.roll', {
-        rolled: !!rollResult, result: rolledValue, name: token.name, campaignId,
+        rolled: !!rollResult, result: rolledValue, name: lockedToken.name, campaignId,
       });
     } catch (error) {
       logger.error('initiative.roll failed', { err: error });
