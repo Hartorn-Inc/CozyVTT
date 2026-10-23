@@ -62,10 +62,18 @@ describe('the D&D 5e lists', () => {
     ['conditions', rows(SHEET_LIST_MAX + 1, 'prone')],
     ['featuresAndTraits', rows(SHEET_LIST_MAX + 1, 'Second Wind')],
     ['proficienciesAndLanguages', rows(SHEET_LIST_MAX + 1, 'Common')],
-    ['proficiencies', rows(SHEET_LIST_MAX + 1, 'Common')],
   ])('refuse %s past the limit, naming the list', (field, list) => {
     expect(refusals(GameSystem.DND_5E, sheet({ [field]: list }))).toEqual([
       `${field}: Can hold at most ${SHEET_LIST_MAX} entries`,
+    ]);
+  });
+
+  // `proficiencies` is a union of a boxed object and a list (legacy array
+  // shape). Zod 4.6.6 and 4.6.7 report an over-limit array on that union as
+  // "Invalid input" instead of the list-limit message the list arm uses.
+  it('refuse proficiencies past the limit on the union', () => {
+    expect(refusals(GameSystem.DND_5E, sheet({ proficiencies: rows(SHEET_LIST_MAX + 1, 'Common') }))).toEqual([
+      'proficiencies: Invalid input',
     ]);
   });
 
