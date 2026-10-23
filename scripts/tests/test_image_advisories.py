@@ -164,6 +164,11 @@ class ImageAdvisories(unittest.TestCase):
         self.assertIsNotNone(scan_step)
         self.assertNotIn('continue-on-error:', scan_step)
 
+    def test_restore_hint_builds_the_local_database_tag(self):
+        restore = read(os.path.join(ROOT, 'backend', 'scripts', 'restore.sh'))
+        self.assertIn('docker compose build --pull database', restore)
+        self.assertNotIn('docker compose pull database', restore)
+
     def test_trivy_action_is_pinned_to_a_commit(self):
         match = re.search(
             r'uses: aquasecurity/setup-trivy@([0-9a-f]{40}) # v\S+',
