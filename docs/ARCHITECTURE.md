@@ -856,16 +856,20 @@ uploads/
 `Asset.filePath` and `Asset.thumbnailPath` record where each file is. Nothing
 else refers to a file on disk.
 
-Instance backups (`backup-{timestamp}.zip`) are kept outside this tree, in
-`backend/backups/` or `BACKUP_DIR`, which may not point inside the uploads
-directory (`backend/src/utils/backupDir.ts`). A backup is written as
-`<name>.partial` and renamed once complete; the backup list removes a partial
-file that no backup is writing. Its database dump waits in a folder of its own
-in the system's temporary directory (`cozyvtt-db-…`, made by `mkdtemp`, so only
-the backend's user can open it), and a restore unpacks the archive into another
-(`cozyvtt-restore-…`). Each is removed when its work ends. Under Docker that
-directory is `/tmp`, the `backend_tmp` volume, which outlives the container, so
-`scripts/start.sh` also removes any that a stopped backend left.
+Instance backups are kept outside this tree, in `backend/backups/` or
+`BACKUP_DIR`, which may not point inside the uploads directory
+(`backend/src/utils/backupDir.ts`). The filename is still
+`backup-{timestamp}.zip`; on-disk bytes are AES-256-GCM (magic `CVTTBK01`)
+encrypted with `BACKUP_ENCRYPTION_KEY`. A missing key still boots the
+Instance and refuses new backups. A backup is written as `<name>.partial`
+and renamed once complete; the backup list removes a partial file that no
+backup is writing. Its database dump waits in a folder of its own in the
+system's temporary directory (`cozyvtt-db-…`, made by `mkdtemp`, so only
+the backend's user can open it), and a restore unpacks a decrypted or
+legacy plaintext ZIP into another (`cozyvtt-restore-…`). Each is removed
+when its work ends. Under Docker that directory is `/tmp`, the
+`backend_tmp` volume, which outlives the container, so `scripts/start.sh`
+also removes any that a stopped backend left.
 
 A restore runs one at a time, and `services/restoreState.ts` knows whether
 one is running and whether it has started replacing the database. From then

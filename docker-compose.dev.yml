@@ -55,6 +55,12 @@ services:
       # Dev must use its own secret; the production SESSION_SECRET is ignored.
       SESSION_SECRET: ${DEV_SESSION_SECRET:-}
       SETUP_TOKEN: ${DEV_SETUP_TOKEN:-}
+      # Same names as production: the development stack does not split a
+      # DEV_ backup key the way it splits DEV_SESSION_SECRET. Empty: the
+      # Instance still boots; Create Backup is refused so a plaintext archive
+      # is not written. Never SESSION_SECRET.
+      BACKUP_ENCRYPTION_KEY: ${BACKUP_ENCRYPTION_KEY:-}
+      BACKUP_ENCRYPTION_PREVIOUS_KEYS: ${BACKUP_ENCRYPTION_PREVIOUS_KEYS:-}
       # Dev defaults to the Vite address. Set DEV_CORS_ORIGIN for a custom
       # host or port; production continues to use CORS_ORIGIN.
       CORS_ORIGIN: ${DEV_CORS_ORIGIN:-http://localhost:3000}

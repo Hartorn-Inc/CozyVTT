@@ -1636,7 +1636,11 @@ List the instance backups in the backups folder, newest first.
 
 ### `POST /api/admin/backups` *(Admin only)*
 
-Create a new backup: a ZIP holding a `pg_dump` of the database and every uploaded file.
+Create a new Instance backup: an encrypted archive (still named `backup-….zip`) holding a
+`pg_dump` of the database and every uploaded file. Encrypted with `BACKUP_ENCRYPTION_KEY`,
+never `SESSION_SECRET`. Refused with `400` `{ error: 'Backup Unavailable', code:
+'BACKUP_ENCRYPTION_KEY_MISSING' }` when `BACKUP_ENCRYPTION_KEY` is missing or unusable;
+the Instance still runs, and a new backup is refused so a plaintext archive is not written.
 Refused with `409` while a restore takes its upload or writes its safety backup, and with
 `503` while the restore replaces the database. A `DATABASE_URL ?schema=` that is not a
 simple identifier (letters, digits, underscore) answers `400` `Bad Request` and changes
@@ -1656,7 +1660,12 @@ Restore the instance from a backup archive. **Destructive: it drops the instance
 (`public`, or a simple-identifier `DATABASE_URL ?schema=`) and loads the archive in its
 place, and copies the archive's uploaded files over the existing ones. A backup of the
 database as it was is written to the backup list first, and the response names it as
-`safetyBackup`.
+`safetyBackup`. An archive encrypted with this Instance's current or previous backup key
+is decrypted before extract. A legacy plaintext ZIP is still accepted. An archive
+encrypted with a key this Instance does not have answers `400` `Invalid Backup` (names
+`BACKUP_ENCRYPTION_KEY` / `BACKUP_ENCRYPTION_PREVIOUS_KEYS`); nothing is changed. If the
+current key is missing, the restore's safety copy is refused with `400`
+`BACKUP_ENCRYPTION_KEY_MISSING` and nothing is restored.
 
 One restore runs at a time: a second sent while the first takes its upload or writes that
 backup answers `409`. A refused file answers `400` (not named `.zip`, not a ZIP archive,
