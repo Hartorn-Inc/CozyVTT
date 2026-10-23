@@ -14,12 +14,14 @@
 
 import { randomUUID } from 'crypto';
 import { prisma } from '../../config/database';
+import { toJson } from '../../utils/prisma-json';
 import {
   createWsTestServer,
   expectNoEvent,
   waitForEvent,
   WsTestServer,
 } from '../../__tests__/helpers/websocket-test-server';
+import * as writeAuthz from '../writeAuthz';
 
 jest.setTimeout(20000);
 
@@ -37,7 +39,13 @@ let playerCookie: string;
 const OWN = 'token-own';
 const TARGET = 'token-target';
 
-type MapChanged = { mapId: string; mapData: { tokens: Array<{ id: string; notes?: string }> } };
+type MapChanged = {
+  mapId: string;
+  mapData: {
+    tokens: Array<{ id: string; notes?: string }>;
+    wallSegments?: Array<{ id: string; type: string }>;
+  };
+};
 
 function token(id: string, x: number, controlledBy: string | null, visible: boolean, notes?: string) {
   return {
@@ -157,5 +165,58 @@ describe('spirit_layer.token.toggle', () => {
     expect(payload.token.notes).toBe('dm eyes only');
 
     dm.disconnect();
+  });
+
+  it('does not paint back a door that closed during the toggle authz', async () => {
+    const doorId = randomUUID();
+    const wallsOpen = [
+      { id: randomUUID(), x1: 500, y1: 0, x2: 500, y2: 200, type: 'wall' },
+      { id: doorId, x1: 500, y1: 200, x2: 500, y2: 350, type: 'door-open' },
+      { id: randomUUID(), x1: 500, y1: 350, x2: 500, y2: 1000, type: 'wall' },
+    ];
+    await prisma.map.update({
+      where: { id: mapId },
+      data: {
+        lightingEnabled: true,
+        globalIllumination: true,
+        gridSize: 50,
+        wallSegments: toJson(wallsOpen),
+        tokens: [token(OWN, 2, playerId, true), token(TARGET, 12, null, false, 'dm eyes only')],
+      },
+    });
+
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reached!: () => void;
+    const waiting = new Promise<void>((resolve) => { reached = resolve; });
+    const original = writeAuthz.confirmWriteAuthorization.bind(writeAuthz);
+    const spy = jest.spyOn(writeAuthz, 'confirmWriteAuthorization').mockImplementationOnce(async (socket, options) => {
+      reached();
+      await gate;
+      return original(socket, options);
+    });
+
+    try {
+      dm.emit('spirit_layer.token.toggle', { mapId, tokenId: TARGET, visible: true });
+      await waiting;
+      await prisma.map.update({
+        where: { id: mapId },
+        data: { wallSegments: toJson(wallsOpen.map((w) => (w.id === doorId ? { ...w, type: 'door-closed' } : w))) },
+      });
+      const toggled = waitForEvent<{ tokenId: string }>(dm, 'spirit_layer.token.toggled');
+      const resync = waitForEvent<MapChanged>(player, 'map.changed');
+      release();
+      expect((await toggled).tokenId).toBe(TARGET);
+      const mapData = (await resync).mapData;
+      expect(mapData.wallSegments?.some((w) => w.id === doorId && w.type === 'door-closed')).toBe(true);
+      expect(mapData.tokens.map((t) => t.id)).not.toContain(TARGET);
+    } finally {
+      spy.mockRestore();
+      dm.disconnect();
+      player.disconnect();
+    }
   });
 });

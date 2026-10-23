@@ -205,10 +205,13 @@ export function registerSpiritHandlers(io: Server, socket: AuthenticatedSocket):
           if ((s as unknown as AuthenticatedSocket).role === 'DM') s.emit('spirit_layer.token.toggled', toggled);
         }
         // Only when this is the map the table is on: map.changed puts every
-        // client onto the map it carries.
+        // client onto the map it carries. Reload the row so walls, lights and
+        // lighting that landed during authz are not painted back from the
+        // pre-await snapshot.
         const campaign = await prisma.campaign.findUnique({ where: { id: campaignId }, select: { currentMapId: true } });
         if (campaign?.currentMapId === mapId) {
-          await broadcastMapData(io, campaignId, { ...map, tokens: toJson(tokens) });
+          const row = await prisma.map.findUnique({ where: { id: mapId } });
+          if (row && row.campaignId === campaignId) await broadcastMapData(io, campaignId, row);
         }
         // Any token: revealing or hiding a player's own spirit-plane token
         // moves them between planes, which changes what they are sent of the

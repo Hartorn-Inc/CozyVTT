@@ -562,8 +562,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         putBackStored(campaignId, mapId, tokenId, sawTheDrag, evenWithoutDrag);
 
       // Fetch the map, with the campaign's status for the pause rule below
-      // and its current map, for whether this socket may move tokens on it
-      // and who is told
+      // and its current map, for whether this socket may move tokens on it.
       const map = await prisma.map.findUnique({
         where: { id: mapId },
         include: { campaign: { select: { status: true, currentMapId: true } } },
@@ -592,8 +591,6 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         return;
       }
 
-      const token = tokensArray[tokenIndex];
-
       // Update token position, in the list as it is under the map's lock: a
       // DM's add or delete landing during the drag used to be written away.
       // Discrete: 0 s stale. Session and MFA are confirmed before the lock;
@@ -602,7 +599,20 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       type MoveEndOutcome =
         | { denied: true; dropCampaign?: true; campaignId?: string }
         | { refused: string; putBack: boolean }
-        | { tokens: Token[]; x: number; y: number };
+        | {
+          tokens: Token[];
+          x: number;
+          y: number;
+          lightingEnabled: boolean;
+          wallSegments: unknown;
+          lights: unknown;
+          globalIllumination: boolean;
+          width: number;
+          height: number;
+          gridSize: number;
+          currentMapId: string | null;
+          token: Token;
+        };
       const pre = await confirmWriteAuthorization(socket, { campaignId });
       if (!pre.ok) {
         await putBack(false);
@@ -615,6 +625,8 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
           where: { id: mapId },
           select: {
             tokens: true, width: true, height: true, campaignId: true,
+            lightingEnabled: true, wallSegments: true, lights: true,
+            globalIllumination: true, gridSize: true,
             campaign: { select: { status: true, currentMapId: true, spiritLayerEnabled: true } },
           },
         });
@@ -650,7 +662,20 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         );
         tokens[index] = { ...freshToken, position: dropped };
         await tx.map.update({ where: { id: mapId }, data: { tokens: toJson(tokens) } });
-        return { tokens, x: dropped.x, y: dropped.y };
+        return {
+          tokens,
+          x: dropped.x,
+          y: dropped.y,
+          lightingEnabled: fresh.lightingEnabled,
+          wallSegments: fresh.wallSegments,
+          lights: fresh.lights,
+          globalIllumination: fresh.globalIllumination,
+          width: fresh.width,
+          height: fresh.height,
+          gridSize: fresh.gridSize,
+          currentMapId: fresh.campaign.currentMapId,
+          token: tokens[index],
+        };
       });
       if ('denied' in outcome) {
         await putBack(false);
@@ -662,11 +687,11 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
         await putBack(outcome.putBack);
         return;
       }
-      token.position = { x: outcome.x, y: outcome.y };
       const updatedTokens = outcome.tokens;
       const { x, y } = outcome;
+      const lockedToken = outcome.token;
 
-      if (map.lightingEnabled) {
+      if (outcome.lightingEnabled) {
         // Dynamic lighting: per-player visibility filtering. The plane and
         // hidden-token rules (filterTokensByRole, the same call the map fetch
         // makes) come first, then line of sight, so a player is never sent a
@@ -685,7 +710,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
             continue;
           }
           if (!authedSocket.userId) continue;
-          if (!canReadMap(authedSocket.role, mapId, map.campaign.currentMapId)) continue;
+          if (!canReadMap(authedSocket.role, mapId, outcome.currentMapId)) continue;
 
           const viewer = viewerIdFor(authedSocket.role, authedSocket.userId);
           const forRole = filterTokensByRole(
@@ -697,13 +722,13 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
           const visible = filterTokensByLighting(
             forRole,
             viewer,
-            map.wallSegments as unknown as WallSegment[],
-            map.width,
-            map.height,
-            map.gridSize,
+            outcome.wallSegments as unknown as WallSegment[],
+            outcome.width,
+            outcome.height,
+            outcome.gridSize,
             true,
-            map.lights,
-            map.globalIllumination
+            outcome.lights,
+            outcome.globalIllumination
           );
           const visibleById = new Map(visible.map((t) => [t.id, t]));
           // Only a token this player may have at all is ever named to them:
@@ -715,7 +740,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
           if (moved) {
             // Visible: position update AND the full token (frontend deduplicates),
             // in case this player did not have it yet.
-            s.emit('token.moved', { tokenId, mapId, x, y, movedBy: moverShownTo(token, authedSocket) });
+            s.emit('token.moved', { tokenId, mapId, x, y, movedBy: moverShownTo(lockedToken, authedSocket) });
             s.emit('token:appeared', { token: moved, mapId });
           } else if (mayHave.has(tokenId)) {
             s.emit('token:disappeared', { tokenId, mapId });
@@ -723,7 +748,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
 
           // If a player moved their OWN token, their view changed: re-sync all
           // OTHER tokens so those that left or entered view go at once.
-          if (viewer && token.controlledBy === viewer) {
+          if (viewer && lockedToken.controlledBy === viewer) {
             for (const otherToken of forRole) {
               if (otherToken.id === tokenId) continue; // already handled above
               // Skip own tokens — always included by filterTokensByLighting
@@ -740,7 +765,7 @@ export function registerTokenHandlers(io: Server, socket: AuthenticatedSocket): 
       } else {
         // The sender included, as confirmation that the write went through.
         await emitMoveToVisibleSockets(
-          'token.moved', token, mapId, map.campaign.currentMapId, { tokenId, mapId, x, y }, true, campaignId
+          'token.moved', lockedToken, mapId, outcome.currentMapId, { tokenId, mapId, x, y }, true, campaignId
         );
       }
 

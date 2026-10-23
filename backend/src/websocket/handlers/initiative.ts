@@ -229,6 +229,14 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       const { tokenId, mapId } = data;
       if (!tokenId || !mapId) { socket.emit('error', { message: 'tokenId and mapId required' }); return; }
 
+      // Captured before the map / authz awaits: after those, an emptied order
+      // is the default object `getCombatState` invents, and must not be stored
+      // with this token. An order that was already empty at the start still
+      // accepts a DM add.
+      const prior = getCombatState(campaignId);
+      const orderHadCombatants = prior.combatants.length > 0;
+      const orderWasActive = prior.active;
+
       const map = await prisma.map.findUnique({ where: { id: mapId } });
       if (!map || map.campaignId !== campaignId) { socket.emit('error', { message: 'Map not found' }); return; }
 
@@ -240,7 +248,21 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       if (!authz.ok) return;
       if (authz.role !== 'DM') { socket.emit('error', { message: 'Only the DM can modify initiative' }); return; }
 
+      const freshMap = await prisma.map.findUnique({ where: { id: mapId }, select: { tokens: true, campaignId: true } });
+      const freshToken = freshMap && freshMap.campaignId === campaignId
+        ? readTokens(freshMap.tokens).find((t) => t.id === tokenId)
+        : undefined;
+      if (!freshToken) return;
+
+      // The order as it is now, not a copy taken before the map re-read:
+      // end deletes the map entry, and that older object would still have
+      // combatants. No await between this read and setCombatState.
       const state = getCombatState(campaignId);
+      // The fight ended (or a delete emptied the order): do not store the
+      // post-clear default. Do not put a deleted token back (freshToken above).
+      if ((orderHadCombatants || orderWasActive) && state.combatants.length === 0) {
+        return;
+      }
 
       // Idempotent — don't add duplicates
       if (state.combatants.some((c) => c.tokenId === tokenId)) {
@@ -251,8 +273,8 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       const entry: CombatantEntry = {
         tokenId,
         mapId,
-        name: token.name,
-        imageUrl: token.imageUrl || '',
+        name: freshToken.name,
+        imageUrl: freshToken.imageUrl || '',
         // Always null, never `token.initiative`.
         //
         // A rolled value is persisted onto the map token, and ending combat
@@ -264,15 +286,15 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         // Joining the order and having a place in it are separate steps: a
         // combatant sorts to the bottom as "—" until something rolls for it.
         initiative: null,
-        hp: token.hp ?? null,
-        type: token.type ?? 'npc',
-        disposition: token.disposition ?? null,
+        hp: freshToken.hp ?? null,
+        type: freshToken.type ?? 'npc',
+        disposition: freshToken.disposition ?? null,
       };
 
       state.combatants = sortCombatants([...state.combatants, entry]);
       setCombatState(campaignId, state);
       await broadcastInitiativeState(campaignId);
-      logger.debug('initiative.add', { name: token.name, campaignId });
+      logger.debug('initiative.add', { name: freshToken.name, campaignId });
     } catch (error) {
       logger.error('initiative.add failed', { err: error });
       socket.emit('error', { message: 'Failed to add to initiative' });

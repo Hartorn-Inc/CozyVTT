@@ -23,6 +23,7 @@ import { withMapsLocked } from '../../utils/mapTokens';
 import { createWsTestServer, expectNoEvent, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
 import { setState, getState, clearState } from '../initiativeState';
 import { sendInitiativeState } from '../handlers/initiative';
+import * as writeAuthz from '../writeAuthz';
 
 jest.setTimeout(30000);
 
@@ -152,6 +153,40 @@ it('drops an older send that a send started by a token change overtakes', async 
   await pause(300);
   held.mockRestore();
   expect(seen[seen.length - 1]).toBe(3);
+});
+
+it('does not reseed combat with initiative.add after the DM ends it during authz', async () => {
+  setState(campaignId, { active: false, round: 0, currentTokenId: null, combatants: [entry(HERO, 'player')] });
+
+  const seen: Array<{ active: boolean; combatants: unknown[] }> = [];
+  dm.on('initiative.state', (state: { active: boolean; combatants: unknown[] }) => {
+    seen.push(state);
+  });
+
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let reached!: () => void;
+  const waiting = new Promise<void>((resolve) => { reached = resolve; });
+  const original = writeAuthz.confirmWriteAuthorization.bind(writeAuthz);
+  const spy = jest.spyOn(writeAuthz, 'confirmWriteAuthorization').mockImplementationOnce(async (socket, options) => {
+    reached();
+    await gate;
+    return original(socket, options);
+  });
+
+  try {
+    dm.emit('initiative.add', { tokenId: GOBLIN, mapId });
+    await waiting;
+    const ended = waitForEvent<{ combatants: unknown[]; active: boolean }>(dm, 'initiative.state');
+    dm.emit('initiative.end');
+    expect(await ended).toMatchObject({ active: false, combatants: [] });
+    release();
+    await pause(300);
+    expect(getState(campaignId)).toMatchObject({ combatants: [] });
+    expect(seen[seen.length - 1]).toMatchObject({ active: false, combatants: [] });
+  } finally {
+    spy.mockRestore();
+  }
 });
 
 it('does not reseed combat with a token that was never in the order after the DM ends it', async () => {
