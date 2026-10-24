@@ -547,6 +547,18 @@ describe("the token menu's Remove from Map", () => {
     expect(await screen.findByText(/Network down|Failed to remove the token/)).toBeInTheDocument();
     expect(useGameStore.getState().tokens['tok-1']).toBeDefined();
   });
+
+  it('focuses the token when the menu opens, so inspect is not right-click-only', () => {
+    const onFocusToken = vi.fn();
+    render(<MapCanvas onFocusToken={onFocusToken} />);
+    act(() => { useGameStore.getState().setTokens([goblin]); });
+    const input = document.querySelector('canvas[class*="cursor-"]');
+    if (!input) throw new Error('no input canvas');
+    fireEvent.contextMenu(input, { clientX: 10, clientY: 10 });
+
+    expect(screen.getByText('Remove from Map')).toBeInTheDocument();
+    expect(onFocusToken).toHaveBeenCalledWith('tok-1');
+  });
 });
 
 /**

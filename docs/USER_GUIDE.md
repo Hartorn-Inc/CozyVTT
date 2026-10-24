@@ -174,15 +174,15 @@ Click **Create Campaign** and you're in. You'll be taken straight to the campaig
 
 ### Campaign Page Overview
 
-The campaign page is your command center during play. It's a three-column workspace designed for a desktop screen:
+The campaign page is the live table. It is a **Focus table**: one surface with the current turn, the map, and a labelled tray of actions for the selected token. On a wide screen (1024px and up) a party rail and a session tool rail sit beside that surface; on a narrower screen the same surface fills the page and Party / Session open as drawers from the tray.
 
 *Screenshot pending — Full campaign page layout with labeled panels.*
 
-- **Left Sidebar** — Campaign info, the campaign roster, and (for DMs) the token roster
-- **Center Canvas** — The battle map where tokens live and adventures happen
-- **Right Sidebar** — a tabbed panel with **Chat**, **Dice**, **Initiative**, **Notes** and **Session** (vibe, session controls and past sessions); a badge on the Chat tab shows unread messages while you're on another tab
+- **Focus surface** — whose turn it is, the battle map, and **table actions** (the selected token, hit points you are allowed to see, conditions, initiative, and buttons such as **View character sheet** and **Roll…**). Actions live here, not only on right-click
+- **Party** — campaign info, the campaign roster, and (for DMs) the token roster. A persistent left rail on a wide screen; a **Party** drawer from the tray on a smaller one
+- **Session** — a tabbed panel with **Chat**, **Dice**, **Initiative**, **Notes** and **Session** (vibe, session controls and past sessions); a badge on the Chat tab shows unread messages while you're on another tab. A persistent right rail on a wide screen; a **Session** drawer from the tray on a smaller one
 
-You can **drag the dividers** between the columns to resize them, and collapse the side columns entirely to give the map more room. Your layout and last-used tab are remembered per browser. The **header bar** across the top contains navigation, connection status, and DM controls.
+On a wide screen you can collapse the Party and Session rails from the header to give the map more room. Your last-used Session tab is remembered per browser. The **header bar** across the top contains navigation, connection status, documents, and DM tools.
 
 ---
 
@@ -190,7 +190,7 @@ You can **drag the dividers** between the columns to resize them, and collapse t
 
 Maps are the battlegrounds, taverns, and dungeons your players will explore. Before a session, upload your map images to the **Asset Library** (see [The Asset Library](#the-asset-library)), then add them to your campaign.
 
-As the DM, click **Map Library** (the map icon) in the campaign header.
+As the DM, open **Map Library** from the campaign header: the map icon on a wide screen, or **DM tools** then **Map Library** on a narrower one.
 
 *Screenshot pending — Map Library panel.*
 
@@ -203,14 +203,14 @@ From here you can:
 
 ### Managing Campaign Settings
 
-Click **Campaign Settings** (the gear icon) in the campaign header. Here you can update the campaign name, description, and other properties.
+Click **Campaign Settings** in the campaign header (the gear icon on a wide screen, or **DM tools** then **Campaign Settings** on a narrower one). Here you can update the campaign name, description, and other properties.
 
 ### Managing Your Roster
 
-Players join your campaign by accepting an invitation. Once they're in, they appear in the **Campaign Roster** on the left sidebar. You can see all current members and their characters, with the hit points of each (see [The Campaign Roster](DM_GUIDE.md#the-campaign-roster)).
+Players join your campaign by accepting an invitation. Once they're in, they appear in the **Campaign Roster** in the party panel (the left rail on a wide screen, or **Party** from the table-actions tray on a smaller one). You can see all current members and their characters, with the hit points of each (see [The Campaign Roster](DM_GUIDE.md#the-campaign-roster)).
 
 To invite someone:
-1. Click **Invite Player** in the left sidebar, or on the **Members** tab of **Campaign Settings**
+1. Click **Invite Player** in the party panel, or on the **Members** tab of **Campaign Settings**
 2. Type at least 2 letters of their display name in **Search by display name**, or the whole name if it is one letter long, and pick them from the people who match (they need an account first). See [Inviting Players](DM_GUIDE.md#inviting-players)
 3. They'll see a pending invitation on their dashboard
 
@@ -532,7 +532,7 @@ The campaign page reconnects by itself whenever the connection drops, however lo
 
 ### The Chat Panel
 
-The **Chat** panel on the right sidebar is how everyone communicates during a session.
+The **Chat** panel in the session rail (or the **Session** drawer on a smaller screen) is how everyone communicates during a session.
 
 *Screenshot pending — Chat panel with example messages.*
 
@@ -633,7 +633,7 @@ It's your DM's way of setting the tone without breaking the narrative.
 
 ### The Initiative Tracker
 
-The **Initiative** tab on the right sidebar shows the turn order as the DM adds combatants, who's active once combat starts, and HP for creatures whose HP bar the DM has turned on and for any creature token you control; your own character's hit points are on your sheet and roster card, not in the tracker. A creature the DM has hidden is not listed, nor one on a map the DM has not switched to, nor one on the other plane when the DM uses the spirit layer; one that is merely out of your sight is.
+The **Initiative** tab in the session rail (or **Initiative** from the table-actions tray, which opens that tab) shows the turn order as the DM adds combatants, who's active once combat starts, and HP for creatures whose HP bar the DM has turned on and for any creature token you control; your own character's hit points are on your sheet and roster card, not in the tracker. A creature the DM has hidden is not listed, nor one on a map the DM has not switched to, nor one on the other plane when the DM uses the spirit layer; one that is merely out of your sight is.
 
 *Screenshot pending — Initiative tracker panel during combat.*
 

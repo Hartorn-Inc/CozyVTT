@@ -60,7 +60,7 @@ function rollCustom(t: Token): string | undefined {
   const onRoll = vi.fn();
   render(<NpcRollPicker token={t} gameSystem="DND_5E" onRoll={onRoll} onClose={() => undefined} anchorX={0} anchorY={0} />);
   fireEvent.change(screen.getByPlaceholderText('e.g. 2d6+3'), { target: { value: '1d20+2' } });
-  fireEvent.click(screen.getByTitle('Roll'));
+  fireEvent.click(screen.getByRole('button', { name: 'Roll custom expression' }));
   expect(onRoll).toHaveBeenCalledTimes(1);
   return (onRoll.mock.calls[0] as [string, string, string | undefined])[2];
 }
@@ -84,6 +84,25 @@ describe('the name a custom roll from the picker is filed under', () => {
 describe('a stat-block roll for a spirit-plane creature', () => {
   it('is filed under Unknown creature, since the dice log reaches players on the material plane', () => {
     expect(rollScimitar(token({ layer: TokenLayer.SPIRIT }))).toBe('Unknown creature');
+  });
+});
+
+describe('the NPC roll picker dialog', () => {
+  it('is a named dialog with a Close control', () => {
+    const onClose = vi.fn();
+    render(
+      <NpcRollPicker
+        token={token({})}
+        gameSystem="DND_5E"
+        onRoll={() => undefined}
+        onClose={onClose}
+        anchorX={0}
+        anchorY={0}
+      />
+    );
+    expect(screen.getByRole('dialog', { name: 'Roll for Goblin Boss' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalled();
   });
 });
 

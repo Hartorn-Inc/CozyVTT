@@ -5,8 +5,9 @@
  * roll input. Mirrors CharacterRollPicker for player-controlled tokens.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Dices, X, ChevronDown } from 'lucide-react';
+import { useFocusTrap } from '@/hooks/useFocusTrap';
 import type { Token } from '@/types';
 import {
   withAdvantage,
@@ -104,7 +105,7 @@ export default function NpcRollPicker({
   anchorX,
   anchorY,
 }: NpcRollPickerProps) {
-  const pickerRef = useRef<HTMLDivElement>(null);
+  const pickerRef = useFocusTrap(true, onClose);
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
 
   const [mode, setMode] = useState<RollMode>('normal');
@@ -139,21 +140,14 @@ export default function NpcRollPicker({
     setPos({ x, y });
   }, [anchorX, anchorY, hasAnyRolls]);
 
-  // Close on click outside
+  // Close on click outside (Escape is handled by useFocusTrap)
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) onClose();
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
-
-  // Close on Escape
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [onClose]);
+  }, [onClose, pickerRef]);
 
   const handleRollOption = (opt: RollOption) => {
     let expr = opt.expression;
@@ -170,6 +164,9 @@ export default function NpcRollPicker({
   return (
     <div
       ref={pickerRef}
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Roll for ${token.name}`}
       className="fixed z-[60] bg-soft-cream border-2 border-moss-green/30 rounded-lg shadow-2xl overflow-hidden flex flex-col"
       style={{
         left:       pos ? pos.x : anchorX,
@@ -188,8 +185,13 @@ export default function NpcRollPicker({
             Roll for {token.name}
           </span>
         </div>
-        <button onClick={onClose} className="p-0.5 rounded hover:bg-moss-green/10 transition-colors">
-          <X className="w-4 h-4 text-warm-gray" />
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="p-0.5 rounded hover:bg-moss-green/10 transition-colors"
+        >
+          <X className="w-4 h-4 text-warm-gray" aria-hidden="true" />
         </button>
       </div>
 

@@ -56,13 +56,53 @@ interface SessionToolbarProps {
   onOpen: (key: SessionToolKey) => void;
   /** Spirit layer active for the campaign — keeps the purple ring cue. */
   spiritLayerEnabled?: boolean;
+  /**
+   * Wide header: icon buttons with tooltips.
+   * Narrow menu: a labelled list so Map Library and the rest stay readable
+   * without hovering.
+   */
+  layout?: 'icons' | 'list';
+}
+
+function toolClassName(
+  key: SessionToolKey,
+  openPanels: Partial<Record<SessionToolKey, boolean>>,
+  spiritLayerEnabled: boolean
+): string {
+  return cn(
+    openPanels[key] && '!bg-accent/15 !text-accent-ink',
+    key === 'spirit' && 'text-spirit-purple',
+    key === 'spirit' && spiritLayerEnabled && 'ring-2 ring-spirit-purple/50'
+  );
 }
 
 export default function SessionToolbar({
   openPanels,
   onOpen,
   spiritLayerEnabled = false,
+  layout = 'icons',
 }: SessionToolbarProps) {
+  if (layout === 'list') {
+    return (
+      <div className="flex min-w-[14rem] flex-col gap-1" role="toolbar" aria-label="DM tools">
+        {TOOL_GROUPS.flat().map(({ key, label, icon }) => (
+          <Button
+            key={key}
+            variant="ghost"
+            icon={icon}
+            className={cn(
+              'flex min-h-11 w-full items-center justify-start text-left',
+              toolClassName(key, openPanels, spiritLayerEnabled)
+            )}
+            onClick={() => onOpen(key)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center gap-1" role="toolbar" aria-label="DM tools">
       {TOOL_GROUPS.map((group, groupIndex) => (
@@ -76,11 +116,7 @@ export default function SessionToolbar({
                 icon={icon}
                 aria-label={label}
                 onClick={() => onOpen(key)}
-                className={cn(
-                  openPanels[key] && '!bg-accent/15 !text-accent',
-                  key === 'spirit' && 'text-spirit-purple',
-                  key === 'spirit' && spiritLayerEnabled && 'ring-2 ring-spirit-purple/50'
-                )}
+                className={toolClassName(key, openPanels, spiritLayerEnabled)}
               />
             </Tooltip>
           ))}

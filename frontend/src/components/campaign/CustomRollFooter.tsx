@@ -43,23 +43,34 @@ export default function CustomRollFooter({ onRoll }: CustomRollFooterProps) {
         Custom Roll
       </div>
       <div className="flex gap-1.5">
+        <label htmlFor="custom-roll-expression" className="sr-only">
+          Dice expression
+        </label>
         <input
+          id="custom-roll-expression"
           type="text"
           value={expression}
           onChange={(e) => { setExpression(e.target.value); setError(null); }}
           onKeyDown={onEnter}
           placeholder="e.g. 2d6+3"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'custom-roll-error' : undefined}
           className="input-cozy flex-1 text-xs py-1"
         />
         <button
+          type="button"
           onClick={submit}
           className="flex items-center gap-1 px-2 py-1 text-xs rounded-cozy bg-moss-green/10 text-brand-ink border border-moss-green/30 hover:bg-moss-green/20 transition-colors"
-          title="Roll"
+          aria-label="Roll custom expression"
         >
-          <Plus className="w-3 h-3" /> Roll
+          <Plus className="w-3 h-3" aria-hidden="true" /> Roll
         </button>
       </div>
+      <label htmlFor="custom-roll-label" className="sr-only">
+        Roll label
+      </label>
       <input
+        id="custom-roll-label"
         type="text"
         value={label}
         onChange={(e) => setLabel(e.target.value)}
@@ -67,7 +78,11 @@ export default function CustomRollFooter({ onRoll }: CustomRollFooterProps) {
         placeholder="Label (optional, e.g. Fireball Damage)"
         className="input-cozy w-full text-xs py-1"
       />
-      {error && <div className="text-[10px] text-danger-ink">{error}</div>}
+      {error && (
+        <div id="custom-roll-error" role="alert" className="text-[10px] text-danger-ink">
+          {error}
+        </div>
+      )}
     </div>
   );
 }
