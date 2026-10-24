@@ -1343,17 +1343,24 @@ it('does not restore memberships from an older refreshCampaign GET after a roste
 
   getCampaign.mockResolvedValueOnce({
     ...campaignAs('ACTIVE', 'm1', 'DM'),
+    name: 'From roster',
+    chatCooldownEnabled: true,
+    chatCooldownSeconds: 9,
     memberships: [{ userId: 'me', role: 'DM' }, { userId: 'newcomer', role: 'PLAYER' }],
     characters: [{ id: 'char-new', userId: 'newcomer', name: 'Aldra' }],
   });
   await act(async () => { onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newcomer' }); });
   await waitFor(() => expect(latest!.campaign?.memberships?.map((m) => m.userId)).toEqual(['me', 'newcomer']));
   expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-new']);
+  expect(latest!.campaign?.name).toBe('From roster');
+  expect(latest!.campaign?.chatCooldownSeconds).toBe(9);
 
   await act(async () => {
     releaseRefresh({
       ...campaignAs('ACTIVE', 'm1', 'DM'),
       name: 'From refresh',
+      chatCooldownEnabled: false,
+      chatCooldownSeconds: 3,
       memberships: [{ userId: 'me', role: 'DM' }],
       characters: [{ id: 'char-old', userId: 'me', name: 'Harvey' }],
     });
@@ -1362,7 +1369,9 @@ it('does not restore memberships from an older refreshCampaign GET after a roste
 
   expect(latest!.campaign?.memberships?.map((m) => m.userId)).toEqual(['me', 'newcomer']);
   expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-new']);
-  expect(latest!.campaign?.name).toBe('From refresh');
+  expect(latest!.campaign?.name).toBe('From roster');
+  expect(latest!.campaign?.chatCooldownEnabled).toBe(true);
+  expect(latest!.campaign?.chatCooldownSeconds).toBe(9);
 });
 
 it('does not apply a DM load body after demotion while the campaign row is still null', async () => {
@@ -2295,16 +2304,14 @@ it('does not store a DM map list from a refresh GET that itself returns PLAYER',
   await act(async () => {
     releaseRefresh({
       ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
-      maps: [
-        { id: 'keep-map', name: 'The Keep' },
-        { id: 'other', spiritLayerUrl: 'https://example/spirit-other.png' },
-      ],
+      maps: [{ id: 'm1', name: 'The Keep' }],
     });
     await refreshing;
   });
 
   expect(latest!.userRole).toBe('PLAYER');
-  expect(latest!.campaign?.maps?.some((m) => m.spiritLayerUrl === 'https://example/spirit-other.png')).toBe(false);
+  expect(latest!.campaign?.maps?.map((m) => m.id)).toEqual(['m1']);
+  expect(latest!.campaign?.maps?.some((m) => m.spiritLayerUrl)).toBe(false);
   expect(latest!.campaign?.maps?.some((m) => m.id === 'other')).toBe(false);
 });
 
@@ -2392,4 +2399,213 @@ it('applies a missed pause from a roster GET when another member\'s role changes
   expect(latest!.activeSession).toBeNull();
   expect(latest!.campaign?.memberships?.find((m) => m.userId === 'other')?.role).toBe('SPECTATOR');
   expect(latest!.userRole).toBe('PLAYER');
+});
+
+it('strips DM spirit state and extra maps when this user is demoted to PLAYER', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    maps: [
+      { id: 'm1', name: 'Table' },
+      { id: 'other', spiritLayerUrl: 'https://example/spirit-other.png' },
+    ],
+  });
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('visible', 1, 1), { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+      },
+      spiritVisible: true,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('DM');
+  expect(latest!.playerSpiritVisible).toBe(true);
+  expect(Object.keys(useGameStore.getState().tokens)).toContain('spirit-1');
+
+  const onRoleChanged = onRoleChangedHandler();
+  expect(onRoleChanged).toBeDefined();
+  const mapHold = holdGetMap();
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+  });
+
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.playerSpiritVisible).toBe(false);
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('spirit-1');
+  expect(Object.keys(useGameStore.getState().tokens)).toContain('visible');
+  expect(latest!.currentMap?.spiritLayerUrl).not.toBe('https://example/spirit-dm.png');
+  expect(latest!.campaign?.maps?.some((m) => m.spiritLayerUrl === 'https://example/spirit-other.png')).toBe(false);
+  expect(latest!.campaign?.maps?.some((m) => m.id === 'other')).toBe(false);
+  expect(latest!.syncError).toBeNull();
+
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    maps: [{ id: 'm1', name: 'Player Keep' }],
+  });
+  await act(async () => { await latest!.refreshCampaign(); });
+  expect(latest!.campaign?.maps?.map((m) => m.id)).toEqual(['m1']);
+  expect(latest!.campaign?.maps?.[0]?.name).toBe('Player Keep');
+  expect(latest!.campaign?.maps?.some((m) => m.spiritLayerUrl)).toBe(false);
+
+  await act(async () => {
+    mapHold.releaseWith({
+      map: {
+        id: 'm1',
+        tokens: [tokenAt('visible', 1, 1)],
+        spiritLayerUrl: undefined,
+      },
+      spiritVisible: false,
+    });
+  });
+});
+
+it('strips DM spirit state when refreshCampaign GET adopts PLAYER without a role event', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    maps: [
+      { id: 'm1', name: 'Table' },
+      { id: 'other', spiritLayerUrl: 'https://example/spirit-other.png' },
+    ],
+  });
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('visible', 1, 1), { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+      },
+      spiritVisible: true,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('DM');
+  expect(latest!.playerSpiritVisible).toBe(true);
+  expect(Object.keys(useGameStore.getState().tokens)).toContain('spirit-1');
+
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    maps: [{ id: 'm1', name: 'Player Keep' }],
+  });
+  await act(async () => { await latest!.refreshCampaign(); });
+
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.playerSpiritVisible).toBe(false);
+  expect(Object.keys(useGameStore.getState().tokens)).not.toContain('spirit-1');
+  expect(Object.keys(useGameStore.getState().tokens)).toContain('visible');
+  expect(latest!.currentMap?.spiritLayerUrl).not.toBe('https://example/spirit-dm.png');
+  expect(latest!.campaign?.maps?.map((m) => m.id)).toEqual(['m1']);
+  expect(latest!.campaign?.maps?.[0]?.name).toBe('Player Keep');
+  expect(latest!.campaign?.maps?.some((m) => m.spiritLayerUrl)).toBe(false);
+  expect(latest!.campaign?.maps?.some((m) => m.id === 'other')).toBe(false);
+});
+
+it('keeps name and chat cooldown from the later of two overlapping refreshCampaign GETs', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    name: 'Original Keep',
+    chatCooldownEnabled: false,
+    chatCooldownSeconds: 3,
+  });
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.name).toBe('Original Keep'));
+
+  let releaseEarlier: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseEarlier = resolve;
+  }));
+  let earlier: Promise<void> = Promise.resolve();
+  act(() => { earlier = latest!.refreshCampaign(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  let releaseLater: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseLater = resolve;
+  }));
+  let later: Promise<void> = Promise.resolve();
+  act(() => { later = latest!.refreshCampaign(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(3));
+
+  await act(async () => {
+    releaseLater({
+      ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+      name: 'Later Keep',
+      chatCooldownEnabled: true,
+      chatCooldownSeconds: 20,
+    });
+    await later;
+  });
+  expect(latest!.campaign?.name).toBe('Later Keep');
+  expect(latest!.campaign?.chatCooldownSeconds).toBe(20);
+
+  await act(async () => {
+    releaseEarlier({
+      ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+      name: 'Earlier Keep',
+      chatCooldownEnabled: false,
+      chatCooldownSeconds: 5,
+    });
+    await earlier;
+  });
+
+  expect(latest!.campaign?.name).toBe('Later Keep');
+  expect(latest!.campaign?.chatCooldownEnabled).toBe(true);
+  expect(latest!.campaign?.chatCooldownSeconds).toBe(20);
+});
+
+it('copies characters from catch-up when the role clock is unchanged', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    characters: [{ id: 'char-old', userId: 'me', name: 'Harvey' }],
+  });
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.characters?.map((c) => c.id)).toEqual(['char-old']));
+
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    characters: [{ id: 'char-new', userId: 'newcomer', name: 'Aldra' }],
+  });
+  await act(async () => { await latest!.catchUpAfterReconnect(); });
+
+  expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-new']);
+});
+
+it('does not restore characters from an older catch-up after a newer roster GET', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    characters: [{ id: 'char-old', userId: 'me', name: 'Harvey' }],
+  });
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.characters?.map((c) => c.id)).toEqual(['char-old']));
+
+  let releaseCatchUp: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCatchUp = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    characters: [{ id: 'char-roster', userId: 'newcomer', name: 'Aldra' }],
+  });
+  await act(async () => { onRoster!({ action: 'character.assigned', campaignId: 'c1', characterId: 'char-roster', userId: 'newcomer' }); });
+  await waitFor(() => expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-roster']));
+
+  await act(async () => {
+    releaseCatchUp({
+      ...campaignAs('ACTIVE', 'm1', 'DM'),
+      characters: [{ id: 'char-old', userId: 'me', name: 'Harvey' }],
+    });
+    await catching;
+  });
+
+  expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-roster']);
 });
