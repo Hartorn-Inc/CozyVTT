@@ -1199,6 +1199,9 @@ and one subsystem in depth; this covers everything, shallowly.
 Payload shapes are not generated. For those, read the handler named in the
 right-hand column.
 
+`vibe.update` switches the current period (`{ period: string }`) against stored
+settings. It does not write `vibeSettings`. Extra payload keys are ignored.
+
 <!-- BEGIN GENERATED EVENTS -->
 
 _Who may send it is read from the shared permission predicates each handler calls; the handler itself is authoritative._

@@ -251,6 +251,17 @@ function parseArchiveFile<T>(schema: z.ZodType<T>, value: unknown, file: string)
   throw new ArchiveRefusedError(`${file} in the archive is not one CozyVTT can read${where}: ${issue?.message ?? 'invalid'}`);
 }
 
+/** Whether campaign.json named vibe settings before the schema dropped an illegal value. */
+function campaignJsonNamedVibeSettings(raw: unknown): boolean {
+  return (
+    raw !== null
+    && typeof raw === 'object'
+    && !Array.isArray(raw)
+    && Object.prototype.hasOwnProperty.call(raw, 'vibeSettings')
+    && (raw as Record<string, unknown>).vibeSettings !== undefined
+  );
+}
+
 /** The archive's size on disk, refused when it is over the limit. */
 async function checkArchiveSize(archivePath: string, maxSize: number): Promise<void> {
   const { size } = await fs.promises.stat(archivePath);
@@ -597,7 +608,9 @@ export async function importCampaign(
   const campaignEntry = directory.files.find((f) => f.path === 'campaign.json');
   if (!campaignEntry) throw new ArchiveRefusedError('Invalid archive: missing campaign.json');
 
-  const campaignSettings = parseArchiveFile(CampaignSettingsSchema, await readJsonEntry(archivePath, campaignEntry, total), 'campaign.json');
+  const rawCampaign = await readJsonEntry(archivePath, campaignEntry, total);
+  const campaignSettings = parseArchiveFile(CampaignSettingsSchema, rawCampaign, 'campaign.json');
+  const omittedIllegalVibe = campaignJsonNamedVibeSettings(rawCampaign) && campaignSettings.vibeSettings === undefined;
 
   // 4. Extract asset manifest
   const assetManifestEntry = directory.files.find((f) => f.path === 'assets/asset-manifest.json');
@@ -629,8 +642,12 @@ export async function importCampaign(
     const isMapPicture = (ref: string): boolean => mapPictureIds.has(ref);
 
     // The same presets a new campaign gets, so an archive with no atmosphere
-    // settings imports with the atmosphere the allowlists accept.
+    // settings — or one whose vibe the shared schema could not use — imports
+    // with the atmosphere the allowlists accept.
     const defaultVibeSettings = JSON.parse(JSON.stringify(DEFAULT_VIBE_SETTINGS)) as Prisma.InputJsonValue;
+    if (omittedIllegalVibe) {
+      report.warn("The archive's vibe settings could not be used, so they were omitted.");
+    }
     // Vibe periods name audio assets by id; point them at the imported copies.
     // A track the archive does not carry becomes no audio, so an old note or a
     // reference to an asset left out of the export never dangles.
