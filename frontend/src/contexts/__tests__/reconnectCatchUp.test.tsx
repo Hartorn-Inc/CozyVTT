@@ -1858,7 +1858,7 @@ it('does not apply a DM catch-up getMap of claimed B after demotion and offers R
   });
 
   expect(catchUpResult).toEqual({ ok: false, message: 'Failed to refresh the current map' });
-  expect(latest!.syncError).toBe('Failed to refresh the current map');
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm1'));
   expect(latest!.userRole).toBe('PLAYER');
   expect(latest!.currentMap?.id).toBe('m1');
   expect(latest!.campaign?.currentMapId).toBe('m1');
@@ -2625,8 +2625,79 @@ it('does not restore characters from an older catch-up after a newer roster GET'
 const lockedDoor = { id: 'door-1', x1: 0, y1: 0, x2: 40, y2: 0, type: 'door-locked' as const };
 const closedDoor = { id: 'door-1', x1: 0, y1: 0, x2: 40, y2: 0, type: 'door-closed' as const };
 const dmLight = { id: 'light-1', x: 10, y: 10, brightRadius: 2, dimRadius: 4, color: '#ffcc66', enabled: true };
+const onLight = { id: 'light-on', x: 10, y: 10, brightRadius: 2, dimRadius: 4, color: '#ffcc66', enabled: true };
+const offLight = { id: 'light-off', x: 20, y: 20, brightRadius: 1, dimRadius: 2, color: '#3366ff', enabled: false };
 const hiddenCreature = { ...tokenAt('hidden', 8, 8), visible: false, notes: 'Keeper notes' } as Token;
 const notedVisible = { ...tokenAt('visible', 1, 1), notes: 'Keeper notes', statBlock: { ac: 15 } } as unknown as Token;
+const npcHp = { current: 8, max: 12, temp: 0 };
+const ownHp = { current: 10, max: 10, temp: 0 };
+const npcWithKeeperFields = {
+  ...tokenAt('npc-1', 2, 2),
+  name: 'Goblin',
+  imageUrl: '/goblin.png',
+  controlledBy: 'other',
+  hp: npcHp,
+  showHpBar: false,
+  sightRadius: 12,
+  creatureTemplateId: 'tmpl-goblin',
+  notes: 'Keeper notes',
+  statBlock: { ac: 15 },
+} as Token;
+const obscuredOtherToken = {
+  ...tokenAt('veiled', 3, 3),
+  name: 'Disguised Rogue',
+  imageUrl: '/rogue.png',
+  controlledBy: 'other',
+  disposition: 'friendly',
+  obscured: true,
+  hp: npcHp,
+  sightRadius: 6,
+  creatureTemplateId: 'tmpl-rogue',
+} as Token;
+const ownControlledToken = {
+  ...tokenAt('mine', 1, 1),
+  name: 'Harvey',
+  imageUrl: '/harvey.png',
+  controlledBy: 'me',
+  hp: ownHp,
+  showHpBar: false,
+  sightRadius: 12,
+  creatureTemplateId: 'tmpl-me',
+} as Token;
+const keeperTableTokens = [
+  ownControlledToken,
+  npcWithKeeperFields,
+  obscuredOtherToken,
+  hiddenCreature,
+  { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token,
+];
+
+const expectKeeperFieldsMasked = () => {
+  const stored = useGameStore.getState().tokens;
+  expect(stored['npc-1']).not.toHaveProperty('hp');
+  expect(stored['npc-1']).not.toHaveProperty('sightRadius');
+  expect(stored['npc-1']).not.toHaveProperty('creatureTemplateId');
+  expect(stored['veiled']?.name).toBe('');
+  expect(stored['veiled']?.imageUrl).toBe('');
+  expect(stored['veiled']?.disposition).toBeNull();
+  expect(stored['mine']?.hp).toEqual(ownHp);
+  expect(stored).not.toHaveProperty('spirit-1');
+  expect(stored).not.toHaveProperty('hidden');
+  const mapTokens = latest!.currentMap?.tokens;
+  if (mapTokens) {
+    const npc = mapTokens.find((t) => t.id === 'npc-1');
+    expect(npc).not.toHaveProperty('hp');
+    expect(npc).not.toHaveProperty('sightRadius');
+    expect(npc).not.toHaveProperty('creatureTemplateId');
+    const veiled = mapTokens.find((t) => t.id === 'veiled');
+    expect(veiled?.name).toBe('');
+    expect(veiled?.imageUrl).toBe('');
+    expect(veiled?.disposition).toBeNull();
+    expect(mapTokens.find((t) => t.id === 'mine')?.hp).toEqual(ownHp);
+    expect(mapTokens.some((t) => t.id === 'spirit-1' || t.id === 'hidden')).toBe(false);
+    expect(latest!.currentMap?.lights?.some((l) => l.enabled !== true)).toBe(false);
+  }
+};
 
 it('hydrates a player-filtered map when refreshCampaign GET adopts PLAYER without a role event', async () => {
   getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
@@ -2729,6 +2800,183 @@ it('strips hidden tokens, notes, and locked doors when GET adopts PLAYER before 
     mapHold.fail(mapUnavailable());
     await refreshing;
   });
+});
+
+it('masks keeper token fields and drops off lights on socket demotion before player getMap', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    maps: [
+      { id: 'm1', name: 'Table' },
+      { id: 'other', spiritLayerUrl: 'https://example/spirit-other.png' },
+    ],
+  });
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: keeperTableTokens,
+        lights: [onLight, offLight],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+      },
+      spiritVisible: true,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('DM');
+  expect(useGameStore.getState().tokens['npc-1']?.hp).toEqual(npcHp);
+  expect(useGameStore.getState().tokens['npc-1']?.sightRadius).toBe(12);
+  expect(useGameStore.getState().tokens['veiled']?.name).toBe('Disguised Rogue');
+  expect(latest!.currentMap?.lights?.map((l) => l.id)).toEqual(['light-on', 'light-off']);
+
+  const onRoleChanged = onRoleChangedHandler();
+  expect(onRoleChanged).toBeDefined();
+  const mapHold = holdGetMap();
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+  });
+
+  expect(latest!.userRole).toBe('PLAYER');
+  expectKeeperFieldsMasked();
+  expect(latest!.currentMap?.lights?.map((l) => l.id)).toEqual(['light-on']);
+  expect(getMap).toHaveBeenCalledTimes(2);
+
+  await act(async () => {
+    mapHold.fail(mapUnavailable());
+  });
+
+  expectKeeperFieldsMasked();
+  expect(latest!.currentMap?.lights?.map((l) => l.id)).toEqual(['light-on']);
+  expect(latest!.currentMap?.id).toBe('m1');
+});
+
+it('starts a player getMap of the on-screen map after a conflicting catch-up claim releases', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: keeperTableTokens,
+        lights: [onLight, offLight],
+        spiritLayerUrl: 'https://example/spirit-m1.png',
+      },
+      spiritVisible: true,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('DM');
+
+  const onRoleChanged = onRoleChangedHandler();
+  expect(onRoleChanged).toBeDefined();
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'DM'));
+  const holdB = holdGetMap();
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm2'));
+  const getMapCallsWhileBClaimed = getMap.mock.calls.length;
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+  });
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(getMap.mock.calls.length).toBe(getMapCallsWhileBClaimed);
+  expectKeeperFieldsMasked();
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.currentMap?.lights?.map((l) => l.id)).toEqual(['light-on']);
+
+  const holdA = holdGetMap();
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    holdB.releaseWith({
+      map: {
+        id: 'm2',
+        tokens: [tokenAt('visible', 1, 1), { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+      },
+      spiritVisible: true,
+    });
+    catchUpResult = await catching;
+  });
+
+  expect(catchUpResult).toEqual({ ok: false, message: 'Failed to refresh the current map' });
+  expect(latest!.currentMap?.id).toBe('m1');
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm1'));
+  expect(getMap.mock.calls.filter(([, mapId]) => mapId === 'm1').length).toBeGreaterThan(1);
+
+  await act(async () => {
+    holdA.fail(mapUnavailable());
+  });
+
+  expectKeeperFieldsMasked();
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.currentMap?.lights?.map((l) => l.id)).toEqual(['light-on']);
+  expect(latest!.userRole).toBe('PLAYER');
+});
+
+it('adopts a PLAYER loadCampaign GET over a pre-request DM liveRoleRef', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'DM'),
+    memberships: [{ userId: 'me', role: 'DM' }, { userId: 'other', role: 'PLAYER' }],
+    maps: [{ id: 'm1', name: 'Table' }, { id: 'other', spiritLayerUrl: 'https://example/spirit-other.png' }],
+  });
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: keeperTableTokens,
+        lights: [onLight, offLight],
+        spiritLayerUrl: 'https://example/spirit-dm.png',
+      },
+      spiritVisible: true,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('DM');
+  expect(useGameStore.getState().tokens['npc-1']?.hp).toEqual(npcHp);
+  expect(useGameStore.getState().tokens['npc-1']?.sightRadius).toBe(12);
+
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    memberships: [{ userId: 'me', role: 'PLAYER' }, { userId: 'other', role: 'PLAYER' }],
+    maps: [
+      {
+        id: 'm1',
+        name: 'Player Keep',
+        spiritLayerUrl: 'https://example/spirit-leak.png',
+        tokens: [npcWithKeeperFields],
+      },
+      {
+        id: 'other',
+        spiritLayerUrl: 'https://example/spirit-other.png',
+        tokens: [hiddenCreature, { id: 'spirit-1', layer: TokenLayer.SPIRIT } as Token],
+      },
+    ],
+  });
+  const mapHold = holdGetMap();
+  let loading: Promise<void> = Promise.resolve();
+  act(() => { loading = latest!.loadCampaign('c1'); });
+  await waitFor(() => expect(getMap).toHaveBeenCalledTimes(2));
+  expect(getMap).toHaveBeenLastCalledWith('c1', 'm1');
+
+  await waitFor(() => expect(latest!.userRole).toBe('PLAYER'));
+  expect(latest!.campaign?.memberships?.find((m) => m.userId === 'me')?.role).toBe('PLAYER');
+  expect(latest!.campaign?.memberships?.some((m) => m.role === 'DM')).toBe(false);
+  expect(latest!.campaign?.maps?.some((m) => m.id === 'other')).toBe(false);
+  expect(latest!.campaign?.maps?.some((m) => m.spiritLayerUrl)).toBe(false);
+  expectKeeperFieldsMasked();
+
+  await act(async () => {
+    mapHold.fail(mapUnavailable());
+    await loading;
+  });
+
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.campaign?.memberships?.some((m) => m.role === 'DM')).toBe(false);
+  expectKeeperFieldsMasked();
 });
 
 it('refetches the on-screen map as PLAYER when a demotion GET of B is discarded after a live switch', async () => {

@@ -18,12 +18,13 @@ import campaignService from '@/services/campaign.service';
 import api from '@/services/api';
 import { useAuth } from '@/contexts/AuthContext';
 import { useGameStore } from '@/stores/gameStore';
-import type { Campaign, CampaignMembership, CampaignRole, CampaignStatus, Map, VibeSettings, VibePeriod, CharacterHpUpdatedBroadcast, DmTransferredBroadcast, MemberRoleChangedBroadcast } from '@/types';
+import type { Campaign, CampaignMembership, CampaignRole, CampaignStatus, Map, Token, VibeSettings, VibePeriod, CharacterHpUpdatedBroadcast, DmTransferredBroadcast, MemberRoleChangedBroadcast } from '@/types';
 import { TokenLayer } from '@/types';
 import type { CharacterHpInfo } from '@/utils/characterHp';
 import socketClient from '@/services/socket';
 import { apiErrorMessage, apiErrorStatus } from '@/utils/errors';
 import { withMemberRole } from '@/utils/campaignRoles';
+import { tokenSentTo } from '@/utils/tokenMask';
 
 // ============================================
 // Types
@@ -303,6 +304,9 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // is still in flight. refreshCurrentMap / retryMapLoad of a different id
   // must not steal that sequence.
   const claimedMapRef = useRef<{ id: string | null; seq: number } | null>(null);
+  // Demotion asked for a player getMap of the on-screen map while a
+  // different id was claimed. Run that read when the claim actually clears.
+  const pendingPlayerDemotionReadRef = useRef(false);
   const bumpGeneration = () => {
     loadGeneration.current += 1;
     return loadGeneration.current;
@@ -328,17 +332,25 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     role === 'PLAYER' || role === 'SPECTATOR';
   /**
    * This user just left the DM seat. Drop spirit-plane UI, maps a player
-   * cannot read, hidden tokens, Keeper notes/stat blocks, and door locks
-   * until a player-filtered GET/getMap replaces the rest (lights, etc.).
+   * cannot read, hidden tokens, Keeper notes/stat blocks, door locks, off
+   * lights, and token fields a player is not sent (`tokenSentTo`). A
+   * player-filtered GET/getMap still replaces the rest; this frame must
+   * already be masked if that read cannot start or fails.
    */
+  const tokensVisibleToDemotedPlayer = (tokens: Token[]): Token[] => {
+    const userId = userIdRef.current;
+    return tokens
+      .filter((t) => t.layer !== TokenLayer.SPIRIT && t.visible !== false)
+      .map((t) => ({
+        ...tokenSentTo(t, t.controlledBy === userId),
+        notes: '',
+        statBlock: null,
+      }));
+  };
   const stripDemotedDmSpirit = () => {
     setPlayerSpiritVisible(false);
     const tokens = Object.values(useGameStore.getState().tokens);
-    useGameStore.getState().setTokens(
-      tokens
-        .filter((t) => t.layer !== TokenLayer.SPIRIT && t.visible !== false)
-        .map((t) => ({ ...t, notes: '', statBlock: null })),
-    );
+    useGameStore.getState().setTokens(tokensVisibleToDemotedPlayer(tokens));
     setCurrentMapState((prev) => {
       if (!prev) return prev;
       const walls = prev.wallSegments;
@@ -347,22 +359,26 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         ? walls.map((w) => (w.type === 'door-locked' ? { ...w, type: 'door-closed' as const } : w))
         : walls;
       const nextTokens = prev.tokens
-        ?.filter((t) => t.layer !== TokenLayer.SPIRIT && t.visible !== false)
-        .map((t) => ({ ...t, notes: '', statBlock: null }));
+        ? tokensVisibleToDemotedPlayer(prev.tokens)
+        : prev.tokens;
+      const nextLights = prev.lights?.filter((light) => light.enabled === true);
+      const lightsChanged = Boolean(prev.lights?.some((light) => light.enabled !== true));
       const spiritChanged = Boolean(prev.spiritLayerUrl);
-      if (!hadLockedDoor && !spiritChanged && nextTokens === prev.tokens) return prev;
+      if (!hadLockedDoor && !spiritChanged && !lightsChanged && nextTokens === prev.tokens) return prev;
       return {
         ...prev,
         spiritLayerUrl: spiritChanged ? null : prev.spiritLayerUrl,
         wallSegments: nextWalls,
         tokens: nextTokens ?? prev.tokens,
+        lights: nextLights ?? prev.lights,
       };
     });
     const tableMapId = currentMapIdRef.current;
     setCampaign((prev) => {
       if (!prev?.maps) return prev;
+      const keepId = tableMapId ?? prev.currentMapId;
       const nextMaps = prev.maps
-        .filter((m) => m.id === tableMapId)
+        .filter((m) => m.id === keepId)
         .map((m) => (m.spiritLayerUrl ? { ...m, spiritLayerUrl: null } : m));
       return { ...prev, maps: nextMaps };
     });
@@ -548,9 +564,11 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   };
 
   const releaseFetchedMapClaim = (seq: number) => {
-    if (claimedMapRef.current?.seq === seq) {
-      claimedMapRef.current = null;
-    }
+    if (claimedMapRef.current?.seq !== seq) return;
+    claimedMapRef.current = null;
+    if (!pendingPlayerDemotionReadRef.current) return;
+    pendingPlayerDemotionReadRef.current = false;
+    void refreshCurrentMapRef.current({ playerDemotion: true });
   };
 
   const applyHydratedMap = (
@@ -764,6 +782,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       liveSessionRef.current = null;
     }
     claimedMapRef.current = null;
+    pendingPlayerDemotionReadRef.current = false;
     shownCampaignId.current = campaignId;
     setLoading(true);
     setError(null);
@@ -777,6 +796,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     currentMapIdRef.current = null;
     setCurrentMapState(null);
     const mapEpochWhenStarted = mapEpoch.current;
+    const liveRoleWhenStarted = liveRoleRef.current;
 
     try {
       const data = await campaignService.getCampaign(campaignId);
@@ -786,11 +806,21 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       const ownFromGet = ownId
         ? data.memberships?.find((m) => m.userId === ownId)?.role
         : undefined;
-      // A demotion (or promotion) heard while campaign was null is stored on
-      // liveRoleRef. The GET may still be the body authorized for the old
+      // A demotion (or promotion) heard while this GET was in flight is stored
+      // on liveRoleRef. The GET may still be the body authorized for the old
       // role — do not keep its memberships or extra maps / spiritLayerUrl,
-      // and do not hydrate a map from it.
-      const roleMismatch = liveRole != null && ownFromGet !== liveRole;
+      // and do not hydrate a map from it. A pre-request DM liveRoleRef is not
+      // newer than a PLAYER/SPECTATOR GET: adopt that role, copy its maps,
+      // strip the DM token store, and hydrate as the new role. A DM GET while
+      // live role is already non-DM (first load / retry of that row) is still
+      // discarded. Another member's role may move sessionEpoch without
+      // changing liveRoleRef; that does not discard this GET.
+      const liveRoleMovedDuringThisGet = liveRole !== liveRoleWhenStarted;
+      const staleDmBody = ownFromGet === 'DM' && isNonDmRole(liveRole);
+      const roleMismatch =
+        liveRole != null
+        && ownFromGet !== liveRole
+        && (liveRoleMovedDuringThisGet || staleDmBody);
       // A live pause/end heard while campaign was null is stored on
       // liveStatusRef / liveSessionRef. Prefer those over this GET, but still
       // install the GET maps and roster when this user's role did not change.
@@ -808,7 +838,13 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
           ...data,
           status,
         });
+        // Adopt the GET role when it did not lose to a live change during
+        // this request. A pre-request DM ref must not stay over a PLAYER GET,
+        // even if another member's role moved sessionEpoch while we waited.
         if (ownFromGet) liveRoleRef.current = ownFromGet;
+        if (ownFromGet && leftDmSeat(liveRoleWhenStarted, ownFromGet)) {
+          stripDemotedDmSpirit();
+        }
       }
 
       // Initialize active session from campaign response unless a live
@@ -997,7 +1033,11 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     // A claim of a different id (catch-up hydrating B) must not be stolen.
     // A claim of this same id does not skip: demotion of the on-screen map
     // must bump mapReadSeq so a hung DM getMap of this id cannot apply.
-    if (hasConflictingMapClaim(mapId)) return;
+    if (hasConflictingMapClaim(mapId)) {
+      if (opts?.playerDemotion) pendingPlayerDemotionReadRef.current = true;
+      return;
+    }
+    pendingPlayerDemotionReadRef.current = false;
     const generation = loadGeneration.current;
     const mapEpochWhenStarted = mapEpoch.current;
     const seq = bumpMapReadSeq();
