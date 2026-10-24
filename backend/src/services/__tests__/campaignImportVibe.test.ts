@@ -1,7 +1,8 @@
 /**
  * An archive whose campaign.json vibe the shared schema cannot use still
  * creates the campaign: the illegal vibe is omitted with a warning, and the
- * new campaign gets the default periods. Omitting vibeSettings is silent.
+ * new campaign gets the default periods. Omitting vibeSettings, or naming an
+ * empty object (the JSON column default), is silent.
  *
  * Requires PostgreSQL at DATABASE_URL.
  */
@@ -74,6 +75,15 @@ describe('an archive whose vibe a write would refuse', () => {
   it('does not warn when the archive simply omitted vibeSettings', async () => {
     const result = await importCampaign(await archive({}), userId);
 
+    expect(result.warnings).toEqual([]);
+    const campaign = await prisma.campaign.findUniqueOrThrow({ where: { id: result.campaignId } });
+    expect(campaign.vibeSettings).toEqual(DEFAULT_VIBE_SETTINGS);
+  });
+
+  it('does not warn when the archive named an empty vibe object', async () => {
+    const result = await importCampaign(await archive({ vibeSettings: {} }), userId);
+
+    expect(result.campaignId).toEqual(expect.any(String));
     expect(result.warnings).toEqual([]);
     const campaign = await prisma.campaign.findUniqueOrThrow({ where: { id: result.campaignId } });
     expect(campaign.vibeSettings).toEqual(DEFAULT_VIBE_SETTINGS);
