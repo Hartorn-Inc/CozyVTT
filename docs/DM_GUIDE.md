@@ -42,7 +42,7 @@ Click **Create Campaign** and you're taken directly to the campaign page.
 
 ### Campaign Settings
 
-Once inside the campaign, click the **Campaign Settings** button (gear icon in the header) to open the Campaign Settings panel. It has four tabs:
+Once inside the campaign, click **Campaign Settings** in the header (the gear icon on a wide screen, or **DM tools** then **Campaign Settings** on a narrower one) to open the Campaign Settings panel. It has four tabs:
 
 - **General** — the **Campaign Name** and **Description**, saved with **Save Changes**, and **Export Campaign** (see [Exporting a Campaign](#exporting-a-campaign))
 - **Chat** — **Enable message cooldown**, off by default, makes everyone in the chat, you included, wait between messages, for the **Cooldown duration** you set (1 to 300 seconds). While someone waits, a line under their chat box counts down, such as "Wait 5s before sending another message"
@@ -55,7 +55,7 @@ Once inside the campaign, click the **Campaign Settings** button (gear icon in t
 
 To invite a player to your campaign:
 
-1. Click **Invite Player** in the left sidebar, or on the **Members** tab of **Campaign Settings**
+1. Click **Invite Player** in the party panel (the left rail on a wide screen, or **Party** from the table-actions tray on a smaller one), or on the **Members** tab of **Campaign Settings**
 2. Type at least 2 letters of their display name in **Search by display name**, then pick them from the people who match. The search finds anyone on your instance whose name contains what you typed, and who isn't already a member, already invited, or waiting for an administrator to approve their account. If their whole name is one letter, type that letter: a single letter finds only people whose name is exactly that letter. It shows at most 20 people; if there are more, it says so, and typing more of the name narrows them down. They must have an account first
 3. Optionally tick **Also email them an invitation**
 4. The player sees the invitation under **Pending Invitations** on their dashboard
@@ -68,7 +68,7 @@ The email's subject line names your instance and nothing else ("You have a new c
 
 The search deliberately shows display names and profile pictures and not email addresses, and lists nobody until you type, so running a campaign doesn't become a way to collect everyone's address or a list of everyone on the instance. Two people can have the same display name; their profile pictures are how to tell them apart, and if neither has one, ask your player which they are.
 
-When a player accepts, they'll choose which of their characters to bring. Once they've joined, their character appears in the **Campaign Roster** on the left sidebar.
+When a player accepts, they'll choose which of their characters to bring. Once they've joined, their character appears in the **Campaign Roster** in the party panel.
 
 > **Note:** If registration is closed on your instance, the platform administrator will need to create accounts for your players before you can invite them.
 
@@ -76,7 +76,7 @@ When a player accepts, they'll choose which of their characters to bring. Once t
 
 ### The Campaign Roster
 
-The left sidebar's **Campaign Roster** shows all players currently in your campaign along with their assigned characters. It is a quick reference during sessions for names, character names and party composition — and it is also how you get a player's character onto the map.
+The **Campaign Roster** in the party panel (left rail on a wide screen, or **Party** from the table-actions tray on a smaller one) shows all players currently in your campaign along with their assigned characters. It is a quick reference during sessions for names, character names and party composition — and it is also how you get a player's character onto the map.
 
 **Moving a token to another map.** Switching maps offers to bring tokens along, a token's right-click menu offers **Move to Map…**, and in the Token Manager the map icon (**Move to another map**) opens **Move to which map?**. A token that moves keeps everything about it: its type, who controls it, its darkvision, hit points, conditions, notes and stat block.
 
@@ -146,7 +146,7 @@ Before you can use a map in your campaign, it needs to live in the **Asset Libra
 
 Once your map is in the asset library:
 
-1. Inside your campaign, click **Map Library** (the map icon) in the header
+1. Inside your campaign, click **Map Library** in the header (the map icon on a wide screen, or **DM tools** then **Map Library** on a narrower one)
 2. The Map Library panel opens
 3. Click **Create Map**, pick your uploaded image (or click **Upload New** to add one, choosing where it goes as below) and check the grid settings
 4. The map is now available to switch to at any time
@@ -224,7 +224,7 @@ The Token Manager opens on the form for a new token. Fill in what applies, then 
 
 ### Token Roster
 
-The **Token Roster** (visible only to you, in the left sidebar) lists all tokens on the current map. Point at a token in the list for its actions: edit it, hide or show it, obscure or reveal its identity, duplicate it, or remove it. The buttons stay visible on a touch screen and while you tab through them. If an action fails, a message pops up saying what went wrong. Removing a token, here, in the Token Manager, in the quick editor or with **Remove from Map** in the token's right-click menu, asks first and names the token.
+The **Token Roster** (visible only to you, in the party panel) lists all tokens on the current map. Point at a token in the list for its actions: edit it, hide or show it, obscure or reveal its identity, duplicate it, or remove it. The buttons stay visible on a touch screen and while you tab through them. If an action fails, a message pops up saying what went wrong. Removing a token, here, in the Token Manager, in the quick editor or with **Remove from Map** in the token's right-click menu, asks first and names the token. Selected-token actions also sit in the **table actions** tray under the map — **Edit token** and **Add to initiative** included — so they are not right-click only.
 
 ### Placing Tokens on the Map
 
@@ -357,7 +357,7 @@ The Creature Library is your DM-side catalog of creature templates — stat bloc
 
 ### Opening the Creature Library
 
-Click **Creature Library** (the skull icon) in the campaign header's DM toolbar to open the Creature Library panel. The toolbar's buttons are icons; point at one to see its name. The library shows all available creature templates: both **SRD creatures** (imported from Open5e) and **custom creatures** you've created for this campaign.
+Click **Creature Library** in the campaign header's DM tools to open the Creature Library panel. On a wide screen the tools are icons (point at one to see its name); on a narrower screen **DM tools** opens a labelled list. The library shows all available creature templates: both **SRD creatures** (imported from Open5e) and **custom creatures** you've created for this campaign.
 
 ### SRD Creature Seeding
 
@@ -629,7 +629,7 @@ Templates are per game system, so a D&D 5e template is only useful to a D&D 5e c
 
 ### Viewing the Roster
 
-The Campaign Roster in the left sidebar gives you a real-time view of all players and their characters. During a session, you can see who's connected.
+The Campaign Roster in the party panel gives you a real-time view of all players and their characters. During a session, you can see who's connected.
 
 ### Removing a Player
 
@@ -716,7 +716,7 @@ Otherwise templates snap to your map's grid, so a shape covers whole squares rat
 
 ### Starting a Session
 
-When your players are ready, click **Start Session** in the right sidebar's **Session** tab. This:
+When your players are ready, click **Start Session** in the **Session** tab of the session rail (or the **Session** drawer from the table-actions tray). This:
 
 - Changes the campaign status to **Live** (green indicator in the header)
 - Lets players move their tokens again if the last session had ended (a paused session is continued with **Resume Session**, below)
@@ -775,7 +775,7 @@ This is perfect for behind-the-screen perception checks, wandering monster rolls
 
 ### The Vibe Tracker
 
-The **Vibe Tracker**, in the **Session** tab of the right sidebar, sets the time of day for the scene. A new campaign has four periods, dawn, day, dusk and night; click one to switch. Each period tints the whole map for everyone with its own colour filter, fading over a few seconds, and its name shows in the header. The gear beside the tracker opens the period editor, where you can rename periods, add or remove them, and set each one's colour and filter with sliders. Each period can also carry an **audio track**, picked from the same set the Atmosphere panel plays: switching to that period starts the track looping for everyone at the table, and switching to a period without one silences the table. If the tracker has been switched off for the campaign, the panel says so in place of the periods, and saving the period editor turns it back on.
+The **Vibe Tracker**, in the **Session** tab of the session rail, sets the time of day for the scene. A new campaign has four periods, dawn, day, dusk and night; click one to switch. Each period tints the whole map for everyone with its own colour filter, fading over a few seconds, and its name shows in the header. The gear beside the tracker opens the period editor, where you can rename periods, add or remove them, and set each one's colour and filter with sliders. Each period can also carry an **audio track**, picked from the same set the Atmosphere panel plays: switching to that period starts the track looping for everyone at the table, and switching to a period without one silences the table. If the tracker has been switched off for the campaign, the panel says so in place of the periods, and saving the period editor turns it back on.
 
 Switching the period as the story moves on, from a bright afternoon to a cold night on the road, sets the mood before you say a word.
 
@@ -787,7 +787,7 @@ Switching the period as the story moves on, from a bright afternoon to a cold ni
 
 ### Starting the Initiative Tracker
 
-The **Initiative** tab in the right sidebar is always there, for you and your players. Add the combatants (below), roll or set their initiative, then click **Start Combat**: round one begins with the first combatant in the order. Players see each combatant in their own tracker as you add it, apart from creatures you have hidden, ones on a map you have not switched to, and ones on the other plane from the player (see [The Spirit Layer](#the-spirit-layer)).
+The **Initiative** tab in the session rail is always there, for you and your players (on a smaller screen, **Initiative** in the table-actions tray opens it). Add the combatants (below), roll or set their initiative, then click **Start Combat**: round one begins with the first combatant in the order. Players see each combatant in their own tracker as you add it, apart from creatures you have hidden, ones on a map you have not switched to, and ones on the other plane from the player (see [The Spirit Layer](#the-spirit-layer)).
 
 *Screenshot pending — Initiative tracker with active combat.*
 
@@ -847,7 +847,7 @@ This works for players too, and it's read-only — hovering never selects, moves
 
 Put the cursor where you mean and press **Tab**. A dot with radiating rings appears there for everyone, in your colour with your name beside it — far quicker than describing a spot out loud.
 
-- The cursor has to be over the map; Tab does nothing over the sidebar or chat.
+- The cursor has to be over the map; Tab does nothing over the rails, drawers or chat.
 - Tab still behaves normally when you're typing or navigating with the keyboard, so it won't interfere with the rest of the interface.
 - Everyone can ping, and each person's colour is assigned automatically and stays consistent.
 - Pings are drawn above dynamic lighting on purpose, so you can point into an unlit area and players will still see the mark — pointing at somewhere dark is exactly when you need it. Note this means a ping does **not** respect fog: it marks a spot, so don't use it to gesture at something your players aren't meant to know about yet.

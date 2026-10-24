@@ -396,4 +396,110 @@ describe('a right-click', () => {
       expect(screen.getByText('Obscure Identity')).toBeInTheDocument();
     },
   );
+
+  it('focuses the token as well as opening the menu', () => {
+    const onFocusToken = vi.fn();
+    render(<MapCanvas onFocusToken={onFocusToken} />);
+    show(goblin());
+
+    fireEvent.contextMenu(surface(), at(0, 19));
+
+    expect(screen.getByText('Remove from Map')).toBeInTheDocument();
+    expect(onFocusToken).toHaveBeenCalledWith('tok-goblin');
+  });
+});
+
+describe('focusing a token for the contextual tray', () => {
+  it('calls onFocusToken with that token when the viewer clicks a visible one', () => {
+    const onFocusToken = vi.fn();
+    render(<MapCanvas onFocusToken={onFocusToken} />);
+    show(goblin());
+
+    click(at(0, 19));
+
+    expect(onFocusToken).toHaveBeenCalledWith('tok-goblin');
+  });
+
+  it('focuses a token a player can see but cannot move, without picking it up', () => {
+    const onFocusToken = vi.fn();
+    h.set({ userRole: 'PLAYER' });
+    render(<MapCanvas onFocusToken={onFocusToken} />);
+    show(goblin());
+
+    click(at(0, 19));
+
+    expect(onFocusToken).toHaveBeenCalledWith('tok-goblin');
+    expect(sentOf('token.move.start')).toEqual([]);
+  });
+
+  it('does not start a pan when the click hit a visible token the viewer cannot move', () => {
+    h.set({ userRole: 'PLAYER' });
+    render(<MapCanvas />);
+    show(goblin());
+
+    fireEvent.mouseDown(surface(), { ...at(0, 19), button: 0, buttons: 1 });
+    fireEvent.mouseMove(surface(), { clientX: 60, clientY: 10, buttons: 1 });
+    fireEvent.mouseUp(surface(), { clientX: 60, clientY: 10, button: 0 });
+
+    // Without a pan, the first column is still under x 10.
+    fireEvent.mouseMove(surface(), { clientX: 10, clientY: 10 });
+    expect(readout()).toBe('(0, 19)');
+  });
+
+  it('calls onFocusToken(null) when the viewer clicks empty map', () => {
+    const onFocusToken = vi.fn();
+    render(<MapCanvas onFocusToken={onFocusToken} />);
+
+    click({ clientX: 500, clientY: 500 });
+
+    expect(onFocusToken).toHaveBeenCalledWith(null);
+  });
+
+  it('still picks a movable token up when focusing it', () => {
+    const onFocusToken = vi.fn();
+    render(<MapCanvas onFocusToken={onFocusToken} />);
+    show(goblin());
+
+    click(at(0, 19));
+
+    expect(onFocusToken).toHaveBeenCalledWith('tok-goblin');
+    expect(sentOf('token.move.start')).toEqual([{ tokenId: 'tok-goblin', mapId: 'map-a' }]);
+  });
+
+  it('does not clear focus when putting a held token down', () => {
+    const onFocusToken = vi.fn();
+    render(<MapCanvas onFocusToken={onFocusToken} />);
+    show(goblin());
+    click(at(0, 19));
+    onFocusToken.mockClear();
+
+    click(at(3, 19));
+
+    expect(onFocusToken).not.toHaveBeenCalled();
+    expect(sentOf('token.move.end')).toEqual([{ tokenId: 'tok-goblin', mapId: 'map-a', x: 3, y: 19 }]);
+  });
+
+  it('does not focus a token the viewer cannot see', () => {
+    const onFocusToken = vi.fn();
+    h.set({ userRole: 'PLAYER' });
+    render(<MapCanvas onFocusToken={onFocusToken} />);
+    show(token('tok-hidden', 'Hidden Scout', 0, 19, { visible: false }));
+
+    click(at(0, 19));
+
+    expect(onFocusToken).toHaveBeenCalledWith(null);
+    expect(onFocusToken).not.toHaveBeenCalledWith('tok-hidden');
+  });
+
+  it('clears focus when a focused token is no longer visible to the viewer', () => {
+    const onFocusToken = vi.fn();
+    h.set({ userRole: 'PLAYER' });
+    show(token('tok-scout', 'Scout', 0, 19));
+    render(<MapCanvas focusedTokenId="tok-scout" onFocusToken={onFocusToken} />);
+    expect(onFocusToken).not.toHaveBeenCalled();
+
+    show(token('tok-scout', 'Scout', 0, 19, { visible: false }));
+
+    expect(onFocusToken).toHaveBeenCalledWith(null);
+  });
 });

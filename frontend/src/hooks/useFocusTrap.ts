@@ -17,6 +17,27 @@ const FOCUSABLE_SELECTORS = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ');
 
+function isShown(el: HTMLElement): boolean {
+  if (el.closest('[inert]')) return false;
+  if (el.closest('[aria-hidden="true"]')) return false;
+  const style = window.getComputedStyle(el);
+  return style.visibility !== 'hidden' && style.display !== 'none';
+}
+
+function isTabbable(el: HTMLElement): boolean {
+  return isShown(el);
+}
+
+function tabbableIn(container: HTMLElement): HTMLElement[] {
+  return Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS)).filter(isTabbable);
+}
+
+/** Last visible dialog in tree order — the overlay currently on top. */
+function isTopmostDialog(container: HTMLElement): boolean {
+  const dialogs = Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"]')).filter(isShown);
+  return dialogs[dialogs.length - 1] === container;
+}
+
 /**
  * Traps keyboard focus inside a dialog container.
  *
@@ -49,7 +70,7 @@ export function useFocusTrap(isOpen: boolean, onClose?: () => void) {
       const container = containerRef.current;
       if (!container) return;
 
-      const first = container.querySelector<HTMLElement>(FOCUSABLE_SELECTORS);
+      const first = tabbableIn(container)[0];
       if (first) {
         first.focus();
       } else {
@@ -60,8 +81,16 @@ export function useFocusTrap(isOpen: boolean, onClose?: () => void) {
     });
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Escape closes the modal
+      const container = containerRef.current;
+      if (!container) return;
+      const active = document.activeElement;
+      const focusInside = active instanceof Node && (container.contains(active) || active === container);
+
       if (e.key === 'Escape') {
+        // Nested portaled dialogs (Invite Player, discard confirm): only the
+        // topmost overlay answers Escape, even if focus has not moved into it
+        // yet. A lower dialog with focus still yields to the one on top.
+        if (!isTopmostDialog(container)) return;
         if (onCloseRef.current) {
           e.preventDefault();
           onCloseRef.current();
@@ -69,33 +98,28 @@ export function useFocusTrap(isOpen: boolean, onClose?: () => void) {
         return;
       }
 
+      // Tab wrapping stays in this container. A nested portal that currently
+      // has focus keeps Tab; don't yank it back.
+      if (!focusInside && active !== document.body) return;
+
       if (e.key !== 'Tab') return;
 
-      const container = containerRef.current;
-      if (!container) return;
-
-      const focusable = Array.from(
-        container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTORS)
-      );
-
+      const focusable = tabbableIn(container);
       if (focusable.length === 0) return;
 
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      const active = document.activeElement;
 
       if (e.shiftKey) {
         // Shift+Tab: wrap from first → last
-        if (active === first || !container.contains(active)) {
+        if (active === first) {
           e.preventDefault();
           last.focus();
         }
-      } else {
+      } else if (active === last) {
         // Tab: wrap from last → first
-        if (active === last || !container.contains(active)) {
-          e.preventDefault();
-          first.focus();
-        }
+        e.preventDefault();
+        first.focus();
       }
     };
 

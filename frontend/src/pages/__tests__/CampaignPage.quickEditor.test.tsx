@@ -22,16 +22,6 @@ const tokens = vi.hoisted(() => ({
 }));
 
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn(), useParams: () => ({ id: 'campaign-1' }) }));
-vi.mock('react-resizable-panels', () => {
-  const Box = ({ children }: { children?: unknown }) => <div>{children as never}</div>;
-  return {
-    Group: Box,
-    Panel: Box,
-    Separator: () => null,
-    useDefaultLayout: () => ({ defaultLayout: undefined, onLayoutChanged: () => undefined }),
-    usePanelRef: () => ({ current: null }),
-  };
-});
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'dm', displayName: 'DM' } }) }));
 vi.mock('@/contexts/CampaignContext', () => ({
   CampaignProvider: ({ children }: { children?: unknown }) => <>{children as never}</>,
@@ -74,6 +64,13 @@ vi.mock('@/components/campaign/CampaignSettingsModal', nothing);
 vi.mock('@/components/documents/CampaignDocumentsModal', nothing);
 vi.mock('@/components/campaign/SessionSidebar', nothing);
 vi.mock('@/components/campaign/SessionToolbar', nothing);
+vi.mock('@/components/campaign/CurrentTurnBar', nothing);
+vi.mock('@/components/campaign/ContextualTray', nothing);
+vi.mock('@/components/campaign/DmToolsMenu', nothing);
+vi.mock('@/components/campaign/TableDrawer', () => ({
+  default: ({ children }: { children?: unknown }) => <>{children as never}</>,
+}));
+vi.mock('@/hooks/useWideViewport', () => ({ useWideViewport: () => true }));
 vi.mock('@/components/ConnectionStatus', nothing);
 vi.mock('@/components/campaign/MapCanvas', nothing);
 
