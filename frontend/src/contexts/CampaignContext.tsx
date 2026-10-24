@@ -89,7 +89,7 @@ interface CampaignContextState {
    * owner, game system). A settings PUT document does not copy live table
    * fields: status, currentMapId, vibe, and spirit stay on the socket. A
    * GET that is still the current campaign-row read also copies status and
-   * activeSession when sessionEpoch is unchanged (same contract as catch-up
+   * activeSession when statusEpoch is unchanged (same contract as catch-up
    * and roster.updated). Does not set `loading` or rewrite tokens. Given a
    * document (the body a settings PUT already returned), apply it; otherwise
    * GET the row and apply that.
@@ -222,13 +222,25 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // REST hydrates do not bump this: a stale GET must not override a later
   // live switch, including A→B→A which leaves the showing id unchanged.
   const mapEpoch = useRef(0);
-  // Live session/role updates: pause, resume, DM transfer, role change.
-  // Independent of mapEpoch. roster.updated GET, refreshCampaign, and
-  // vibe/spirit do not bump this. Campaign-row GETs (status / memberships /
-  // activeSession) still consult this clock. Map hydrates snapshot this
-  // user's own role instead: pause/end/resume/start and another member's
-  // role change must not abort an in-flight getMap.
+  // Role/membership clock: this user's own role change, another member's
+  // role change, and a DM transfer this user is not a party to. Independent
+  // of mapEpoch. Pause/resume/end/start do not bump this. Campaign-row GETs
+  // copy memberships only while this is unchanged. Map hydrates snapshot
+  // this user's own role instead: pause/end/resume/start and another
+  // member's role change must not abort an in-flight getMap.
   const sessionEpoch = useRef(0);
+  // Status/session clock: pause, resume, end, start. Campaign-row GETs copy
+  // status and activeSession only while this is unchanged, even if a role
+  // event landed during the GET. A live pause/end/resume during GET keeps
+  // the live status rather than rewinding to the snapshot.
+  const statusEpoch = useRef(0);
+  // Local Map Library insert/rename/delete. A refreshCampaign GET copies
+  // maps only while this is unchanged and this user's role is still the
+  // role captured when that GET started.
+  const mapListGen = useRef(0);
+  // Settings PUT applied name/description/chat cooldown. An in-flight
+  // getCampaign must not restore the previous settings document.
+  const settingsGen = useRef(0);
   // Overlapping map REST reads (load, refresh, retry, catch-up) and empty-map
   // clears. Independent of loadGeneration (campaign switch / unmount) and
   // mapEpoch (live id switches). A hydrate or clear applies only while this
@@ -272,8 +284,8 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   /**
    * Record this user's own role for the shown campaign. Same role is not a
    * live update. Reconnect `authenticated` with the role we already have
-   * must not bump, or catch-up would skip a missed pause that arrived only
-   * as GET. The first record (ref was empty) is not a change either: the
+   * must not bump, or catch-up would skip memberships that arrived only as
+   * GET. The first record (ref was empty) is not a change either: the
    * socket often authenticates while the first getCampaign is still in
    * flight, and bumping then would treat a matching GET as stale.
    */
@@ -285,6 +297,21 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     if (!hadRole) return false;
     sessionEpoch.current += 1;
     return true;
+  };
+  /**
+   * Adopt this user's role from a campaign-row GET that is applying
+   * memberships (role clock unchanged). Direct assign: do not call
+   * noteOwnLiveRole, which would bump the role clock and keep the old
+   * DM memberships. In-flight map hydrates snapshot liveRoleRef, so this
+   * must land before keepMaps on refreshCampaign and before a hung getMap
+   * is judged.
+   */
+  const adoptOwnRoleFromGet = (memberships: Campaign['memberships']) => {
+    const ownId = userIdRef.current;
+    const own = ownId
+      ? memberships?.find((m) => m.userId === ownId)
+      : undefined;
+    if (own) liveRoleRef.current = own.role;
   };
   const membershipWithRole = (
     data: Campaign,
@@ -438,22 +465,39 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // would overwrite socket updates that landed while the PUT was in flight.
   // Vibe and spirit stay on the socket; catch-up re-reads status,
   // memberships, and currentMapId (the id only with a live-map hydrate).
+  // Maps are optional: a refresh GET after demotion or a local map-list
+  // edit must keep the previous list rather than store another map's
+  // spiritLayerUrl from a DM body, or undo create/rename/delete.
   const applyCampaignDocument = useCallback((
     fresh: Campaign,
-    keepMemberships = false,
-    keepCharacters = false,
+    options: {
+      keepMemberships?: boolean;
+      keepCharacters?: boolean;
+      keepMaps?: boolean;
+      keepSettings?: boolean;
+    } = {},
   ) => {
+    const {
+      keepMemberships = false,
+      keepCharacters = false,
+      keepMaps = false,
+      keepSettings = false,
+    } = options;
     setCampaign((prev) => {
       if (!prev || prev.id !== fresh.id) return prev;
       return {
         ...prev,
-        name: fresh.name,
-        description: fresh.description,
-        chatCooldownEnabled: fresh.chatCooldownEnabled ?? prev.chatCooldownEnabled,
-        chatCooldownSeconds: fresh.chatCooldownSeconds ?? prev.chatCooldownSeconds,
+        name: keepSettings ? prev.name : fresh.name,
+        description: keepSettings ? prev.description : fresh.description,
+        chatCooldownEnabled: keepSettings
+          ? prev.chatCooldownEnabled
+          : (fresh.chatCooldownEnabled ?? prev.chatCooldownEnabled),
+        chatCooldownSeconds: keepSettings
+          ? prev.chatCooldownSeconds
+          : (fresh.chatCooldownSeconds ?? prev.chatCooldownSeconds),
         memberships: keepMemberships ? prev.memberships : (fresh.memberships ?? prev.memberships),
         characters: keepCharacters ? prev.characters : (fresh.characters ?? prev.characters),
-        maps: fresh.maps ?? prev.maps,
+        maps: keepMaps ? prev.maps : (fresh.maps ?? prev.maps),
         ownerId: fresh.ownerId ?? prev.ownerId,
         gameSystem: fresh.gameSystem ?? prev.gameSystem,
       };
@@ -577,7 +621,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
           if (mapEpoch.current !== mapEpochWhenStarted) return;
           if (currentMapIdRef.current && currentMapIdRef.current !== requestedMapId) return;
           // Failed first getMap is an error with retry, never a successful empty table.
-          // A pause that bumped sessionEpoch is not discarded: the map is still applicable.
+          // A pause that bumped statusEpoch is not discarded: the map is still applicable.
           setMapLoadError({
             mapId: requestedMapId,
             message: apiErrorMessage(err) || MAP_LOAD_FALLBACK,
@@ -614,6 +658,10 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     if (!campaignId) return;
     const generation = loadGeneration.current;
     const sessionEpochWhenStarted = sessionEpoch.current;
+    const statusEpochWhenStarted = statusEpoch.current;
+    const ownRoleWhenStarted = liveRoleRef.current;
+    const mapListGenWhenStarted = mapListGen.current;
+    const settingsGenWhenStarted = settingsGen.current;
     const issuedGet = document === undefined;
     // A settings PUT body is not a campaign-row read: do not bump the shared
     // clock. A GET shares it with catch-up and roster.updated.
@@ -622,13 +670,36 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       const fresh = document ?? await campaignService.getCampaign(campaignId);
       if (!replyIsCurrent(campaignId, generation) || fresh.id !== campaignId) return;
       const rowIsCurrent = rowSeq === null || rowSeq === campaignRowSeq.current;
-      const epochMoved = sessionEpoch.current !== sessionEpochWhenStarted;
-      const keepMemberships = !rowIsCurrent || epochMoved;
-      const keepCharacters = issuedGet && (!rowIsCurrent || epochMoved);
-      applyCampaignDocument(fresh, keepMemberships, keepCharacters);
-      // A current campaign-row GET may copy status/activeSession. A settings
-      // PUT document must not: it is not a live table document.
-      if (issuedGet && rowIsCurrent && !epochMoved) {
+      const roleClockMoved = sessionEpoch.current !== sessionEpochWhenStarted;
+      const statusClockMoved = statusEpoch.current !== statusEpochWhenStarted;
+      const keepMemberships = !rowIsCurrent || roleClockMoved;
+      const keepCharacters = issuedGet && (!rowIsCurrent || roleClockMoved);
+      // Apply GET memberships into liveRoleRef before keepMaps so a body
+      // that itself demotes this user skips maps and rejects an in-flight
+      // DM getMap. Do not adopt when the role clock moved: the socket
+      // already patched liveRoleRef and this GET may still list DM.
+      if (issuedGet && !keepMemberships) {
+        adoptOwnRoleFromGet(fresh.memberships);
+      }
+      const keepMaps = issuedGet && (
+        !rowIsCurrent
+        || ownRoleMoved(ownRoleWhenStarted)
+        || mapListGen.current !== mapListGenWhenStarted
+      );
+      const keepSettings = issuedGet && settingsGen.current !== settingsGenWhenStarted;
+      if (!issuedGet) {
+        settingsGen.current += 1;
+      }
+      applyCampaignDocument(fresh, {
+        keepMemberships,
+        keepCharacters,
+        keepMaps,
+        keepSettings,
+      });
+      // A current campaign-row GET may copy status/activeSession when the
+      // status clock is unchanged. A settings PUT document must not: it is
+      // not a live table document.
+      if (issuedGet && rowIsCurrent && !statusClockMoved) {
         setCampaign((prev) =>
           prev && prev.id === fresh.id ? { ...prev, status: fresh.status } : prev,
         );
@@ -729,6 +800,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     const stillShown = () => replyIsCurrent(campaignId, generation);
     const mapEpochWhenStarted = mapEpoch.current;
     const sessionEpochWhenStarted = sessionEpoch.current;
+    const statusEpochWhenStarted = statusEpoch.current;
     // One campaign-row sequence with roster.updated GET and refreshCampaign
     // GET. Bump when this catch-up starts so an older GET cannot put back
     // status/memberships/activeSession or surface a stale 403/404/syncError.
@@ -744,22 +816,30 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       if (rowSeq !== campaignRowSeq.current) {
         return { discarded: true };
       }
-      // Pause/role still land even if getMap later fails, but only when no
-      // live session/role update arrived while GET was in flight. Do not write
-      // currentMapId until a hydrate passes mayApplyFetchedMap — a GET that
-      // started on map A must not rewind the table after a live switch.
-      if (sessionEpoch.current === sessionEpochWhenStarted) {
+      // Status and memberships still land even if getMap later fails. Copy
+      // status/activeSession while the status clock is unchanged (a concurrent
+      // role event must not drop a missed pause). Copy memberships while the
+      // role clock is unchanged. Do not write currentMapId until a hydrate
+      // passes mayApplyFetchedMap — a GET that started on map A must not
+      // rewind the table after a live switch.
+      const statusClockMoved = statusEpoch.current !== statusEpochWhenStarted;
+      const roleClockMoved = sessionEpoch.current !== sessionEpochWhenStarted;
+      if (!statusClockMoved || !roleClockMoved) {
         setCampaign((prev) =>
           prev && prev.id === fresh.id
-            ? { ...prev, status: fresh.status, memberships: fresh.memberships }
+            ? {
+                ...prev,
+                ...(!statusClockMoved ? { status: fresh.status } : {}),
+                ...(!roleClockMoved ? { memberships: fresh.memberships } : {}),
+              }
             : prev
         );
+      }
+      if (!statusClockMoved) {
         setActiveSessionState(fresh.activeSession ?? null);
-        const ownId = userIdRef.current;
-        const own = ownId
-          ? fresh.memberships?.find((m) => m.userId === ownId)
-          : undefined;
-        if (own) liveRoleRef.current = own.role;
+      }
+      if (!roleClockMoved) {
+        adoptOwnRoleFromGet(fresh.memberships);
       }
       mapId = fresh.currentMapId ?? null;
     } catch (err) {
@@ -856,7 +936,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
 
   // Update campaign.status in local state (called by session WebSocket listeners)
   const updateCampaignStatus = useCallback((status: CampaignStatus) => {
-    sessionEpoch.current += 1;
+    statusEpoch.current += 1;
     liveStatusRef.current = status;
     setCampaign((prev) => (prev ? { ...prev, status } : null));
   }, []);
@@ -864,7 +944,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   const setActiveSession = useCallback((
     session: { id: string; sessionNumber: number; startedAt: string } | null,
   ) => {
-    sessionEpoch.current += 1;
+    statusEpoch.current += 1;
     liveSessionWrittenRef.current = true;
     liveSessionRef.current = session;
     setActiveSessionState(session);
@@ -897,6 +977,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
 
   // Keep campaign.maps in step with the Map Library (create, rename, import).
   const upsertCampaignMap = useCallback((map: Map) => {
+    mapListGen.current += 1;
     setCampaign((prev) => {
       if (!prev) return prev;
       const maps = prev.maps ?? [];
@@ -908,6 +989,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
 
   // Drop a deleted map from campaign.maps.
   const removeCampaignMap = useCallback((mapId: string) => {
+    mapListGen.current += 1;
     setCampaign((prev) => {
       if (!prev?.maps) return prev;
       return { ...prev, maps: prev.maps.filter((m) => m.id !== mapId) };
@@ -963,13 +1045,16 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   useEffect(() => {
     const handleDmTransferred = (data: DmTransferredBroadcast) => {
       const ownId = userIdRef.current;
+      const isOwnSeat = Boolean(ownId && (ownId === data.newDmId || ownId === data.previousDmId));
       if (ownId && shownCampaignId.current === data.campaignId) {
         if (ownId === data.newDmId) noteOwnLiveRole(data.campaignId, 'DM' as CampaignRole);
         else if (ownId === data.previousDmId) noteOwnLiveRole(data.campaignId, 'PLAYER' as CampaignRole);
       }
       setCampaign((prev) => {
         if (!prev || prev.id !== data.campaignId || !prev.memberships) return prev;
-        sessionEpoch.current += 1;
+        // Own-seat transfer already bumped via noteOwnLiveRole. A transfer
+        // of the DM seat among other members is a membership change.
+        if (!isOwnSeat) sessionEpoch.current += 1;
         return {
           ...prev,
           memberships: prev.memberships.map((m) =>
@@ -1004,8 +1089,8 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         if (!prev || prev.id !== data.campaignId) return prev;
         const next = withMemberRole(prev, data.userId, data.role);
         // Same role is not a live update. Reconnect `authenticated` with the
-        // role we already have must not bump, or catch-up would skip a missed
-        // pause that arrived only as GET.
+        // role we already have must not bump, or catch-up would skip
+        // memberships that arrived only as GET.
         if (next !== prev && !ownBumped) sessionEpoch.current += 1;
         return next;
       });
@@ -1031,6 +1116,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       if (!campaignId) return;
       const generation = loadGeneration.current;
       const sessionEpochWhenStarted = sessionEpoch.current;
+      const statusEpochWhenStarted = statusEpoch.current;
       const seq = bumpCampaignRowSeq();
       campaignService
         .getCampaign(campaignId)
@@ -1038,17 +1124,21 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
           if (generation !== loadGeneration.current) return;
           if (shownCampaignId.current !== fresh.id) return;
           if (seq !== campaignRowSeq.current) return;
-          const epochMoved = sessionEpoch.current !== sessionEpochWhenStarted;
-          const keepMemberships = epochMoved;
+          const roleClockMoved = sessionEpoch.current !== sessionEpochWhenStarted;
+          const statusClockMoved = statusEpoch.current !== statusEpochWhenStarted;
+          const keepMemberships = roleClockMoved;
+          if (!keepMemberships) {
+            adoptOwnRoleFromGet(fresh.memberships);
+          }
           setCampaign((prev) => (prev && prev.id === fresh.id
             ? {
                 ...prev,
                 memberships: keepMemberships ? prev.memberships : fresh.memberships,
                 characters: fresh.characters ?? prev.characters,
-                ...(epochMoved ? {} : { status: fresh.status }),
+                ...(statusClockMoved ? {} : { status: fresh.status }),
               }
             : prev));
-          if (!epochMoved) {
+          if (!statusClockMoved) {
             setActiveSessionState(fresh.activeSession ?? null);
           }
         })
