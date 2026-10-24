@@ -876,11 +876,9 @@ also does what self-hosters run and a developer usually does not:
   `SHADOW_DATABASE_URL`.
 - **Collects test coverage** in both projects and shows it in the job
   summary, per folder under `src/`. A report only: no threshold fails yet.
-- **Builds the four production images** (`cozyvtt-database:latest`,
-  `cozyvtt-nginx:latest`, `cozyvtt-backend:latest`, `cozyvtt-frontend:latest`)
-  with `docker compose build --pull`, after reading `docker-compose.yml`
-  with the example settings. Hub base images are pulled as Dockerfile FROM
-  pins during that build. Then starts the
+- **Builds the production images** with `docker compose build`, after
+  reading `docker-compose.yml` with the example settings and pulling the
+  pinned nginx image, then starts the
   stack and runs the browser smoke tests against it (see Browser smoke tests
   above).
 - **Checks the bundled nginx's configuration** with
@@ -907,15 +905,16 @@ also does what self-hosters run and a developer usually does not:
   naming the package that asks for it. `keepInStep.test.ts`
   fails once an update of that package asks for the held version or a newer
   one, which is when the override has to go.
-- **Scans the runtime images** an Instance starts (`cozyvtt-database:latest`,
-  `cozyvtt-nginx:latest`, `cozyvtt-backend:latest`, and
+- **Scans the runtime images** an Instance starts (the built
+  `cozyvtt-database:latest` from the pinned postgres:18-alpine digest, the
+  production compose nginx digest, and the built `cozyvtt-backend:latest` and
   `cozyvtt-frontend:latest`) with Trivy (`trivy image --scanners vuln
   --pkg-types os --severity HIGH,CRITICAL --exit-code 1 --platform linux/amd64`): a high or critical advisory
   fails the images job. The scan is OS packages in the linux/amd64 image
-  Compose built, not a Hub digest string.
+  Compose pulled or built, not the multi-arch index string.
   JavaScript stays on the npm audit above, and Trivy does not scan nested
   `package.json` files or helper binaries such as postgres's `gosu`. The
-  scan runs after those images are built, and before the stack
+  scan runs after those images are pulled or built, and before the stack
   is started. Unfixed OS advisories are not ignored. GitHub CI is the
   merge gate.
 

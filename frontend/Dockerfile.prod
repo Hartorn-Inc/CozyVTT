@@ -12,11 +12,9 @@ COPY . .
 RUN npm run build
 
 # Serve via Nginx (lightweight serving of built static files). nginx's stable
-# line, the same as the proxy's in nginx/Dockerfile.prod; move both together.
-FROM nginx:1.30-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951 AS production
-
-# Hub linux/amd64 still ships brotli-libs 1.2.0-r1 (CVE-2026-111497).
-RUN apk add --no-cache --upgrade 'brotli-libs>=1.2.1-r0'
+# alpine-slim line, the same as the proxy's in docker-compose.yml; move both
+# together.
+FROM nginx:1.30-alpine-slim@sha256:d9322bba63c6cfc63dc9e86522fd4f95fd4d9020a02b5bced282bbf38b8c3960 AS production
 
 COPY --from=builder /app/dist /usr/share/nginx/html
 

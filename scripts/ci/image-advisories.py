@@ -6,20 +6,19 @@ advisories. Trivy is invoked as:
     trivy image --scanners vuln --pkg-types os --severity HIGH,CRITICAL --exit-code 1 --format table --ignorefile /dev/null --platform linux/amd64 -- <id>
 
 The ``<id>`` is the linux/amd64 image Compose stored after ``docker compose
-build --pull``, not a Hub digest string. Each compose ref is resolved with
-``docker image inspect`` (``{{.Id}} {{.Os}}/{{.Architecture}}``); if
-inspecting ``name:tag@sha256:…`` fails because a platform-filtered pull of
-a FROM pin stored only the child, the same inspect is tried on
-``name:tag``. Compose runtime refs for database and nginx are local tags
-with no ``@digest``, so only that tag is inspected. A ref whose stored
+pull`` / ``docker compose build``, not the raw multi-arch index string from
+compose ``image:``. Each compose ref is resolved with ``docker image
+inspect`` (``{{.Id}} {{.Os}}/{{.Architecture}}``); if inspecting
+``name:tag@sha256:…`` fails because a platform-filtered pull stored only
+the child, the same inspect is tried on ``name:tag``. A ref whose stored
 image is not linux/amd64 is treated as missing.
 
 Images, in this order:
 
-  1. ``cozyvtt-database:latest`` (built from the pinned postgres FROM)
-  2. ``cozyvtt-nginx:latest`` (built from the pinned nginx FROM)
-  3. ``cozyvtt-backend:latest`` (built, not pulled from Hub)
-  4. ``cozyvtt-frontend:latest`` (built, not pulled from Hub)
+  1. ``cozyvtt-database:latest`` (built from the pinned postgres digest)
+  2. production compose ``nginx`` (the pinned nginx digest)
+  3. ``cozyvtt-backend:latest`` (built, not pulled)
+  4. ``cozyvtt-frontend:latest`` (built, not pulled)
 
 Builder stages and the development compose file are not scanned. The scan is
 OS packages in those images (Alpine and the like). ``npm audit --omit=dev
@@ -34,7 +33,7 @@ block wins, as Compose does.
 Every image is scanned even if an earlier one failed. Missing Trivy, a
 missing image, an inspect failure, a Trivy error or a High/Critical
 finding fails the process; remaining images are still scanned. CI
-installs Trivy and builds first. GitHub CI is the merge gate.
+installs Trivy and pulls or builds first. GitHub CI is the merge gate.
 
 Run from the repository root after the production images exist locally:
 
@@ -50,13 +49,8 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 COMPOSE = os.path.join(ROOT, 'docker-compose.yml')
 
-# Local tags compose builds for every production service.
-BUILT = (
-    'cozyvtt-database:latest',
-    'cozyvtt-nginx:latest',
-    'cozyvtt-backend:latest',
-    'cozyvtt-frontend:latest',
-)
+# Local tags compose builds; nginx is the remaining pulled digest.
+BUILT = ('cozyvtt-database:latest', 'cozyvtt-backend:latest', 'cozyvtt-frontend:latest')
 PLATFORM = 'linux/amd64'
 # Tracked names that would change which compose file CI runs, or let Trivy
 # skip advisories, relative to the files this script reads.
@@ -194,12 +188,14 @@ def main():
     )
     require_command(
         'docker',
-        'CI runs docker compose build --pull for database, nginx, backend and '
-        'frontend first; GitHub CI is the merge gate.',
+        'CI pulls nginx and builds database, backend and frontend first; '
+        'GitHub CI is the merge gate.',
     )
 
     images = runtime_images()
-    if images != BUILT:
+    expected_built = set(BUILT)
+    found_built = {image for image in images if image in expected_built}
+    if found_built != expected_built:
         raise SystemExit(
             'production compose must name '
             f'{", ".join(BUILT)} as built runtime images, not {", ".join(images)}'
@@ -210,9 +206,10 @@ def main():
         image_id = amd64_image_id(image)
         if not image_id:
             print(
-                f'image {image} is not present locally as {PLATFORM}. CI runs '
-                'docker compose build --pull before this script; GitHub CI is '
-                'the merge gate.',
+                f'image {image} is not present locally as {PLATFORM}. CI pulls '
+                'the production compose nginx image and runs '
+                'docker compose build before this script; GitHub CI is the '
+                'merge gate.',
                 file=sys.stderr,
             )
             status = 1

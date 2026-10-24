@@ -112,8 +112,6 @@ A hex password avoids any quoting trouble in the commands above and in `.env`, a
 docker compose up -d --build
 ```
 
-`--build` is required. The database and proxy run `cozyvtt-database:latest` and `cozyvtt-nginx:latest`, rebuilt from the pinned `postgres:18-alpine` and `nginx:1.30-alpine` FROM digests with an apk-upgrade of `brotli-libs`. Those local tags are not on Docker Hub.
-
 This starts four containers on an isolated internal network:
 - `cozyvtt-database` — PostgreSQL 18 (internal only, not exposed to host)
 - `cozyvtt-backend` — Express API on internal port 4000
@@ -1371,9 +1369,8 @@ another instance are ignored, as the dashboard ignores them, so a backup made
 under a different database user name still restores. Like the dashboard, the
 script runs `psql` in its restricted mode, which needs a PostgreSQL release
 from August 2025 or later; on Docker that is the database container's own
-`psql`, and `docker compose up -d --build database` rebuilds it from the
-pinned FROM plus the apk-upgrade. There is no Hub image named
-`cozyvtt-database:latest` to pull.
+`psql`, and `docker compose up -d --build database` brings an older image
+up to date.
 
 **Restart the backend as soon as a restore finishes.** The restore empties the
 login sessions an older backup carried, as part of that same single step, so

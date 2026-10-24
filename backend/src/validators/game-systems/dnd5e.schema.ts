@@ -13,7 +13,7 @@ import {
 import { featureEntrySchema } from './featureEntry.schema';
 import { alliesAndOrganizationsSchema } from './alliesAndOrganizations.schema';
 import { SPELL_SLOTS_MAX } from './sheetLimits';
-import { sheetList, sheetNamedList } from './sheetLists';
+import { refuseOversizedSheetList, sheetList, sheetNamedList } from './sheetLists';
 import { MAX_BONUS_OVERRIDE, MIN_BONUS_OVERRIDE } from '../../utils/rules/dnd5e';
 
 /**
@@ -409,16 +409,21 @@ export const dnd5eCharacterDataSchema = z.object({
   // wild may carry one; rejecting those would make an upgraded instance unable
   // to save an affected character at all. Readers ignore the array and fall
   // back to `proficienciesAndLanguages`.
+  // Length is checked before the union: Zod 4.6+ reports a failed object-or-list
+  // union as "Invalid input", and would otherwise walk both arms of a huge array.
   proficiencies: z
-    .union([
-      z.object({
-        armor: proficiencyBoxSchema.optional(),
-        weapons: proficiencyBoxSchema.optional(),
-        tools: proficiencyBoxSchema.optional(),
-        languages: proficiencyBoxSchema.optional(),
-      }),
-      sheetList(longText),
-    ])
+    .preprocess(
+      refuseOversizedSheetList(),
+      z.union([
+        z.object({
+          armor: proficiencyBoxSchema.optional(),
+          weapons: proficiencyBoxSchema.optional(),
+          tools: proficiencyBoxSchema.optional(),
+          languages: proficiencyBoxSchema.optional(),
+        }),
+        sheetList(longText),
+      ])
+    )
     .optional(),
   proficienciesAndLanguages: sheetList(proficiencyBoxSchema).optional(),
   // Features carry a name and an optional description. Shipped starters keep

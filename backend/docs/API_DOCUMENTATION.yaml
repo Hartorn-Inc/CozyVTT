@@ -13000,7 +13000,8 @@ components:
             cells:
               type: array
               items: { type: integer, minimum: 0 }
-              description: Cell indices to flip
+              maxItems: 20000
+              description: Cell indices to flip. At most 20,000 per message; a larger array is refused and nothing is stored. `reveal_all` / `hide_all` send no cells array.
           required: [op, cells]
         - type: object
           properties:

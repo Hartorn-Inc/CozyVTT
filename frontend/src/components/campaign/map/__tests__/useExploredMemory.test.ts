@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useExploredMemory, type ExplorationSocket, type ExplorationState } from '../useExploredMemory';
+import { useGameStore } from '@/stores/gameStore';
+import type { Token } from '@/types';
 
 /** A socket that records requests and lets the test deliver state events. */
 function fakeSocket() {
@@ -148,5 +150,67 @@ describe('useExploredMemory', () => {
     expect([...hook.result.current.exploredCells!]).toEqual([1, 2, 3]);
     hook.rerender({ joined: 2 });
     expect([...hook.result.current.exploredCells!]).toEqual([1, 2, 3]);
+  });
+
+  it('a joinedEpoch bump re-requests memory but does not invent a new epoch or clear cells', () => {
+    const s = fakeSocket();
+    const hook = renderHook(
+      ({ joined }) => useExploredMemory(s.source, 'map-1', true, 'alice', joined),
+      { initialProps: { joined: 1 } }
+    );
+    s.deliver({ mapId: 'map-1', userId: 'alice', cells: [4, 5], epoch: 0 });
+    hook.rerender({ joined: 2 });
+    expect(s.emit).toHaveBeenCalledTimes(2);
+    expect(s.emit).toHaveBeenLastCalledWith('exploration:request', { mapId: 'map-1', userId: 'alice' });
+    expect([...hook.result.current.exploredCells!]).toEqual([4, 5]);
+    s.deliver({ mapId: 'map-1', userId: 'alice', cells: [4, 5], epoch: 0 });
+    expect([...hook.result.current.exploredCells!]).toEqual([4, 5]);
+  });
+
+  it('a reset with a newer epoch empties cells without the caller bumping joinedEpoch', () => {
+    const s = fakeSocket();
+    const hook = renderHook(
+      ({ joined }) => useExploredMemory(s.source, 'map-1', true, 'alice', joined),
+      { initialProps: { joined: 1 } }
+    );
+    s.deliver({ mapId: 'map-1', userId: 'alice', cells: [3, 8], epoch: 0 });
+    expect([...hook.result.current.exploredCells!]).toEqual([3, 8]);
+    s.deliver({ mapId: 'map-1', userId: null, cells: [], epoch: 1 });
+    expect(hook.result.current.exploredCells?.size).toBe(0);
+    expect(s.emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores an older-epoch state after a reset, and leaves tokens and addExplored alone', () => {
+    useGameStore.getState().setTokens([{ id: 'hero' } as Token]);
+    const s = fakeSocket();
+    const hook = renderHook(() => useExploredMemory(s.source, 'map-1', true, 'alice', 1));
+    s.deliver({ mapId: 'map-1', userId: 'alice', cells: [1, 2], epoch: 0 });
+    s.deliver({ mapId: 'map-1', userId: null, cells: [], epoch: 1 });
+    s.deliver({ mapId: 'map-1', userId: 'alice', cells: [1, 2], epoch: 0 });
+    expect(hook.result.current.exploredCells?.size).toBe(0);
+    act(() => hook.result.current.addExplored([9]));
+    expect([...hook.result.current.exploredCells!]).toEqual([9]);
+    expect(Object.keys(useGameStore.getState().tokens)).toEqual(['hero']);
+  });
+
+  it('applies an equal-epoch cell update as a normal replace', () => {
+    const s = fakeSocket();
+    const hook = renderHook(() => useExploredMemory(s.source, 'map-1', true, 'alice', 1));
+    s.deliver({ mapId: 'map-1', userId: 'alice', cells: [1], epoch: 2 });
+    s.deliver({ mapId: 'map-1', userId: 'alice', cells: [1, 6], epoch: 2 });
+    expect([...hook.result.current.exploredCells!]).toEqual([1, 6]);
+  });
+
+  it('applies a lower-epoch matching reply after identity clears cells (preview switch after restart)', () => {
+    const s = fakeSocket();
+    const hook = renderHook(({ who }) => useExploredMemory(s.source, 'map-1', true, who, 1), {
+      initialProps: { who: 'alice' as string | null },
+    });
+    s.deliver({ mapId: 'map-1', userId: 'alice', cells: [1, 2], epoch: 5 });
+    expect([...hook.result.current.exploredCells!]).toEqual([1, 2]);
+    hook.rerender({ who: 'bob' });
+    expect(hook.result.current.exploredCells).toBeNull();
+    s.deliver({ mapId: 'map-1', userId: 'bob', cells: [9], epoch: 1 });
+    expect([...hook.result.current.exploredCells!]).toEqual([9]);
   });
 });

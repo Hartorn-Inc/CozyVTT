@@ -137,7 +137,9 @@ interface CampaignContextState {
    * Resolves `{ ok: true, message: 'Table synced' }` when a hydrate is applied
    * or catch-up otherwise succeeds; `{ ok: false, message }` on failure (the
    * string just stored on `syncError`); `{ discarded: true }` when the reply
-   * is stale (no new toast, no fallback phrase).
+   * is stale (no new toast, no fallback phrase). Silent last frame — a REST
+   * snapshot, not a replay of `token.moved`. Explored-memory epoch is not
+   * this catch-up's clock.
    */
   catchUpAfterReconnect: () => Promise<TableRetryOutcome>;
   /**
@@ -1064,6 +1066,9 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // end, a member's role, a switch to another map. Re-read them without the
   // full reload's loading screen, then load the map the table is on now,
   // which may not be the one this page had (a player may no longer read it).
+  // Silent; last frame kept — REST snapshot of campaign + current map, not a
+  // replay of historical `token.moved` (or fog, or pings). Explored-memory
+  // epoch is not this catch-up's clock.
   const catchUpAfterReconnect = useCallback(async (): Promise<TableRetryOutcome> => {
     const campaignId = campaign?.id;
     if (!campaignId) return { ok: false, message: CATCH_UP_FALLBACK };
