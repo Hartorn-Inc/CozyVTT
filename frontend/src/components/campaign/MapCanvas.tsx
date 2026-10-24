@@ -1108,7 +1108,8 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     const handleMapChanged = ({ mapData, spiritVisible: sv }: { mapId: string; mapData: CampaignMap; spiritVisible?: boolean }) => {
       // map.changed is how the table switches maps — do not discard it for
       // another map. Ignore it only before this connection has joined, or
-      // when this handler belongs to an older join.
+      // when this handler belongs to an older join. setCurrentMap stores
+      // metadata; live tokens go to Zustand (same-id sight resync included).
       if (joinedEpochRef.current === 0) return;
       if (boundJoin !== joinedEpochRef.current) return;
       setCurrentMap(mapData);
