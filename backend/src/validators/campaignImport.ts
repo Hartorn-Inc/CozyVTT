@@ -91,8 +91,8 @@ export const CampaignSettingsSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().max(5000).nullable().optional(),
   gameSystem: z.unknown().optional(),
-  // Both fall back to the default when an archive carries a value outside the
-  // allowlist, so one bad field does not refuse the whole campaign.
+  // Both fall back rather than refuse the whole campaign: a bad spirit style
+  // is dropped, and an illegal vibe is omitted (the importer then warns).
   vibeSettings: VibeSettingsSchema.optional().catch(undefined),
   currentVibe: z.string().max(100).nullable().optional(),
   spiritLayerEnabled: z.boolean().optional(),

@@ -11,13 +11,13 @@ import { sendSystemMessage, broadcastToUser, broadcastToCampaign, applyRoleToLiv
 import { broadcastMapData } from '../websocket/shared';
 import { clearState as clearCombatState } from '../websocket/initiativeState';
 import { isSmtpConfigured, sendCampaignInvitationEmail } from '../services/email';
-import { DEFAULT_VIBE_SETTINGS, validateVibeSettings, findVibePeriod, preserveAtmosphereAudio, VibeSettings } from '../utils/vibe-presets';
+import { DEFAULT_VIBE_SETTINGS, findVibePeriod, preserveAtmosphereAudio } from '../utils/vibe-presets';
 import { vibePeriodAudioAssetId } from '../utils/vibeAudio';
 import { prepareCampaignExport, ExportTooLargeError, type PreparedExport } from '../services/campaignExporter';
 import { CAMPAIGN_ARCHIVE_MAX_BYTES, megabytes } from '../utils/campaignArchiveSize';
 import { previewCampaignImport, importCampaign, importTempDirectory, IMPORT_FAILED_MESSAGE } from '../services/campaignImporter';
 import { ArchiveRefusedError } from '../utils/archive';
-import { CreateCampaignSchema, UpdateCampaignSchema, TransferDMSchema, CampaignInviteSchema } from '../validators/campaigns';
+import { CreateCampaignSchema, UpdateCampaignSchema, TransferDMSchema, CampaignInviteSchema, VibeSettingsSchema } from '../validators/campaigns';
 import { CreatePersonalNoteSchema, UpdatePersonalNoteSchema, MAX_NOTES_PER_CAMPAIGN } from '../validators/personalNotes';
 import { UpdateSessionNotesSchema } from '../validators/sessionNotes';
 import { listLeftCampaigns, getLeftCampaign, getLeftCampaignNote, getLeftCampaignNotes } from './leftCampaigns';
@@ -543,21 +543,22 @@ router.put('/:campaignId/vibe', campaignDM, async (req: AuthenticatedRequest, re
       });
     }
 
-    // Validate structure
-    const validationError = validateVibeSettings(vibeSettings);
-    if (validationError) {
+    const parsed = VibeSettingsSchema.safeParse(vibeSettings);
+    if (!parsed.success) {
       return res.status(400).json({
         error: 'Validation Error',
-        message: validationError,
+        message: parsed.error.issues[0]?.message ?? 'Invalid vibe settings',
       });
     }
+    const settings = parsed.data;
 
     // A period's audio names an asset the whole table fetches while that
     // period is the vibe, so the save asks the same question the ambient
     // setter asks: may this DM open this track to the room? Never as an
-    // admin, for the same reason the setter refuses that.
+    // admin, for the same reason the setter refuses that. Campaign PUT does
+    // not make this check; only this dedicated route does.
     const checkedAudio = new Map<string, boolean>();
-    for (const period of (vibeSettings as VibeSettings).periods) {
+    for (const period of settings.periods) {
       if (period.audio == null) continue;
       const assetId = vibePeriodAudioAssetId(period.audio);
       let allowed = false;
@@ -588,12 +589,12 @@ router.put('/:campaignId/vibe', campaignDM, async (req: AuthenticatedRequest, re
     });
 
     const updateData: Prisma.CampaignUpdateInput = {
-      vibeSettings: toJson(preserveAtmosphereAudio(vibeSettings, campaign?.vibeSettings)),
+      vibeSettings: toJson(preserveAtmosphereAudio(settings, campaign?.vibeSettings)),
     };
 
     // Reset currentVibe if current period no longer exists in new settings
     if (campaign?.currentVibe) {
-      const period = findVibePeriod(vibeSettings as VibeSettings, campaign.currentVibe);
+      const period = findVibePeriod(settings, campaign.currentVibe);
       if (!period) {
         updateData.currentVibe = null;
       }

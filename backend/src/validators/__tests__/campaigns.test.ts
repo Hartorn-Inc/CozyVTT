@@ -9,7 +9,7 @@
 
 import { SPIRIT_STYLE_PATTERN, VIBE_FILTER_PATTERN } from '../../utils/styleAllowlists';
 import { CampaignSettingsSchema } from '../campaignImport';
-import { UpdateCampaignSchema, VibePeriodSchema } from '../campaigns';
+import { UpdateCampaignSchema, VibePeriodSchema, VibeSettingsSchema } from '../campaigns';
 
 const period = (filter: string) => ({ name: 'Dusk', hue: '#336699', filter });
 
@@ -35,7 +35,7 @@ describe('an atmosphere period filter', () => {
 
   it('refuses a crafted 100,000-character filter without matching it against the pattern', () => {
     const test = jest.spyOn(VIBE_FILTER_PATTERN, 'test');
-    const result = UpdateCampaignSchema.safeParse({ vibeSettings: { periods: [period(' '.repeat(100_000) + '!')] } });
+    const result = UpdateCampaignSchema.safeParse({ vibeSettings: { enabled: true, periods: [period(' '.repeat(100_000) + '!')] } });
     expect(result.success).toBe(false);
     expect(test).not.toHaveBeenCalled();
   });
@@ -70,6 +70,61 @@ describe('an atmosphere period filter', () => {
     // The importer drops atmosphere settings it cannot use.
     expect(result.success).toBe(true);
     expect(result.data?.vibeSettings).toBeUndefined();
+  });
+});
+
+describe('VibeSettingsSchema', () => {
+  const period = (name: string) => ({ name, hue: '#FF9966', filter: 'none', audio: null });
+
+  it('accepts the default presets, including extra top-level keys', () => {
+    const result = VibeSettingsSchema.safeParse({
+      enabled: true,
+      periods: [period('dawn')],
+      currentPeriod: 'dawn',
+    });
+    expect(result.success).toBe(true);
+    expect(result.data).toMatchObject({ enabled: true, currentPeriod: 'dawn' });
+  });
+
+  it('refuses an empty period list', () => {
+    const result = VibeSettingsSchema.safeParse({ enabled: true, periods: [] });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe('vibeSettings.periods must have at least one period');
+  });
+
+  it('refuses duplicate period names ignoring case', () => {
+    const result = VibeSettingsSchema.safeParse({
+      enabled: true,
+      periods: [period('Dawn'), period('dawn')],
+    });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0].message).toBe('vibeSettings.periods must have unique period names');
+  });
+
+  it('refuses a period name over 50 characters and stores a 50-character name as sent', () => {
+    expect(VibeSettingsSchema.safeParse({
+      enabled: true,
+      periods: [period('N'.repeat(51))],
+    }).success).toBe(false);
+    const kept = VibeSettingsSchema.safeParse({
+      enabled: true,
+      periods: [period('N'.repeat(50))],
+    });
+    expect(kept.success).toBe(true);
+    expect(kept.data?.periods[0].name).toBe('N'.repeat(50));
+  });
+
+  it('refuses a whitespace-only name without trimming a padded name', () => {
+    expect(VibeSettingsSchema.safeParse({
+      enabled: true,
+      periods: [period('   ')],
+    }).success).toBe(false);
+    const kept = VibeSettingsSchema.safeParse({
+      enabled: true,
+      periods: [period(' dawn ')],
+    });
+    expect(kept.success).toBe(true);
+    expect(kept.data?.periods[0].name).toBe(' dawn ');
   });
 });
 

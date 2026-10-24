@@ -20,10 +20,10 @@ describe('CampaignSettingsSchema allowlist fallbacks', () => {
     const parsed = CampaignSettingsSchema.parse({
       ...base,
       spiritLayerStyle: 'custom:#7c3aed:dream',
-      vibeSettings: { periods: [{ name: 'Dusk', hue: '#FF9966', filter: 'brightness(0.85) hue-rotate(10deg)' }], extra: true },
+      vibeSettings: { enabled: true, periods: [{ name: 'Dusk', hue: '#FF9966', filter: 'brightness(0.85) hue-rotate(10deg)' }], extra: true },
     });
     expect(parsed.spiritLayerStyle).toBe('custom:#7c3aed:dream');
-    expect(parsed.vibeSettings).toMatchObject({ extra: true });
+    expect(parsed.vibeSettings).toMatchObject({ extra: true, enabled: true });
   });
 
   it('drops a spirit style outside the allowlist and still imports the campaign', () => {
@@ -36,6 +36,17 @@ describe('CampaignSettingsSchema allowlist fallbacks', () => {
     const parsed = CampaignSettingsSchema.parse({
       ...base,
       vibeSettings: { periods: [{ name: 'Dusk', hue: '#FF9966', filter: 'url(https://evil.example/f.svg#x)' }] },
+    });
+    expect(parsed.vibeSettings).toBeUndefined();
+  });
+
+  it('drops atmosphere settings whose period name is 100 characters', () => {
+    const parsed = CampaignSettingsSchema.parse({
+      ...base,
+      vibeSettings: {
+        enabled: true,
+        periods: [{ name: 'N'.repeat(100), hue: '#FF9966', filter: 'none', audio: null }],
+      },
     });
     expect(parsed.vibeSettings).toBeUndefined();
   });
