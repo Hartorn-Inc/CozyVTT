@@ -25,7 +25,9 @@ const h = vi.hoisted(() => {
     currentMap: null as unknown,
   };
   const sent: Array<[string, unknown]> = [];
+  const showTableToast = vi.fn();
   const raw = {
+    connected: true,
     on() { return raw; },
     off() { return raw; },
     emit(event: string, payload: unknown) {
@@ -36,6 +38,7 @@ const h = vi.hoisted(() => {
   return {
     state,
     sent,
+    showTableToast,
     raw,
     subscribe(l: () => void) { listeners.add(l); return () => { listeners.delete(l); }; },
     snapshot: () => version,
@@ -93,6 +96,10 @@ vi.mock('@/contexts/WebSocketContext', async () => {
     },
   };
 });
+
+vi.mock('@/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: h.showTableToast }),
+}));
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'me', displayName: 'Me' } }),
@@ -174,6 +181,8 @@ beforeAll(() => {
 
 beforeEach(() => {
   h.sent.length = 0;
+  h.showTableToast.mockReset();
+  h.raw.connected = true;
   useGameStore.getState().setTokens([]);
   h.set({ userRole: 'DM', currentMap: MAP });
 });
@@ -318,6 +327,33 @@ describe('moving a token: click to pick it up, click again to put it down', () =
 
     expect(sentOf('token.move.start')).toEqual([{ tokenId: 'tok-mine', mapId: 'map-a' }]);
     expect(sentOf('token.move.end')).toEqual([{ tokenId: 'tok-mine', mapId: 'map-a', x: 2, y: 18 }]);
+  });
+
+  it('leaves the token where it stood when the drop cannot be sent, and says so', () => {
+    h.raw.connected = false;
+    render(<MapCanvas />);
+    show(goblin());
+
+    click(at(0, 19));
+    click(at(3, 19));
+
+    expect(sentOf('token.move.end')).toEqual([]);
+    expect(useGameStore.getState().tokens['tok-goblin'].position).toEqual({ x: 0, y: 19 });
+    expect(h.showTableToast).toHaveBeenCalledWith('Failed to move the token', 'error');
+  });
+
+  it('does not toast a failed move for a spectator, who cannot drop a token', () => {
+    h.raw.connected = false;
+    h.set({ userRole: 'SPECTATOR' });
+    render(<MapCanvas />);
+    show(goblin());
+
+    click(at(0, 19));
+    click(at(3, 19));
+
+    expect(sentOf('token.move.end')).toEqual([]);
+    expect(useGameStore.getState().tokens['tok-goblin'].position).toEqual({ x: 0, y: 19 });
+    expect(h.showTableToast).not.toHaveBeenCalled();
   });
 
   it("refuses to put a player's token down where another creature stands, saying who is there", async () => {

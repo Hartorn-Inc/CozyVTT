@@ -160,9 +160,10 @@ def main():
     image_id = amd64_image_id(image)
     if not image_id:
         print(
-            f'image {image} is not present locally as {PLATFORM}. CI pulls the '
-            'production compose nginx image before this check; GitHub CI is '
-            'the merge gate.',
+            f'image {image} is not present locally as {PLATFORM}. CI pulls '
+            'the pinned nginx image (`docker compose pull nginx`) before '
+            'docker compose build and this check; GitHub CI is the merge '
+            'gate.',
             file=sys.stderr,
         )
         return 1

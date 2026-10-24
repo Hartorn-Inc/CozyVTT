@@ -24,6 +24,12 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
   size?: ButtonSize;
   /** Shows the standard spinner and disables the button. */
   loading?: boolean;
+  /**
+   * Like `loading`, but keeps the control keyboard-focusable: spinner,
+   * `aria-busy`, and `aria-disabled` without native `disabled`. Clicks are
+   * ignored while set. Default `loading` still disables other buttons.
+   */
+  busyKeepFocus?: boolean;
   /** Optional leading lucide icon. Hidden while `loading` shows the spinner. */
   icon?: LucideIcon;
   /** Square icon-only button — requires `aria-label`. */
@@ -53,11 +59,13 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     variant = 'primary',
     size = 'md',
     loading = false,
+    busyKeepFocus = false,
     icon: Icon,
     iconOnly = false,
     className,
     children,
     disabled,
+    onClick,
     ...rest
   },
   ref
@@ -66,21 +74,30 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     console.warn('[Button] iconOnly buttons need an aria-label for screen readers.');
   }
 
+  const showSpinner = loading || busyKeepFocus;
+  const nativeDisabled = Boolean(disabled || loading);
+
   return (
     <button
       ref={ref}
-      disabled={disabled || loading}
-      aria-busy={loading || undefined}
+      {...rest}
+      disabled={nativeDisabled}
+      aria-busy={showSpinner || undefined}
+      aria-disabled={busyKeepFocus && !nativeDisabled ? true : undefined}
       className={cn(
         VARIANT_CLASSES[variant],
         SIZE_CLASSES[size],
         iconOnly && '!p-2',
         'disabled:opacity-50 disabled:cursor-not-allowed',
+        busyKeepFocus && !nativeDisabled && 'opacity-50 cursor-not-allowed',
         className
       )}
-      {...rest}
+      onClick={(event) => {
+        if (busyKeepFocus && !nativeDisabled) return;
+        onClick?.(event);
+      }}
     >
-      {loading ? (
+      {showSpinner ? (
         <Loader2 className={cn('w-4 h-4 animate-spin inline-block', !iconOnly && 'mr-2')} aria-hidden="true" />
       ) : Icon ? (
         <Icon className={cn('w-4 h-4 inline-block', !iconOnly && 'mr-2')} aria-hidden="true" />

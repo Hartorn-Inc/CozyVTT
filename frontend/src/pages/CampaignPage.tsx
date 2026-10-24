@@ -6,15 +6,16 @@
 // Right: Chat, dice roller, controls
 // ============================================
 
-import { useState, useEffect, lazy, Suspense } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import { isCampaignOwner } from '@/utils/campaignRoles';
 import { useAuth } from '@/contexts/AuthContext';
-import { useNavigate } from 'react-router';
+import { useNavigate, useParams } from 'react-router';
 import { CampaignProvider, useCampaign } from '@/contexts/CampaignContext';
 import { WebSocketProvider, useWebSocket } from '@/contexts/WebSocketContext';
 import { useGameStore } from '@/stores/gameStore';
 import { useInitiativeSync } from '@/hooks/useInitiativeSync';
 import {
+  AlertCircle,
   ArrowLeft,
   Loader2,
   Sun,
@@ -66,8 +67,78 @@ import { useAccessRevoked } from '@/hooks/useAccessRevoked';
 
 function CampaignPageContent() {
   const navigate = useNavigate();
-  const { campaign, currentMap, loading, error, userRole, updateCampaignStatus, setActiveSession, refreshCurrentMap, catchUpAfterReconnect } = useCampaign();
+  const { id: routeId } = useParams<{ id: string }>();
+  const {
+    campaign,
+    currentMap,
+    loading,
+    error,
+    errorRetryable,
+    mapLoadError,
+    syncError,
+    userRole,
+    updateCampaignStatus,
+    setActiveSession,
+    refreshCurrentMap,
+    catchUpAfterReconnect,
+    loadCampaign,
+    retryMapLoad,
+  } = useCampaign();
   const { user } = useAuth();
+  const [retryingMap, setRetryingMap] = useState(false);
+  const [retryingSync, setRetryingSync] = useState(false);
+  const [mapRetryAnnouncement, setMapRetryAnnouncement] = useState('');
+  const [syncRetryAnnouncement, setSyncRetryAnnouncement] = useState('');
+  const campaignErrorHeadingRef = useRef<HTMLHeadingElement>(null);
+  const mapAnnounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncAnnounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showBlockingCampaignError = Boolean(error && (!campaign || !errorRetryable));
+
+  useEffect(() => {
+    if (showBlockingCampaignError && errorRetryable === false) {
+      campaignErrorHeadingRef.current?.focus();
+    }
+  }, [showBlockingCampaignError, errorRetryable, error]);
+
+  useEffect(() => {
+    return () => {
+      if (mapAnnounceTimerRef.current !== null) {
+        clearTimeout(mapAnnounceTimerRef.current);
+      }
+      if (syncAnnounceTimerRef.current !== null) {
+        clearTimeout(syncAnnounceTimerRef.current);
+      }
+    };
+  }, []);
+
+  const announceInRegion = (
+    setAnnouncement: (message: string) => void,
+    timerRef: { current: ReturnType<typeof setTimeout> | null },
+    message: string,
+    immediate = false,
+  ) => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (immediate) {
+      setAnnouncement(message);
+      return;
+    }
+    setAnnouncement('');
+    timerRef.current = setTimeout(() => {
+      setAnnouncement(message);
+      timerRef.current = null;
+    }, 0);
+  };
+
+  const announceMapRetry = (message: string, immediate = false) => {
+    announceInRegion(setMapRetryAnnouncement, mapAnnounceTimerRef, message, immediate);
+  };
+
+  const announceSyncRetry = (message: string, immediate = false) => {
+    announceInRegion(setSyncRetryAnnouncement, syncAnnounceTimerRef, message, immediate);
+  };
 
   /**
    * Owning a campaign and running it are different things once the DM seat can
@@ -217,8 +288,11 @@ function CampaignPageContent() {
     };
   }, [socket, status, updateCampaignStatus, setActiveSession]);
 
-  // Loading state
-  if (loading) {
+  // Loading state — only the initial campaign-row load, or a switch to
+  // another campaign. A settings save or catch-up must not swap the live
+  // table for this spinner (`loading` stays false there, and the row already
+  // matches the route).
+  if (loading && (!campaign || (routeId != null && campaign.id !== routeId))) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-soft-cream via-parchment to-warm-amber/20">
         <div className="text-center space-y-4">
@@ -229,16 +303,41 @@ function CampaignPageContent() {
     );
   }
 
-  // Error state
-  if (error) {
+  // Error state — campaign GET failed, or catch-up learned we may no longer
+  // read this campaign (403/404). Retryable failures keep Retry; 403/404 stay
+  // on this error until Back to Dashboard is activated.
+  if (error && (!campaign || !errorRetryable)) {
+    const campaignErrorId = 'campaign-load-error';
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-soft-cream via-parchment to-warm-amber/20">
         <div className="card-cozy max-w-md text-center space-y-4">
-          <p className="text-spirit-red font-medium">{error}</p>
-          <Button onClick={() => navigate('/dashboard')}>
-            <ArrowLeft className="w-4 h-4 inline mr-2" />
-            Back to Dashboard
-          </Button>
+          <div role="alert">
+            <h1
+              ref={campaignErrorHeadingRef}
+              id={campaignErrorId}
+              tabIndex={-1}
+              className="text-danger-ink font-medium focus:outline-none focus:ring-2 focus:ring-brand focus:ring-offset-2"
+            >
+              {error}
+            </h1>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 justify-center">
+            {errorRetryable && (
+              <Button
+                onClick={() => { if (routeId) void loadCampaign(routeId); }}
+                aria-describedby={campaignErrorId}
+              >
+                Retry
+              </Button>
+            )}
+            <Button
+              variant={errorRetryable ? 'secondary' : 'primary'}
+              onClick={() => navigate('/dashboard')}
+            >
+              <ArrowLeft className="w-4 h-4 inline mr-2" />
+              Back to Dashboard
+            </Button>
+          </div>
         </div>
       </div>
     );
@@ -261,6 +360,12 @@ function CampaignPageContent() {
 
   return (
     <div className="h-screen flex flex-col bg-gradient-to-br from-soft-cream via-parchment to-warm-amber/20">
+      <div id="campaign-map-retry-status" className="sr-only" aria-live="polite" aria-atomic="true">
+        {mapRetryAnnouncement}
+      </div>
+      <div id="campaign-sync-retry-status" className="sr-only" aria-live="polite" aria-atomic="true">
+        {syncRetryAnnouncement}
+      </div>
       {/* Header Bar */}
       <header className="flex items-center justify-between px-4 py-3 bg-moss-green/10 border-b border-moss-green/20 shadow-sm">
         <div className="flex items-center gap-3">
@@ -402,6 +507,35 @@ function CampaignPageContent() {
         </div>
       )}
 
+      {/* Catch-up / current-map refresh failed while the table is visible.
+          Keep the last frame; Retry re-runs catch-up. Do not rely on a toast
+          or ConnectionStatus Retry while the socket already says Connected. */}
+      {syncError && (
+        <div className="flex items-center justify-center gap-3 px-4 py-2 bg-danger/10 border-b border-danger/20">
+          <AlertCircle className="w-4 h-4 text-danger-ink flex-shrink-0" aria-hidden="true" />
+          <p id="campaign-sync-error" role="alert" className="text-xs font-medium text-danger-ink">
+            {syncError}
+          </p>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (retryingSync) return;
+              setRetryingSync(true);
+              announceSyncRetry('Retrying sync', true);
+              void Promise.resolve(catchUpAfterReconnect()).then((result) => {
+                if ('message' in result) {
+                  announceSyncRetry(result.message);
+                }
+              }).finally(() => setRetryingSync(false));
+            }}
+            busyKeepFocus={retryingSync}
+            aria-describedby="campaign-sync-error"
+          >
+            Retry sync
+          </Button>
+        </div>
+      )}
+
       {/* Main Content - Three Resizable Panels */}
       <main className="flex-1 min-h-0 overflow-hidden hidden lg:block">
         <Group
@@ -434,16 +568,42 @@ function CampaignPageContent() {
 
           {/* Center Panel — map canvas */}
           <Panel id="map" defaultSize={55} minSize={30} className="h-full">
-            <section className="h-full min-w-0 p-4">
-              <Suspense
-                fallback={
-                  <div className="w-full h-full flex items-center justify-center" aria-live="polite" aria-label="Loading map">
-                    <Loader2 className="w-8 h-8 text-brand-ink animate-spin" aria-hidden="true" />
+            <section className="h-full min-w-0 p-4 relative">
+              {mapLoadError && (!currentMap || currentMap.id === mapLoadError.mapId) ? (
+                <div className="w-full h-full flex items-center justify-center">
+                  <div className="card-cozy max-w-md text-center space-y-4">
+                    <p id="map-load-error" role="alert" className="text-danger-ink font-medium">
+                      {mapLoadError.message}
+                    </p>
+                    <Button
+                      onClick={() => {
+                        if (retryingMap) return;
+                        setRetryingMap(true);
+                        announceMapRetry('Retrying map load', true);
+                        void Promise.resolve(retryMapLoad()).then((result) => {
+                          if ('message' in result) {
+                            announceMapRetry(result.message);
+                          }
+                        }).finally(() => setRetryingMap(false));
+                      }}
+                      busyKeepFocus={retryingMap}
+                      aria-describedby="map-load-error"
+                    >
+                      Retry map load
+                    </Button>
                   </div>
-                }
-              >
-                <MapCanvas onEditToken={setQuickEditToken} />
-              </Suspense>
+                </div>
+              ) : (
+                <Suspense
+                  fallback={
+                    <div className="w-full h-full flex items-center justify-center" aria-live="polite" aria-label="Loading map">
+                      <Loader2 className="w-8 h-8 text-brand-ink animate-spin" aria-hidden="true" />
+                    </div>
+                  }
+                >
+                  <MapCanvas onEditToken={setQuickEditToken} />
+                </Suspense>
+              )}
             </section>
           </Panel>
 
