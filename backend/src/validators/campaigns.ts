@@ -47,7 +47,12 @@ export const CampaignInviteSchema = z.object({
 
 /** One atmosphere period: a named hue and filter, with optional audio. */
 export const VibePeriodSchema = z.object({
-  name: z.string().max(100),
+  // Length of the raw string, matching the dedicated vibe write; the value is
+  // stored as sent, so this does not trim it.
+  name: z
+    .string({ error: 'A period name must be a string' })
+    .max(50, { error: 'A period name cannot exceed 50 characters' })
+    .refine((name) => name.trim().length > 0, 'A period name must be a non-empty string'),
   hue: z.string().regex(HEX_COLOR_PATTERN, 'A period hue must be a #RRGGBB colour'),
   // `abort` stops the check after it on an over-long value. Without it, Zod
   // runs every check in the chain whether or not an earlier one failed.
@@ -55,19 +60,29 @@ export const VibePeriodSchema = z.object({
     .string()
     .max(200, { abort: true })
     .refine(isSafeVibeFilter, 'A period filter may only use brightness(), saturate(), contrast() and hue-rotate()'),
+  // Optional so an older archive that omits the key is not an illegal vibe.
+  // Dedicated vibe PUT still ACL-checks a present audio field.
   audio: z.string().max(500).nullable().optional(),
 }).strip();
 
 /**
- * A campaign's atmosphere settings. `periods` is the part with a fixed shape;
- * the rest (the current period name) is stored as sent, which is why unknown
- * keys pass through here. Atmosphere audio is not among them: the route
- * replaces whatever the client sent with what is stored, through
- * `preserveAtmosphereAudio`. Shared with the campaign importer so the two
- * agree on what a period looks like.
+ * A campaign's atmosphere settings: the one schema every vibe write uses
+ * (vibe PUT, campaign PUT, and import). `enabled` and `periods` have a fixed
+ * shape; the rest (the current period name, atmosphere effect) is stored as
+ * sent, which is why unknown keys pass through here. Atmosphere audio is not
+ * among them: the route replaces whatever the client sent with what is stored,
+ * through `preserveAtmosphereAudio`.
  */
 export const VibeSettingsSchema = z.object({
-  periods: z.array(VibePeriodSchema).max(20),
+  enabled: z.boolean({ error: 'vibeSettings.enabled must be a boolean' }),
+  periods: z
+    .array(VibePeriodSchema, { error: 'vibeSettings.periods must be an array' })
+    .min(1, { error: 'vibeSettings.periods must have at least one period' })
+    .max(20, { error: 'vibeSettings.periods cannot exceed 20 periods' })
+    .refine(
+      (periods) => new Set(periods.map((period) => period.name.toLowerCase())).size === periods.length,
+      'vibeSettings.periods must have unique period names',
+    ),
 }).passthrough();
 
 const COOLDOWN_MESSAGE = 'chatCooldownSeconds must be an integer between 1 and 300';
