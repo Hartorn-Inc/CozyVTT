@@ -9077,7 +9077,8 @@ paths:
         characters, allowlisted filters) is omitted with a warning (`The
         archive's vibe settings could not be used, so they were omitted.`)
         and the campaign still imports with the default periods; the archive
-        is not refused. A data file nested more than 32 levels deep leaves out its map,
+        is not refused. An omitted `vibeSettings` key, `null`, or empty
+        object uses the default periods with no warning. A data file nested more than 32 levels deep leaves out its map,
         or its creatures or templates, and refuses the import when it is the
         manifest, campaign settings or asset manifest. Tokens are moved to
         whole squares with their
