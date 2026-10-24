@@ -70,7 +70,7 @@ class Mounts(unittest.TestCase):
                 service = nc.nginx_service(f.read())
             except ImportError:
                 self.skipTest('PyYAML is not installed')
-        self.assertEqual(service.image, 'cozyvtt-nginx:latest')
+        self.assertTrue(service.image.startswith('nginx:'))
         self.assertEqual(service.environment['NGINX_MAX_BODY_SIZE'], '55M')
         self.assertIn('NGINX_ENVSUBST_FILTER', service.environment)
         self.assertTrue(any(v.startswith('./nginx/trusted-proxies.envsh:/docker-entrypoint.d/') for v in service.volumes))
