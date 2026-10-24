@@ -21,7 +21,7 @@ const tokens = vi.hoisted(() => ({
   b: { id: 'tok-b', name: 'Goblin B' },
 }));
 
-vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('react-router', () => ({ useNavigate: () => vi.fn(), useParams: () => ({ id: 'campaign-1' }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'dm', displayName: 'DM' } }) }));
 vi.mock('@/contexts/CampaignContext', () => ({
   CampaignProvider: ({ children }: { children?: unknown }) => <>{children as never}</>,
@@ -35,6 +35,11 @@ vi.mock('@/contexts/CampaignContext', () => ({
     setActiveSession: vi.fn(),
     refreshCurrentMap: vi.fn(),
     catchUpAfterReconnect: vi.fn(),
+    loadCampaign: vi.fn(),
+    retryMapLoad: vi.fn(),
+    errorRetryable: false,
+    mapLoadError: null,
+    syncError: null,
   }),
 }));
 vi.mock('@/contexts/WebSocketContext', () => ({

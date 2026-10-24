@@ -30,7 +30,10 @@ function installMatchMedia(wide: boolean) {
   });
 }
 
-vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
+vi.mock('react-router', () => ({
+  useNavigate: () => vi.fn(),
+  useParams: () => ({ id: 'campaign-1' }),
+}));
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'dm', displayName: 'DM' } }),
 }));

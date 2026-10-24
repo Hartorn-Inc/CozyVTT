@@ -23,6 +23,7 @@ const h = vi.hoisted(() => {
   const state = {
     userRole: 'DM' as string,
     currentMap: null as unknown,
+    mapGeometryGen: 0,
     joinedEpoch: 1,
     characters: [] as Array<{ id: string; userId: string; name: string }>,
   };
@@ -32,6 +33,7 @@ const h = vi.hoisted(() => {
   const deleteToken = vi.fn();
   const getCharacter = vi.fn();
   const raw = {
+    connected: true,
     on(event: string, fn: (data: never) => void) {
       if (!handlers.has(event)) handlers.set(event, new Set());
       handlers.get(event)!.add(fn);
@@ -79,6 +81,7 @@ vi.mock('@/contexts/CampaignContext', async () => {
       useSyncExternalStore(h.subscribe, h.snapshot);
       return {
         currentMap: h.state.currentMap,
+        mapGeometryGen: h.state.mapGeometryGen,
         setCurrentMap,
         userRole: h.state.userRole,
         campaign,
@@ -100,6 +103,7 @@ vi.mock('@/contexts/WebSocketContext', async () => {
   const client = new Proxy({
     getSocket: () => h.raw,
     onMapChanged: (cb: (data: never) => void) => { h.raw.on('map.changed', cb); },
+    onTokenMoved: (cb: (data: never) => void) => { h.raw.on('token.moved', cb); },
     off: (event: string, cb: (data: never) => void) => { h.raw.off(event, cb); },
   } as Record<string, unknown>, {
     get(target, prop: string) {
@@ -114,6 +118,10 @@ vi.mock('@/contexts/WebSocketContext', async () => {
     },
   };
 });
+
+vi.mock('@/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}));
 
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'dm-user', displayName: 'The DM' } }),
@@ -180,7 +188,7 @@ beforeEach(() => {
   h.getCharacter.mockReset();
   useGameStore.getState().setTokens([]);
   h.handlers.clear();
-  h.set({ userRole: 'DM', joinedEpoch: 1, characters: [], currentMap: mapWith('map-a', [wall('a1', 100), wall('a2', 300)]) });
+  h.set({ userRole: 'DM', joinedEpoch: 1, characters: [], mapGeometryGen: 0, currentMap: mapWith('map-a', [wall('a1', 100), wall('a2', 300)]) });
 });
 
 function openWallSelect() {
@@ -478,6 +486,65 @@ describe('walls and lights after a reconnect', () => {
   });
 });
 
+describe('same-id player hydrate', () => {
+  it('reloads walls and lights when mapGeometryGen bumps without a new map id', () => {
+    const locked = wall('d1', 100, 'door-locked');
+    const lamp = { id: 'l1', x: 100, y: 100, brightRadius: 2, dimRadius: 4, color: '#ffcc66', enabled: true };
+    h.set({ currentMap: { ...mapWith('map-a', [locked]), lights: [lamp] } });
+    render(<MapCanvas />);
+
+    act(() => {
+      const prev = h.state.currentMap as CampaignMap;
+      h.set({
+        mapGeometryGen: h.state.mapGeometryGen + 1,
+        currentMap: {
+          ...prev,
+          wallSegments: [wall('d1', 100, 'door-closed')],
+          lights: [],
+        },
+      });
+    });
+
+    openWallSelect();
+    press('a', { ctrlKey: true });
+    press('ArrowRight');
+    const [sent] = emittedOf('walls:replace') as Array<{ segments: WallSegment[] }>;
+    expect(sent.segments.find((s) => s.id === 'd1')?.type).toBe('door-closed');
+    expect(sent.segments.some((s) => s.type === 'door-locked')).toBe(false);
+
+    fireEvent.click(screen.getByText('Lights'));
+    expect(screen.queryByText('Clear All (1)')).not.toBeInTheDocument();
+  });
+
+  it('keeps the live editor when wallSegments and lights change without a gen bump', () => {
+    const locked = wall('d1', 100, 'door-locked');
+    const lamp = { id: 'l1', x: 100, y: 100, brightRadius: 2, dimRadius: 4, color: '#ffcc66', enabled: true };
+    h.set({ currentMap: { ...mapWith('map-a', [locked]), lights: [lamp] } });
+    render(<MapCanvas />);
+
+    act(() => {
+      const prev = h.state.currentMap as CampaignMap;
+      h.set({
+        currentMap: {
+          ...prev,
+          wallSegments: [wall('d1', 100, 'door-closed')],
+          lights: [],
+        },
+      });
+    });
+
+    openWallSelect();
+    press('a', { ctrlKey: true });
+    press('ArrowRight');
+    const [sent] = emittedOf('walls:replace') as Array<{ segments: WallSegment[] }>;
+    expect(sent.segments.find((s) => s.id === 'd1')?.type).toBe('door-locked');
+    expect(sent.segments.some((s) => s.type === 'door-closed')).toBe(false);
+
+    fireEvent.click(screen.getByText('Lights'));
+    expect(screen.getByText('Clear All (1)')).toBeInTheDocument();
+  });
+});
+
 describe('map settings broadcast', () => {
   it('changes only the flags, keeping an edit made to the same map since it was opened', () => {
     render(<MapCanvas />);
@@ -498,6 +565,46 @@ describe('map settings broadcast', () => {
     render(<MapCanvas />);
     fire('map:settings:updated', { mapId: 'map-b', lightingEnabled: true, fogEnabled: true, globalIllumination: false, explorationEnabled: true });
     expect(h.state.currentMap).toMatchObject({ id: 'map-a', lightingEnabled: false, fogEnabled: false });
+  });
+});
+
+describe('token.moved from another map or an older join', () => {
+  const goblin = {
+    id: 'tok-1', name: 'Goblin Scout', imageUrl: '', position: { x: 2, y: 3 }, size: { width: 1, height: 1 },
+    layer: 'material', visible: true, type: 'npc', conditions: [],
+  } as unknown as Token;
+
+  function showGoblin() {
+    act(() => { useGameStore.getState().setTokens([goblin]); });
+  }
+
+  it('applies a move for this map on this join', () => {
+    render(<MapCanvas />);
+    showGoblin();
+    fire('token.moved', { tokenId: 'tok-1', mapId: 'map-a', x: 8, y: 4, movedBy: 'dm-user' });
+    expect(useGameStore.getState().tokens['tok-1'].position).toEqual({ x: 8, y: 4 });
+  });
+
+  it('discards a move for another map', () => {
+    render(<MapCanvas />);
+    showGoblin();
+    fire('token.moved', { tokenId: 'tok-1', mapId: 'map-b', x: 8, y: 4, movedBy: 'dm-user' });
+    expect(useGameStore.getState().tokens['tok-1'].position).toEqual({ x: 2, y: 3 });
+  });
+
+  it('discards a move with no map id', () => {
+    render(<MapCanvas />);
+    showGoblin();
+    fire('token.moved', { tokenId: 'tok-1', x: 8, y: 4, movedBy: 'dm-user' });
+    expect(useGameStore.getState().tokens['tok-1'].position).toEqual({ x: 2, y: 3 });
+  });
+
+  it('discards a move before the connection has joined', () => {
+    h.set({ joinedEpoch: 0 });
+    render(<MapCanvas />);
+    showGoblin();
+    fire('token.moved', { tokenId: 'tok-1', mapId: 'map-a', x: 8, y: 4, movedBy: 'dm-user' });
+    expect(useGameStore.getState().tokens['tok-1'].position).toEqual({ x: 2, y: 3 });
   });
 });
 

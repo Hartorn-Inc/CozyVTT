@@ -48,7 +48,7 @@ export default function CampaignSettingsModal({
   isOpen,
   onClose,
 }: CampaignSettingsModalProps) {
-  const { campaign, refreshCampaign, userRole } = useCampaign();
+  const { campaign, refreshCampaign, beginSettingsWrite, userRole } = useCampaign();
 
   /**
    * The panel is open to the DM and to the campaign's owner, who are not always
@@ -123,7 +123,8 @@ export default function CampaignSettingsModal({
     }
     setSavingGeneral(true);
     try {
-      await campaignService.updateCampaign(campaign.id, {
+      const seq = beginSettingsWrite();
+      const updated = await campaignService.updateCampaign(campaign.id, {
         name: trimmedName,
         // TODO(ui): an emptied box sends undefined, which leaves the field out
         // of the request, so the server keeps the old description while this
@@ -131,8 +132,8 @@ export default function CampaignSettingsModal({
         // server accepts it and clears the description.
         description: description.trim() || undefined,
       });
-      await refreshCampaign();
-      showToast('Campaign settings saved', 'success');
+      const applied = await refreshCampaign(updated, seq);
+      if (applied) showToast('Campaign settings saved', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err) ?? 'Failed to save settings', 'error');
     } finally {
@@ -143,12 +144,13 @@ export default function CampaignSettingsModal({
   const handleSaveChat = async () => {
     setSavingChat(true);
     try {
-      await campaignService.updateCampaign(campaign.id, {
+      const seq = beginSettingsWrite();
+      const updated = await campaignService.updateCampaign(campaign.id, {
         chatCooldownEnabled,
         chatCooldownSeconds,
       });
-      await refreshCampaign();
-      showToast('Chat settings saved', 'success');
+      const applied = await refreshCampaign(updated, seq);
+      if (applied) showToast('Chat settings saved', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err) ?? 'Failed to save chat settings', 'error');
     } finally {

@@ -1283,6 +1283,8 @@ export interface TokenMoveEndEvent {
 
 export interface TokenMovedEvent {
   tokenId: string;
+  /** Map the token moved on. The server always sends this; a payload without it is discarded. */
+  mapId: string;
   x: number;
   y: number;
   /** Null for anyone but the DM and the mover while the token is obscured. */

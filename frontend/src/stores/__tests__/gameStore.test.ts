@@ -277,6 +277,18 @@ describe('combat state', () => {
   });
 });
 
+describe('disconnect keeps the last frame', () => {
+  it('leaves tokens in the store; a socket drop is not a store action', async () => {
+    useGameStore.getState().setTokens([makeToken('a', { position: { x: 4, y: 7 } })]);
+
+    const { default: socketClient } = await import('@/services/socket');
+    socketClient.disconnect();
+
+    expect(useGameStore.getState().tokens['a'].position).toEqual({ x: 4, y: 7 });
+    expect(useGameStore.getState().tokenOrder).toEqual(['a']);
+  });
+});
+
 describe('cross-highlight peek', () => {
   it('records which side is pointing', () => {
     useGameStore.getState().setPeekToken('a', 'tracker');
