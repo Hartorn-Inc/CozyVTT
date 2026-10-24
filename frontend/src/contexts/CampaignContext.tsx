@@ -57,6 +57,13 @@ interface CampaignContextState {
   // Campaign Data
   campaign: Campaign | null;
   currentMap: Map | null;
+  /**
+   * Bumped when demotion rewrites on-screen wall/light geometry (locked
+   * doors stripped, then the player-filtered hydrate including lights).
+   * MapCanvas reloads the live wall editor on map id change or this
+   * generation, not on every same-map snapshot.
+   */
+  mapGeometryGen: number;
 
   // User Role
   userRole: CampaignRole | null;
@@ -91,18 +98,22 @@ interface CampaignContextState {
    * fields: status, currentMapId, vibe, and spirit stay on the socket. A
    * GET that is still the current campaign-row read also copies status and
    * activeSession when statusEpoch is unchanged (same contract as catch-up
-   * and roster.updated). Does not set `loading` or rewrite tokens. Given a
+   * and roster.updated). Does not set `loading`. A settings PUT document
+   * does not rewrite tokens; a current-row GET catch-up hydrates the table
+   * map, including when that id is already on screen. Given a
    * document (the body a settings PUT already returned), apply it; otherwise
    * GET the row and apply that. A settings PUT should pass the seq from
    * `beginSettingsWrite` (taken before the HTTP await) so an earlier write
    * cannot rewind a later one. Omitting the seq takes one at apply for
-   * callers that have not begun the write.
+   * callers that have not begun the write. Returns whether that PUT's
+   * settings were applied; a skipped older document is false. GET returns
+   * true when the row was applied.
    */
-  refreshCampaign: (document?: Campaign, settingsWriteSeq?: number) => Promise<void>;
+  refreshCampaign: (document?: Campaign, settingsWriteSeq?: number) => Promise<boolean>;
   /**
-   * Bump the settings-write sequence and return it. Call before a settings
-   * PUT HTTP request; pass the seq to `refreshCampaign(document, seq)` when
-   * that PUT returns.
+   * Assign a write identity seq without advancing the applied settings
+   * generation. Call before a settings PUT HTTP request; pass the seq to
+   * `refreshCampaign(document, seq)` when that PUT returns.
    */
   beginSettingsWrite: () => number;
   /**
@@ -248,10 +259,12 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // maps only while this is unchanged and this user's role is still the
   // role captured when that GET started.
   const mapListGen = useRef(0);
-  // Settings PUT document sequence. Bumped when a settings write starts
-  // (`beginSettingsWrite`, before the HTTP await) so an older PUT body
-  // cannot rewind name/description/chat/ownerId/gameSystem. A GET copies
-  // those fields only while this is unchanged since that GET started.
+  // Settings PUT write-identity sequence. Incremented by beginSettingsWrite
+  // (and at apply when a caller omitted the seq). Does not move the applied
+  // clock: a failed later PUT must not stale an earlier success.
+  const settingsWriteStart = useRef(0);
+  // Last applied settings-write seq. A GET copies name/description/chat/
+  // ownerId/gameSystem only while this is unchanged since that GET started.
   const settingsGen = useRef(0);
   // Overlapping map REST reads (load, refresh, retry, catch-up) and empty-map
   // clears. Independent of loadGeneration (campaign switch / unmount) and
@@ -268,7 +281,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // when a DM read is already in flight, so the new read is the latest
   // mapReadSeq and the DM body cannot apply.
   const mapReadsInFlight = useRef(0);
-  const refreshCurrentMapRef = useRef<() => Promise<void>>(async () => {});
+  const refreshCurrentMapRef = useRef<(opts?: { playerDemotion?: boolean }) => Promise<void>>(async () => {});
   // This user's latest own role for the campaign the page is showing, even
   // while `campaign` is still null (first load). Demotion during getCampaign
   // would otherwise be dropped because handleRoleChanged / authenticated
@@ -300,11 +313,11 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     campaignRowSeq.current += 1;
     return campaignRowSeq.current;
   };
-  const bumpSettingsGen = () => {
-    settingsGen.current += 1;
-    return settingsGen.current;
+  const nextSettingsWriteSeq = () => {
+    settingsWriteStart.current += 1;
+    return settingsWriteStart.current;
   };
-  const beginSettingsWrite = useCallback((): number => bumpSettingsGen(), []);
+  const beginSettingsWrite = useCallback((): number => nextSettingsWriteSeq(), []);
   const ownRoleOn = (memberships: Campaign['memberships']): CampaignRole | undefined => {
     const ownId = userIdRef.current;
     return ownId ? memberships?.find((m) => m.userId === ownId)?.role : undefined;
@@ -351,6 +364,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         .map((m) => (m.spiritLayerUrl ? { ...m, spiritLayerUrl: null } : m));
       return { ...prev, maps: nextMaps };
     });
+    setMapGeometryGen((n) => n + 1);
   };
   const leftDmSeat = (previous: CampaignRole | null, next: CampaignRole) =>
     previous === 'DM' && isNonDmRole(next);
@@ -371,7 +385,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     if (hadRole && leftDmSeat(previous, role)) {
       stripDemotedDmSpirit();
       if (currentMapIdRef.current) {
-        void refreshCurrentMapRef.current();
+        void refreshCurrentMapRef.current({ playerDemotion: true });
       }
     }
     if (!hadRole) return false;
@@ -443,6 +457,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     generation === loadGeneration.current && shownCampaignId.current === campaignId;
   const [currentMap, setCurrentMapState] = useState<Map | null>(null);
   currentMapIdRef.current = currentMap?.id ?? null;
+  const [mapGeometryGen, setMapGeometryGen] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [errorRetryable, setErrorRetryable] = useState(false);
@@ -536,26 +551,36 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     }
   };
 
-  const applyHydratedMap = (map: Map, spiritVisible?: boolean) => {
+  const applyHydratedMap = (
+    map: Map,
+    spiritVisible?: boolean,
+    options?: { playerDemotion?: boolean },
+  ) => {
     currentMapIdRef.current = map.id;
     setCurrentMapState(map);
     useGameStore.getState().setTokens(map.tokens || []);
     setPlayerSpiritVisible(spiritVisible ?? false);
     setMapLoadError(null);
     setSyncError(null);
+    if (options?.playerDemotion) {
+      setMapGeometryGen((n) => n + 1);
+    }
   };
 
   /**
-   * Hydrate or clear the table to a campaign-row currentMapId. Catch-up
-   * always runs this tail; a winning roster/refresh GET runs it only when
-   * that id differs from the map on screen (including a clear). Claims the
-   * id with mapReadSeq so an in-flight getMap of a different map cannot apply.
+   * Hydrate or clear the table to a campaign-row currentMapId. Catch-up and
+   * a winning roster/refresh GET always run this tail, including when the
+   * fetched id is already on screen (token catch-up). Different-id claims
+   * with mapReadSeq so an in-flight getMap of a different map cannot apply.
+   * Same-id token catch-up does not bump mapGeometryGen; a player-filtered
+   * demotion hydrate of the same id does.
    */
   const syncTableToFetchedMapId = async (
     campaignId: string,
     mapId: string | null,
     mapEpochWhenStarted: number,
     stillShown: () => boolean,
+    options?: { playerDemotion?: boolean },
   ): Promise<TableRetryOutcome> => {
     if (!mapId) {
       if (!stillShown()) return { discarded: true };
@@ -597,7 +622,9 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         }
         return { discarded: true };
       }
-      applyHydratedMap(map, spiritVisible);
+      applyHydratedMap(map, spiritVisible, {
+        playerDemotion: !claimingDifferent && Boolean(options?.playerDemotion),
+      });
       setCampaign((prev) =>
         prev && prev.currentMapId !== map.id ? { ...prev, currentMapId: map.id } : prev,
       );
@@ -617,10 +644,11 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
 
   /**
    * A winning campaign-row GET (latest campaignRowSeq) hydrates or clears
-   * when currentMapId differs from the map on screen. A same-id demotion
-   * refetches that map as the new non-DM role. If this GET demoted and the
-   * fetched map was not applied (discarded or failed), still refetch the
-   * map on screen as PLAYER.
+   * when currentMapId differs from the map on screen, and catch-up getMaps
+   * when that id is already showing. A same-id demotion hydrates
+   * player-filtered geometry. If this GET demoted and the fetched map was
+   * not applied (discarded or failed), still refetch the map on screen as
+   * PLAYER.
    */
   const hydrateWinningRowMap = async (
     campaignId: string,
@@ -638,13 +666,17 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       );
       const applied = 'ok' in outcome && outcome.ok === true;
       if (demoted && !applied && stillShown() && currentMapIdRef.current) {
-        await refreshCurrentMapRef.current();
+        await refreshCurrentMapRef.current({ playerDemotion: true });
       }
       return;
     }
-    if (demoted) {
-      await refreshCurrentMapRef.current();
-    }
+    await syncTableToFetchedMapId(
+      campaignId,
+      fetchedMapId,
+      mapEpochWhenStarted,
+      stillShown,
+      { playerDemotion: demoted },
+    );
   };
 
   // Derived: current vibe period name
@@ -866,9 +898,9 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // without rewriting live tokens or live table fields (status, map, vibe,
   // spirit). A settings PUT already returns the row; member remove and DM
   // transfer GET it again.
-  const refreshCampaign = useCallback(async (document?: Campaign, settingsWriteSeq?: number) => {
+  const refreshCampaign = useCallback(async (document?: Campaign, settingsWriteSeq?: number): Promise<boolean> => {
     const campaignId = campaign?.id ?? shownCampaignId.current;
-    if (!campaignId) return;
+    if (!campaignId) return false;
     const generation = loadGeneration.current;
     const sessionEpochWhenStarted = sessionEpoch.current;
     const statusEpochWhenStarted = statusEpoch.current;
@@ -878,16 +910,15 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     const issuedGet = document === undefined;
     // A settings PUT body is not a campaign-row read: do not bump the shared
     // clock. A GET shares it with catch-up and roster.updated. A pretaken
-    // settingsWriteSeq is the write's id (beginSettingsWrite before HTTP);
-    // omitting it takes a seq at this apply for older callers. Do not bump
-    // again when the seq was already provided.
+    // settingsWriteSeq is the write's identity (beginSettingsWrite before
+    // HTTP); omitting it takes a seq at this apply for older callers.
     const rowSeq = issuedGet ? bumpCampaignRowSeq() : null;
     const settingsSeq = issuedGet
       ? null
-      : (settingsWriteSeq ?? bumpSettingsGen());
+      : (settingsWriteSeq ?? nextSettingsWriteSeq());
     try {
       const fresh = document ?? await campaignService.getCampaign(campaignId);
-      if (!replyIsCurrent(campaignId, generation) || fresh.id !== campaignId) return;
+      if (!replyIsCurrent(campaignId, generation) || fresh.id !== campaignId) return false;
       const rowIsCurrent = rowSeq === null || rowSeq === campaignRowSeq.current;
       const roleClockMoved = sessionEpoch.current !== sessionEpochWhenStarted;
       const statusClockMoved = statusEpoch.current !== statusEpochWhenStarted;
@@ -906,20 +937,23 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         !rowIsCurrent
         || keepGetMaps(fresh, mapListGen.current !== mapListGenWhenStarted)
       );
+      // PUT: apply when this write started after the last applied write.
+      // GET: copy settings only while the applied clock is unchanged since
+      // this GET started. beginSettingsWrite does not move that clock.
       const keepSettings = issuedGet
         ? (!rowIsCurrent || settingsGen.current !== settingsGenWhenStarted)
-        : settingsSeq !== settingsGen.current;
+        : settingsSeq !== null && settingsSeq <= settingsGen.current;
+      // A discarded settings PUT must not write name, roster, maps, or
+      // characters: keepMemberships/keepMaps are false on the PUT path.
+      if (!issuedGet && keepSettings) return false;
       applyCampaignDocument(fresh, {
         keepMemberships,
         keepCharacters,
         keepMaps,
         keepSettings,
       });
-      // A pretaken write seq does not bump at apply start. Bump after this
-      // document actually applies so a GET that started at the pretake seq
-      // sees gen moved and cannot restore the pre-PUT name.
-      if (!issuedGet && !keepSettings) {
-        bumpSettingsGen();
+      if (!issuedGet && !keepSettings && settingsSeq !== null) {
+        settingsGen.current = settingsSeq;
       }
       // A current campaign-row GET may copy status/activeSession when the
       // status clock is unchanged. A settings PUT document must not: it is
@@ -939,12 +973,14 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
           demoted,
         );
       }
+      return issuedGet ? true : !keepSettings;
     } catch (err) {
-      if (!replyIsCurrent(campaignId, generation)) return;
+      if (!replyIsCurrent(campaignId, generation)) return false;
       console.error('[CampaignContext] Failed to refresh campaign:', err);
       if (rowSeq !== null && rowSeq === campaignRowSeq.current) {
         setSyncError(apiErrorMessage(err) || CATCH_UP_FALLBACK);
       }
+      return false;
     }
   }, [campaign?.id, applyCampaignDocument]);
 
@@ -952,7 +988,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // local token/wall/light/fog state catches up with anything that broadcast
   // while we were disconnected. Cheaper than a full campaign reload and
   // doesn't blip atmosphere/audio state.
-  const refreshCurrentMap = useCallback(async () => {
+  const refreshCurrentMap = useCallback(async (opts?: { playerDemotion?: boolean }) => {
     const campaignId = campaign?.id;
     const mapId = currentMap?.id;
     if (!campaignId || !mapId) return;
@@ -972,7 +1008,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         rejectStaleOwnRoleHydrate(seq, ownRoleWhenStarted, mapId, mapEpochWhenStarted, 'sync');
         return;
       }
-      applyHydratedMap(map, spiritVisible);
+      applyHydratedMap(map, spiritVisible, opts);
     } catch (err) {
       if (!replyIsCurrent(campaignId, generation)) return;
       if (seq !== mapReadSeq.current) return;
@@ -1079,9 +1115,15 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         setActiveSessionState(fresh.activeSession ?? null);
       }
       const mapId = fresh.currentMapId ?? null;
-      const outcome = await syncTableToFetchedMapId(campaignId, mapId, mapEpochWhenStarted, stillShown);
+      const outcome = await syncTableToFetchedMapId(
+        campaignId,
+        mapId,
+        mapEpochWhenStarted,
+        stillShown,
+        { playerDemotion: demoted },
+      );
       if (demoted && !('ok' in outcome && outcome.ok === true) && stillShown() && currentMapIdRef.current) {
-        await refreshCurrentMapRef.current();
+        await refreshCurrentMapRef.current({ playerDemotion: true });
       }
       return outcome;
     } catch (err) {
@@ -1386,6 +1428,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   const value: CampaignContextState = useMemo(() => ({
     campaign,
     currentMap,
+    mapGeometryGen,
     userRole,
     loading,
     error,
@@ -1422,6 +1465,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   }), [
     campaign,
     currentMap,
+    mapGeometryGen,
     userRole,
     loading,
     error,

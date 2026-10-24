@@ -133,7 +133,7 @@ interface MapCanvasProps {
 }
 
 export default function MapCanvas({ onEditToken }: MapCanvasProps) {
-  const { currentMap, setCurrentMap, userRole, campaign, updateCampaignSpiritLayer, dmViewBothPlanes, playerSpiritVisible, setPlayerSpiritVisible, activeVibeEffect, updateVibe, activeAtmosphereEffect, characterHpCache } = useCampaign();
+  const { currentMap, mapGeometryGen, setCurrentMap, userRole, campaign, updateCampaignSpiritLayer, dmViewBothPlanes, playerSpiritVisible, setPlayerSpiritVisible, activeVibeEffect, updateVibe, activeAtmosphereEffect, characterHpCache } = useCampaign();
   // Live token state comes from the game store, not the campaign context —
   // socket handlers write there directly (outside React), and this
   // subscription is what re-renders the canvas per token change.
@@ -1188,8 +1188,10 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     }
 
     // Load wall segments and light sources from the map response (included in GET /maps/:id).
-    // Same-id hydrate (player getMap after leaving the DM seat) replaces
-    // door-locked walls and DM-only lights; id-only deps would keep the DM copy.
+    // Reset on map id change or a demotion geometry generation, not on every
+    // same-map wallSegments/lights snapshot (sight resync, spirit toggle,
+    // token-image refresh). walls:replaced and carry keep undo and newer
+    // socket edits through those snapshots.
     resetWallHistory((currentMap.wallSegments as WallSegment[] | undefined) ?? []);
     setLightSources((currentMap.lights as LightSource[] | undefined) ?? []);
 
@@ -1198,7 +1200,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     lightingOffscreenRef.current = null;
     lightCoverageOffscreenRef.current = null;
     lightOnlyOffscreenRef.current = null;
-  }, [currentMap?.id, currentMap?.wallSegments, currentMap?.lights]);  
+  }, [currentMap?.id, mapGeometryGen]);  
 
   // The stored walls and lights are asked for once the campaign is joined,
   // and again after each rejoin, so a change missed while disconnected

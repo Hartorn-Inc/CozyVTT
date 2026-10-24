@@ -132,8 +132,8 @@ export default function CampaignSettingsModal({
         // server accepts it and clears the description.
         description: description.trim() || undefined,
       });
-      await refreshCampaign(updated, seq);
-      showToast('Campaign settings saved', 'success');
+      const applied = await refreshCampaign(updated, seq);
+      if (applied) showToast('Campaign settings saved', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err) ?? 'Failed to save settings', 'error');
     } finally {
@@ -149,8 +149,8 @@ export default function CampaignSettingsModal({
         chatCooldownEnabled,
         chatCooldownSeconds,
       });
-      await refreshCampaign(updated, seq);
-      showToast('Chat settings saved', 'success');
+      const applied = await refreshCampaign(updated, seq);
+      if (applied) showToast('Chat settings saved', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err) ?? 'Failed to save chat settings', 'error');
     } finally {

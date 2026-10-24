@@ -13,12 +13,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { Campaign } from '@/types';
 
+const { showToast } = vi.hoisted(() => ({ showToast: vi.fn() }));
 const refreshCampaign = vi.fn();
 const beginSettingsWrite = vi.fn(() => 1);
 const updateCampaign = vi.fn();
 let current: Campaign;
 vi.mock('@/contexts/CampaignContext', () => ({ useCampaign: () => ({ campaign: current, refreshCampaign, beginSettingsWrite, userRole: 'DM' }) }));
-vi.mock('@/contexts/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock('@/contexts/ToastContext', () => ({ useToast: () => ({ showToast }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'dm', platformRole: 'USER' } }) }));
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
 vi.mock('@/services/campaign.service', () => ({
@@ -37,6 +38,7 @@ beforeEach(() => {
   beginSettingsWrite.mockReset();
   beginSettingsWrite.mockReturnValue(1);
   updateCampaign.mockReset();
+  showToast.mockReset();
 });
 
 describe('CampaignSettingsModal', () => {
@@ -67,5 +69,28 @@ describe('CampaignSettingsModal', () => {
     }));
     expect(beginSettingsWrite).toHaveBeenCalled();
     expect(refreshCampaign).toHaveBeenCalledWith(saved, 1);
+  });
+
+  it('does not toast success when the PUT document was skipped', async () => {
+    current = campaign();
+    updateCampaign.mockResolvedValue({ ...campaign(), name: 'The Keep Renamed' });
+    refreshCampaign.mockResolvedValue(false);
+    render(<CampaignSettingsModal isOpen onClose={() => undefined} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(refreshCampaign).toHaveBeenCalled());
+    expect(showToast).not.toHaveBeenCalledWith('Campaign settings saved', 'success');
+  });
+
+  it('toasts success when the PUT document was applied', async () => {
+    current = campaign();
+    updateCampaign.mockResolvedValue({ ...campaign(), name: 'The Keep Renamed' });
+    refreshCampaign.mockResolvedValue(true);
+    render(<CampaignSettingsModal isOpen onClose={() => undefined} />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
+
+    await waitFor(() => expect(showToast).toHaveBeenCalledWith('Campaign settings saved', 'success'));
   });
 });

@@ -23,6 +23,7 @@ const h = vi.hoisted(() => {
   const state = {
     userRole: 'DM' as string,
     currentMap: null as unknown,
+    mapGeometryGen: 0,
     joinedEpoch: 1,
     characters: [] as Array<{ id: string; userId: string; name: string }>,
   };
@@ -80,6 +81,7 @@ vi.mock('@/contexts/CampaignContext', async () => {
       useSyncExternalStore(h.subscribe, h.snapshot);
       return {
         currentMap: h.state.currentMap,
+        mapGeometryGen: h.state.mapGeometryGen,
         setCurrentMap,
         userRole: h.state.userRole,
         campaign,
@@ -186,7 +188,7 @@ beforeEach(() => {
   h.getCharacter.mockReset();
   useGameStore.getState().setTokens([]);
   h.handlers.clear();
-  h.set({ userRole: 'DM', joinedEpoch: 1, characters: [], currentMap: mapWith('map-a', [wall('a1', 100), wall('a2', 300)]) });
+  h.set({ userRole: 'DM', joinedEpoch: 1, characters: [], mapGeometryGen: 0, currentMap: mapWith('map-a', [wall('a1', 100), wall('a2', 300)]) });
 });
 
 function openWallSelect() {
@@ -485,7 +487,36 @@ describe('walls and lights after a reconnect', () => {
 });
 
 describe('same-id player hydrate', () => {
-  it('reloads walls and lights when wallSegments and lights change without a new map id', () => {
+  it('reloads walls and lights when mapGeometryGen bumps without a new map id', () => {
+    const locked = wall('d1', 100, 'door-locked');
+    const lamp = { id: 'l1', x: 100, y: 100, brightRadius: 2, dimRadius: 4, color: '#ffcc66', enabled: true };
+    h.set({ currentMap: { ...mapWith('map-a', [locked]), lights: [lamp] } });
+    render(<MapCanvas />);
+
+    act(() => {
+      const prev = h.state.currentMap as CampaignMap;
+      h.set({
+        mapGeometryGen: h.state.mapGeometryGen + 1,
+        currentMap: {
+          ...prev,
+          wallSegments: [wall('d1', 100, 'door-closed')],
+          lights: [],
+        },
+      });
+    });
+
+    openWallSelect();
+    press('a', { ctrlKey: true });
+    press('ArrowRight');
+    const [sent] = emittedOf('walls:replace') as Array<{ segments: WallSegment[] }>;
+    expect(sent.segments.find((s) => s.id === 'd1')?.type).toBe('door-closed');
+    expect(sent.segments.some((s) => s.type === 'door-locked')).toBe(false);
+
+    fireEvent.click(screen.getByText('Lights'));
+    expect(screen.queryByText('Clear All (1)')).not.toBeInTheDocument();
+  });
+
+  it('keeps the live editor when wallSegments and lights change without a gen bump', () => {
     const locked = wall('d1', 100, 'door-locked');
     const lamp = { id: 'l1', x: 100, y: 100, brightRadius: 2, dimRadius: 4, color: '#ffcc66', enabled: true };
     h.set({ currentMap: { ...mapWith('map-a', [locked]), lights: [lamp] } });
@@ -506,11 +537,11 @@ describe('same-id player hydrate', () => {
     press('a', { ctrlKey: true });
     press('ArrowRight');
     const [sent] = emittedOf('walls:replace') as Array<{ segments: WallSegment[] }>;
-    expect(sent.segments.find((s) => s.id === 'd1')?.type).toBe('door-closed');
-    expect(sent.segments.some((s) => s.type === 'door-locked')).toBe(false);
+    expect(sent.segments.find((s) => s.id === 'd1')?.type).toBe('door-locked');
+    expect(sent.segments.some((s) => s.type === 'door-closed')).toBe(false);
 
     fireEvent.click(screen.getByText('Lights'));
-    expect(screen.queryByText('Clear All (1)')).not.toBeInTheDocument();
+    expect(screen.getByText('Clear All (1)')).toBeInTheDocument();
   });
 });
 

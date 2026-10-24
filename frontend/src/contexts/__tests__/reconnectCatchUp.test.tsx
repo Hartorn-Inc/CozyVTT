@@ -319,7 +319,11 @@ it('refreshCampaign patches the document without setting loading or rewriting to
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  getMap.mockResolvedValueOnce({
+    map: { id: 'm1', tokens: [tokenAt('t1', 40, 80)] },
+    spiritVisible: false,
+  });
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   expect(latest!.loading).toBe(false);
 
@@ -1082,7 +1086,7 @@ it('refreshCampaign does not restore memberships after a live role drop', async 
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -1337,7 +1341,7 @@ it('does not restore memberships from an older refreshCampaign GET after a roste
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -1978,7 +1982,7 @@ it('does not store a DM map list from a refresh GET after this user is demoted',
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -2102,7 +2106,7 @@ it('does not let a hung refresh GET restore name and chat after a settings PUT',
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -2147,7 +2151,7 @@ it('does not let a hung refresh GET undo a local map create or delete', async ()
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -2193,7 +2197,7 @@ it('does not apply a DM getMap after refreshCampaign GET learns PLAYER without a
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -2297,7 +2301,7 @@ it('does not store a DM map list from a refresh GET that itself returns PLAYER',
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -2334,7 +2338,7 @@ it('applies a missed pause from a refresh GET when another member\'s role change
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -2526,7 +2530,7 @@ it('keeps name and chat cooldown from the later of two overlapping refreshCampai
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseEarlier = resolve;
   }));
-  let earlier: Promise<void> = Promise.resolve();
+  let earlier: Promise<boolean> = Promise.resolve(false);
   act(() => { earlier = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -2534,7 +2538,7 @@ it('keeps name and chat cooldown from the later of two overlapping refreshCampai
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseLater = resolve;
   }));
-  let later: Promise<void> = Promise.resolve();
+  let later: Promise<boolean> = Promise.resolve(false);
   act(() => { later = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(3));
 
@@ -2707,7 +2711,7 @@ it('strips hidden tokens, notes, and locked doors when GET adopts PLAYER before 
 
   getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
   const mapHold = holdGetMap();
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getMap).toHaveBeenCalledTimes(2));
 
@@ -2743,7 +2747,7 @@ it('refetches the on-screen map as PLAYER when a demotion GET of B is discarded 
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
@@ -2802,6 +2806,82 @@ it('hydrates a player-filtered map when catch-up GET adopts PLAYER without a rol
   expect(Object.keys(useGameStore.getState().tokens)).toEqual(['visible']);
   expect(latest!.currentMap?.wallSegments).toEqual([closedDoor]);
   expect(latest!.playerSpiritVisible).toBe(false);
+});
+
+it('hydrates tokens from a winning roster GET that keeps the map already on screen', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('from-a', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-a']);
+
+  let releaseCatchUp: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCatchUp = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockResolvedValueOnce({
+    map: { id: 'm1', tokens: [tokenAt('from-caught-up', 2, 2)] },
+    spiritVisible: false,
+  });
+  await act(async () => { onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newcomer' }); });
+  await waitFor(() => expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-caught-up']));
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.syncError).toBeNull();
+
+  await act(async () => {
+    releaseCatchUp(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+    await catching;
+  });
+
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-caught-up']);
+  expect(latest!.currentMap?.id).toBe('m1');
+  expect(latest!.syncError).toBeNull();
+});
+
+it('sets syncError when a winning same-id roster getMap fails and keeps last tokens', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({ map: { id: mapId, tokens: [tokenAt('from-a', 1, 1)] }, spiritVisible: false }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-a']);
+
+  let releaseCatchUp: (value: unknown) => void = () => {};
+  getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
+    releaseCatchUp = resolve;
+  }));
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
+
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockRejectedValueOnce(mapUnavailable());
+  await act(async () => { onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newcomer' }); });
+  await waitFor(() => expect(latest!.syncError).toBe('Map unavailable'));
+
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-a']);
+  expect(useGameStore.getState().tokens['from-a']?.position).toEqual({ x: 1, y: 1 });
+  expect(latest!.currentMap?.id).toBe('m1');
+
+  await act(async () => {
+    releaseCatchUp(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+    await catching;
+  });
+
+  expect(latest!.syncError).toBe('Map unavailable');
+  expect(Object.keys(useGameStore.getState().tokens)).toEqual(['from-a']);
 });
 
 it('hydrates map B from a winning roster GET while hung catch-up is discarded', async () => {
@@ -2930,20 +3010,68 @@ it('keeps name and chat cooldown from the later of two overlapping settings PUT 
   act(() => { seqL = latest!.beginSettingsWrite(); });
   expect(seqL).toBeGreaterThan(seqE);
 
+  let laterApplied = false;
   await act(async () => {
-    await latest!.refreshCampaign({
+    laterApplied = await latest!.refreshCampaign({
       ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
       name: 'Later Keep',
       description: 'Later blurb',
       chatCooldownEnabled: true,
       chatCooldownSeconds: 20,
+      memberships: [{ userId: 'me', role: 'PLAYER' }, { userId: 'newcomer', role: 'PLAYER' }],
+      maps: [{ id: 'later-map', name: 'Later Map' }],
+      characters: [{ id: 'char-later', userId: 'newcomer', name: 'Aldra' }],
     } as unknown as Campaign, seqL);
   });
+  expect(laterApplied).toBe(true);
   expect(latest!.campaign?.name).toBe('Later Keep');
   expect(latest!.campaign?.chatCooldownSeconds).toBe(20);
 
+  let earlierApplied = true;
   await act(async () => {
-    await latest!.refreshCampaign({
+    earlierApplied = await latest!.refreshCampaign({
+      ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+      name: 'Earlier Keep',
+      description: 'Earlier blurb',
+      chatCooldownEnabled: false,
+      chatCooldownSeconds: 5,
+      memberships: [{ userId: 'me', role: 'PLAYER' }, { userId: 'stale', role: 'PLAYER' }],
+      maps: [{ id: 'earlier-map', name: 'Earlier Map' }],
+      characters: [{ id: 'char-stale', userId: 'stale', name: 'Harvey' }],
+    } as unknown as Campaign, seqE);
+  });
+
+  expect(earlierApplied).toBe(false);
+  expect(latest!.campaign?.name).toBe('Later Keep');
+  expect(latest!.campaign?.description).toBe('Later blurb');
+  expect(latest!.campaign?.chatCooldownEnabled).toBe(true);
+  expect(latest!.campaign?.chatCooldownSeconds).toBe(20);
+  expect(latest!.campaign?.memberships?.map((m) => m.userId)).toEqual(['me', 'newcomer']);
+  expect(latest!.campaign?.maps?.map((m) => m.id)).toEqual(['later-map']);
+  expect(latest!.campaign?.characters?.map((c) => c.id)).toEqual(['char-later']);
+});
+
+it('applies an earlier settings PUT when a later write never returns', async () => {
+  getCampaign.mockResolvedValueOnce({
+    ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
+    name: 'Original Keep',
+    chatCooldownEnabled: false,
+    chatCooldownSeconds: 3,
+  });
+  renderCampaign();
+  await waitFor(() => expect(latest?.campaign?.name).toBe('Original Keep'));
+
+  // General save starts first, chat save starts second and fails before
+  // refreshCampaign. The successful general document must still land.
+  let seqE = 0;
+  let seqL = 0;
+  act(() => { seqE = latest!.beginSettingsWrite(); });
+  act(() => { seqL = latest!.beginSettingsWrite(); });
+  expect(seqL).toBeGreaterThan(seqE);
+
+  let earlierApplied = false;
+  await act(async () => {
+    earlierApplied = await latest!.refreshCampaign({
       ...campaignAs('ACTIVE', 'm1', 'PLAYER'),
       name: 'Earlier Keep',
       description: 'Earlier blurb',
@@ -2952,10 +3080,11 @@ it('keeps name and chat cooldown from the later of two overlapping settings PUT 
     } as unknown as Campaign, seqE);
   });
 
-  expect(latest!.campaign?.name).toBe('Later Keep');
-  expect(latest!.campaign?.description).toBe('Later blurb');
-  expect(latest!.campaign?.chatCooldownEnabled).toBe(true);
-  expect(latest!.campaign?.chatCooldownSeconds).toBe(20);
+  expect(earlierApplied).toBe(true);
+  expect(latest!.campaign?.name).toBe('Earlier Keep');
+  expect(latest!.campaign?.description).toBe('Earlier blurb');
+  expect(latest!.campaign?.chatCooldownEnabled).toBe(false);
+  expect(latest!.campaign?.chatCooldownSeconds).toBe(5);
 });
 
 it('does not let a GET that started after beginSettingsWrite restore the pre-PUT name', async () => {
@@ -2976,7 +3105,7 @@ it('does not let a GET that started after beginSettingsWrite restore the pre-PUT
   getCampaign.mockImplementationOnce(() => new Promise((resolve) => {
     releaseRefresh = resolve;
   }));
-  let refreshing: Promise<void> = Promise.resolve();
+  let refreshing: Promise<boolean> = Promise.resolve(false);
   act(() => { refreshing = latest!.refreshCampaign(); });
   await waitFor(() => expect(getCampaign).toHaveBeenCalledTimes(2));
 
