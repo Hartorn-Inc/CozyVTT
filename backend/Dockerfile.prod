@@ -21,7 +21,7 @@ FROM node:26.12.0-alpine@sha256:6f08a523443ddedf52941874c203475b0ad503e859ad70cb
 # PostgreSQL this Alpine release ships, and a dump written by a client newer
 # than the database opens with settings the database rejects, so backups
 # could not be restored. 18 matches the postgres:18 image in
-# docker-compose.yml. Keep the two in step when the database image moves.
+# database/Dockerfile. Keep the two in step when the database image moves.
 RUN apk add --no-cache bash postgresql18-client openssl su-exec
 
 # Create non-root user

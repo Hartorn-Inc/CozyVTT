@@ -719,7 +719,7 @@ describe('the dependency check SECURITY.md describes', () => {
   it('fails the images job on a high or critical advisory in the runtime images', () => {
     const imagesJob = jobSteps('images');
     const body = imagesJob.join('\n');
-    const pull = body.indexOf('docker compose pull database nginx');
+    const pull = body.indexOf('docker compose pull nginx');
     const build = body.indexOf('docker compose build');
     const scan = imagesJob.find((step) => /scripts\/ci\/image-advisories/.test(step));
     expect(pull).toBeGreaterThan(-1);

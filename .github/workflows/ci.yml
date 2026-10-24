@@ -91,7 +91,7 @@ jobs:
     # one on the port the tests expect.
     services:
       postgres:
-        image: postgres:18-alpine@sha256:77f585114c32fbca283dc835b0596f4e52b51b4c6662d7810b2f4084f60a1873
+        image: postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
         env:
           POSTGRES_USER: cozyvtt
           POSTGRES_PASSWORD: cozyvtt
@@ -200,8 +200,8 @@ jobs:
           exit $status
 
   # What an Operator's `docker compose up -d --build` runs: the compose file
-  # read, the pinned database and nginx images pulled, both production images
-  # built, High and Critical advisories in those four runtime images, and the
+  # read, the pinned nginx image pulled, the database and both application
+  # images built, High and Critical advisories in those four runtime images, and the
   # bundled nginx's configuration rendered as its container renders it and
   # checked by nginx, the HTTPS example from docs/DEPLOYMENT.md included.
   # Then the stack is started and a browser walks through it (frontend/e2e):
@@ -217,8 +217,8 @@ jobs:
           persist-credentials: false
       - name: Read docker-compose.yml with the example settings
         run: cp .env.example .env && docker compose config -q
-      - name: Pull the pinned database and nginx images
-        run: docker compose pull database nginx
+      - name: Pull the pinned nginx image
+        run: docker compose pull nginx
       - run: docker compose build
       - name: Install Trivy
         uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1

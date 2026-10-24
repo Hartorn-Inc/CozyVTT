@@ -91,10 +91,17 @@ describe('the D&D 5e lists', () => {
           conditions: rows(SHEET_LIST_MAX, 'prone'),
           featuresAndTraits: rows(SHEET_LIST_MAX, 'Second Wind'),
           proficienciesAndLanguages: rows(SHEET_LIST_MAX, 'Common'),
+          proficiencies: rows(SHEET_LIST_MAX, 'Common'),
           spellcasting: { spells: rows(SHEET_LIST_MAX, spell), cantrips: rows(SHEET_LIST_MAX, 'Light') },
         })
       )
     ).toEqual([]);
+  });
+
+  it('refuse an oversized proficiencies array without collecting per-entry issues', () => {
+    expect(refusals(GameSystem.DND_5E, sheet({ proficiencies: rows(20_000, 1) }))).toEqual([
+      `proficiencies: Can hold at most ${SHEET_LIST_MAX} entries`,
+    ]);
   });
 });
 

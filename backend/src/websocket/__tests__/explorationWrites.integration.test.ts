@@ -30,7 +30,7 @@ let mapId: string;
 let dmCookie: string;
 let playerCookie: string;
 
-type StateEvent = { mapId: string; userId: string; cells: number[] };
+type StateEvent = { mapId: string; userId: string | null; cells: number[]; epoch?: number };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -148,17 +148,68 @@ describe('exploration:reveal', () => {
   it('forgets reports still waiting to be written when the DM resets the map', async () => {
     const player = await server.connectAndAuth(playerCookie, campaignId);
     const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const first = waitForEvent<StateEvent>(player, 'exploration:state');
     player.emit('exploration:reveal', { mapId, cells: [7] });
-    await sleep(200);
+    expect((await first).cells).toContain(7);
     player.emit('exploration:reveal', { mapId, cells: [8] });
     // Queued by now, and not due to be written for most of a second. (A
     // report that reaches the server after the reset is written, as it should
     // be: the player saw those cells after it.)
     await sleep(150);
+    const cleared = waitForEvent<StateEvent>(player, 'exploration:state');
     dm.emit('exploration:reset', { mapId });
+    const reset = await cleared;
+    expect(reset.cells).toEqual([]);
+    expect(reset.epoch).toEqual(expect.any(Number));
+
+    const asked = waitForEvent<StateEvent>(player, 'exploration:state');
+    player.emit('exploration:request', { mapId });
+    const reply = await asked;
+    expect(reply.cells).toEqual([]);
+    expect(reply.epoch).toBe(reset.epoch);
+    expect(await prisma.mapExploration.count({ where: { mapId } })).toBe(0);
+
     await sleep(1600);
 
     expect(await remembered()).toEqual([]);
+    expect(await prisma.mapExploration.count({ where: { mapId } })).toBe(0);
+    const askedAgain = waitForEvent<StateEvent>(player, 'exploration:state');
+    player.emit('exploration:request', { mapId });
+    const later = await askedAgain;
+    expect(later.cells).toEqual([]);
+    expect(later.epoch).toBe(reset.epoch);
+    expect(await prisma.mapExploration.count({ where: { mapId } })).toBe(0);
+    player.disconnect();
+    dm.disconnect();
+  });
+
+  it('keeps a reveal written after reset; a losing in-flight write does not wipe it', async () => {
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const first = waitForEvent<StateEvent>(player, 'exploration:state');
+    player.emit('exploration:reveal', { mapId, cells: [7] });
+    expect((await first).cells).toContain(7);
+    player.emit('exploration:reveal', { mapId, cells: [8] });
+    await sleep(150);
+    const cleared = waitForEvent<StateEvent>(player, 'exploration:state');
+    dm.emit('exploration:reset', { mapId });
+    const reset = await cleared;
+    expect(reset.cells).toEqual([]);
+
+    const after = waitForEvent<StateEvent>(player, 'exploration:state');
+    player.emit('exploration:reveal', { mapId, cells: [9] });
+    const stored = await after;
+    expect(stored.cells).toEqual([9]);
+    expect(stored.epoch).toBeGreaterThanOrEqual(reset.epoch ?? 0);
+    expect(await remembered()).toEqual([9]);
+
+    await sleep(1600);
+    expect(await remembered()).toEqual([9]);
+    const asked = waitForEvent<StateEvent>(player, 'exploration:state');
+    player.emit('exploration:request', { mapId });
+    const reply = await asked;
+    expect(reply.cells).toEqual([9]);
+    expect(reply.epoch).toBe(stored.epoch);
     player.disconnect();
     dm.disconnect();
   });

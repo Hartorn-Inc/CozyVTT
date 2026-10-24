@@ -83,9 +83,9 @@
       "allowedVersions": "!/^0\\.45\\./"
     },
     {
-      "description": "zod 4.6.6 and 4.6.7 change union list-limit messages",
+      "description": "zod below 4.6.6 is GHSA-mrhx-c7xc-m3w5 (DoS via memory exhaustion)",
       "matchPackageNames": ["zod"],
-      "allowedVersions": "!/^(4\\.6\\.6|4\\.6\\.7)$/"
+      "allowedVersions": ">=4.6.6"
     },
     {
       "description": "Tailwind CSS 4 is a move of its own",

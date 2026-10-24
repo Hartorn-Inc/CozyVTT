@@ -57,6 +57,9 @@ import { createVisionCache } from './map/vision';
 import { pickTokenAt, pickMovableTokenAt, blockingTokensAt, visibleTokenHp } from './map/tokenHitTest';
 import { cachedTokenImage, placeholderColor } from './map/layers/drawTokens';
 import { fogRectFromDrag, fogCellsInRect, revealedSetFromFogState } from './map/fogSelection';
+import { chunkFogCells, FOG_MESSAGE_MAX_CELLS, FOG_OPERATION_CHUNK_GAP_MS } from './map/chunkFogCells';
+import { createFogOperationQueue } from './map/fogOperationQueue';
+import { fogRevealedEquals, overlayFogOperations } from './map/overlayFogOperations';
 import { exploredCellsFromCoverage, diffNew } from './map/exploration';
 import { rectFromDrag, segmentsInRect } from './map/mapSelection';
 import { useWallSelection } from './map/useWallSelection';
@@ -601,17 +604,35 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
   };
 
   /**
-   * Apply a set of fog cells: optimistic local update plus one server op.
+   * Apply a set of fog cells: optimistic local update plus queued server ops.
    *
    * A rectangle drag produces exactly one call here, which is why the old
    * pending-cells buffer and its 80ms flush interval are gone — those existed
-   * only to batch the continuous stream a brush stroke produced.
+   * only to batch the continuous stream a brush stroke produced. The local
+   * grid still flips the whole set at once; the wire is split into messages
+   * of at most 20,000 cells, queued and spaced to stay inside the 10/1000ms
+   * fog limiter with a safety margin so a tail chunk is not silently dropped.
+   * A later rectangle is appended; it does not cancel earlier chunks.
+   * Rejoin / map change / unmount clear the queue (catch-up snapshots).
    */
+  const socketRef = useRef(socket);
+  socketRef.current = socket;
+  const fogOpQueueRef = useRef<ReturnType<typeof createFogOperationQueue> | null>(null);
+  if (fogOpQueueRef.current === null) {
+    fogOpQueueRef.current = createFogOperationQueue({
+      getSocket: () => socketRef.current?.getSocket() ?? null,
+      gapMs: FOG_OPERATION_CHUNK_GAP_MS,
+    });
+  }
+  useEffect(() => {
+    return () => { fogOpQueueRef.current?.clear(); };
+  }, [joinedEpoch, currentMap?.id]);
+
   const applyFogCells = useCallback((cells: number[]) => {
     if (!currentMap || !fogMode || cells.length === 0) return;
 
     const reveal = fogMode === 'fog-reveal';
-    const operation = { op: reveal ? 'reveal' : 'hide', cells } as const;
+    const op = reveal ? 'reveal' : 'hide';
 
     setFogState((prev) => {
       if (!prev) return prev;
@@ -622,8 +643,14 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
       return { ...prev, revealed };
     });
 
-    socket?.getSocket()?.emit('fog:operation', { mapId: currentMap.id, operation });
-  }, [currentMap, fogMode, socket]);
+    fogOpQueueRef.current?.enqueue(
+      chunkFogCells(cells, FOG_MESSAGE_MAX_CELLS).map((chunk) => ({
+        mapId: currentMap.id,
+        op,
+        cells: chunk,
+      }))
+    );
+  }, [currentMap, fogMode]);
 
   /** Finish a fog drag: compute the snapped rectangle once and apply it. */
   const commitFogDrag = useCallback((endX: number, endY: number) => {
@@ -1252,16 +1279,24 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
 
     const handleFogUpdated = (data: { mapId: string; fogState: FogState }) => {
       if (!currentMap || data.mapId !== currentMap.id) return;
-      // Track newly-revealed cells for fade animation
+      // Chunked own ops echo as a full grid that is only as far as that
+      // chunk. Re-apply in-flight already-emitted ops and pending unsent
+      // ops in order so an optimistic rectangle (or a second stroke) is not
+      // snapped back. Drop in-flight only when the snapshot already matches
+      // that overlay (the server has caught up); a late partial chunk must
+      // not clear reveal_all and snap the grid back.
+      const queue = fogOpQueueRef.current;
+      const next = overlayFogOperations(data.fogState, queue?.overlayOps() ?? []);
+      queue?.ackEcho(fogRevealedEquals(data.fogState, next));
       setFogState((prev) => {
         if (prev) {
-          data.fogState.revealed.forEach((revealed, i) => {
+          next.revealed.forEach((revealed, i) => {
             if (revealed && !prev.revealed[i]) {
               revealOpacityRef.current.set(i, 1.0); // Start fade animation
             }
           });
         }
-        return data.fogState;
+        return next;
       });
     };
 
@@ -3562,17 +3597,11 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
               }
             }}
             onRevealAll={() => {
-              const socketInstance = socket?.getSocket();
-              if (socketInstance && currentMap) {
-                socketInstance.emit('fog:operation', { mapId: currentMap.id, operation: { op: 'reveal_all' } });
-              }
+              if (currentMap) fogOpQueueRef.current?.enqueueAll(currentMap.id, 'reveal_all');
               setFogState((prev) => prev ? { ...prev, revealed: new Array(prev.revealed.length).fill(true) } : prev);
             }}
             onHideAll={() => {
-              const socketInstance = socket?.getSocket();
-              if (socketInstance && currentMap) {
-                socketInstance.emit('fog:operation', { mapId: currentMap.id, operation: { op: 'hide_all' } });
-              }
+              if (currentMap) fogOpQueueRef.current?.enqueueAll(currentMap.id, 'hide_all');
               setFogState((prev) => prev ? { ...prev, revealed: new Array(prev.revealed.length).fill(false) } : prev);
             }}
           />

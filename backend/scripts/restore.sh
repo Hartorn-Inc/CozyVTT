@@ -294,7 +294,7 @@ report_failure() {
   echo "❌ Restore failed. Your existing data is unchanged: the load is undone as a whole when any part of it fails."
   echo "   The reason is in the messages above. If it says 'invalid command \\restrict', psql is too old:"
   echo "   the restore needs PostgreSQL 13.22, 14.19, 15.14, 16.10, 17.6 or 18"
-  echo "   (on Docker: docker compose pull database && docker compose up -d database)."
+  echo "   (on Docker: docker compose up -d --build database)."
 }
 
 # ------------------------------------------------------------------

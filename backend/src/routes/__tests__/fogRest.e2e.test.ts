@@ -30,6 +30,7 @@ let dmId: string;
 let playerId: string;
 let campaignId: string;
 let mapId: string;
+let largeMapId: string;
 let agent: ReturnType<typeof request.agent>;
 
 beforeAll(async () => {
@@ -53,6 +54,14 @@ beforeAll(async () => {
     },
   });
   mapId = map.id;
+  // 150 × 150 so 20,001 is a valid cell index, under the 250,000 map-size ceiling.
+  const large = await prisma.map.create({
+    data: {
+      campaignId, name: 'Large fog', imageUrl: '/api/assets/maps/x', baseLayerUrl: '/api/assets/maps/x',
+      width: 150, height: 150, gridSize: 50, tokens: [], annotations: [], fogEnabled: true,
+    },
+  });
+  largeMapId = large.id;
   // Players are told of fog on the map the table is on.
   await prisma.campaign.update({ where: { id: campaignId }, data: { currentMapId: mapId } });
   agent = request.agent(app);
@@ -103,4 +112,28 @@ it('refuses to change fog while fog is off for the map, and broadcasts nothing',
   const map = await prisma.map.findUniqueOrThrow({ where: { id: mapId }, select: { fogData: true } });
   expect((map.fogData as unknown as { revealed: boolean[] }).revealed.every((v) => v === true)).toBe(false);
   player.disconnect();
+});
+
+it('accepts a 20000-cell reveal and stores those cells', async () => {
+  const res = await agent
+    .post(`/api/campaigns/${campaignId}/maps/${largeMapId}/fog/operation`)
+    .send({ op: 'reveal', cells: Array.from({ length: 20000 }, (_, i) => i) });
+  expect(res.status).toBe(200);
+  const stored = (await prisma.map.findUniqueOrThrow({
+    where: { id: largeMapId },
+    select: { fogData: true },
+  })).fogData as { revealed: boolean[] };
+  expect(stored.revealed[0]).toBe(true);
+  expect(stored.revealed[19999]).toBe(true);
+  expect(stored.revealed[20000]).toBe(false);
+});
+
+it('refuses a 20001-cell reveal with 400 and stores nothing', async () => {
+  const before = (await prisma.map.findUniqueOrThrow({ where: { id: largeMapId }, select: { fogData: true } })).fogData;
+  const res = await agent
+    .post(`/api/campaigns/${campaignId}/maps/${largeMapId}/fog/operation`)
+    .send({ op: 'reveal', cells: Array.from({ length: 20001 }, (_, i) => i) });
+  expect(res.status).toBe(400);
+  const after = (await prisma.map.findUniqueOrThrow({ where: { id: largeMapId }, select: { fogData: true } })).fogData;
+  expect(after).toEqual(before);
 });

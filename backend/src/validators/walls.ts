@@ -87,14 +87,26 @@ export const LightSourceUpdateSchema = z.object({
 
 // ── Fog Operations ───────────────────────────────────────────────────────────
 
+/**
+ * Most cells one reveal/hide message may name. The map itself may hold up to
+ * 250,000 squares; a single `fog:operation` (and REST) or `exploration:reveal`
+ * is capped here so one payload cannot carry a whole large grid. `reveal_all`
+ * and `hide_all` send no cells array and are not under this cap.
+ */
+export const FOG_MESSAGE_MAX_CELLS = 20000;
+
+const fogCellsInOneMessage = z
+  .array(z.number().int().nonnegative())
+  .max(FOG_MESSAGE_MAX_CELLS, `At most ${FOG_MESSAGE_MAX_CELLS} cells per message`);
+
 export const FogOperationSchema = z.discriminatedUnion('op', [
   z.object({
     op: z.literal('reveal'),
-    cells: z.array(z.number().int().nonnegative()),
+    cells: fogCellsInOneMessage,
   }),
   z.object({
     op: z.literal('hide'),
-    cells: z.array(z.number().int().nonnegative()),
+    cells: fogCellsInOneMessage,
   }),
   z.object({ op: z.literal('reveal_all') }),
   z.object({ op: z.literal('hide_all') }),
@@ -108,7 +120,7 @@ export const FogOperationSchema = z.discriminatedUnion('op', [
  */
 export const ExplorationRevealSchema = z.object({
   mapId: z.string().uuid(),
-  cells: z.array(z.number().int().nonnegative()).max(20000),
+  cells: fogCellsInOneMessage,
   /** Whose memory to write. Only a DM may name someone else (Player Preview). */
   userId: z.string().uuid().optional(),
 });

@@ -16,6 +16,11 @@ export interface ExplorationState {
   /** Whose memory this is; null for a reset, which empties everyone's. */
   userId: string | null;
   cells: number[];
+  /**
+   * Per-map explored-memory clock. Reset increments it; join and current-map
+   * identity do not. Optional so a payload from an older server still applies.
+   */
+  epoch?: number;
 }
 
 /** The slice of a socket the memory needs; the real one is socket.io's. */
@@ -44,12 +49,22 @@ export function useExploredMemory(
   joinedEpoch: number
 ) {
   const [exploredCells, setExploredCells] = useState<Set<number> | null>(null);
+  /**
+   * Last applied explored-memory epoch per map. Independent of `joinedEpoch`.
+   * A rejoin must not reset this: an older payload after a reset would otherwise
+   * paint forgotten cells back in. After a process restart the server advertises
+   * a new base that can be lower than this; apply that snapshot when cells are
+   * currently null (identity just cleared).
+   */
+  const appliedEpochByMap = useRef(new Map<string, number>());
+  const cellsHeldRef = useRef(false);
 
   // What is held belongs to one map and one person. When either changes, it is
   // no longer about anything, so it goes. A rejoin is deliberately not in here:
   // clearing on every reconnect blanked a map that was perfectly good, and the
   // reply to the fresh request puts the same cells back anyway.
   useEffect(() => {
+    cellsHeldRef.current = false;
     setExploredCells(null);
   }, [mapId, active, exploringAs]);
 
@@ -82,6 +97,13 @@ export function useExploredMemory(
     const onState = (data: ExplorationState) => {
       if (data.mapId !== mapId) return;
       if (data.userId !== null && data.userId !== exploringAs) return;
+      const incoming = data.epoch;
+      if (typeof incoming === 'number') {
+        const last = appliedEpochByMap.current.get(data.mapId) ?? -1;
+        if (incoming < last && cellsHeldRef.current) return;
+        appliedEpochByMap.current.set(data.mapId, incoming);
+      }
+      cellsHeldRef.current = true;
       setExploredCells(new Set<number>(data.cells));
     };
     live.on('exploration:state', onState);
@@ -91,6 +113,7 @@ export function useExploredMemory(
   /** Cells this canvas has just seen for itself, added before the server echoes them. */
   const addExplored = useCallback((fresh: readonly number[]) => {
     if (fresh.length === 0) return;
+    cellsHeldRef.current = true;
     setExploredCells((prev) => new Set<number>([...(prev ?? []), ...fresh]));
   }, []);
 

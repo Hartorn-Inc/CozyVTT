@@ -35,6 +35,10 @@
  * they allow; a dialog offering more than the server takes is a map the DM
  * fills in and cannot save. The file is kept identical in both packages.
  *
+ * The fog operation cell cap. A reveal/hide names at most 20,000 cells in
+ * one message; the server Zod constant, the client chunk helper, and the
+ * OpenAPI FogOperation schema must name that same literal.
+ *
  * The socket flood ceilings, applied by the server and listed in the
  * WebSocket guide, which is what a self-hoster or the author of a scripted
  * client reads to know what the server will take.
@@ -195,9 +199,9 @@ describe('NGINX_CONF_STAMP in docker-compose.yml', () => {
 
 describe('the PostgreSQL client the backend image installs', () => {
   const clientFiles = ['backend/Dockerfile', 'backend/Dockerfile.prod'];
-  const serverFiles = ['docker-compose.yml', 'docker-compose.dev.yml', '.github/workflows/ci.yml'];
+  const serverFiles = ['database/Dockerfile', 'docker-compose.dev.yml', '.github/workflows/ci.yml'];
   const clients = clientFiles.flatMap((f) => majors(f, /postgresql(\d+)-client/g));
-  const servers = serverFiles.flatMap((f) => majors(f, /image:\s*postgres:(\d+)-alpine/g));
+  const servers = serverFiles.flatMap((f) => majors(f, /(?:image:\s*|FROM\s+)postgres:(\d+)-alpine/g));
 
   it('is one major, in every Dockerfile stage', () => {
     expect(new Set(clients).size).toBe(1);
@@ -229,8 +233,26 @@ describe('the PostgreSQL client the backend image installs', () => {
     expect(missing).toEqual([]);
   });
 
-  it('is pinned against one server major, the same in both compose files and CI', () => {
+  it('is pinned against one server major, the same in the production FROM, the development compose file and CI', () => {
     expect(new Set(servers).size).toBe(1);
+  });
+
+  it('is the same tag and digest in the production FROM, the development compose file and CI', () => {
+    const pins = serverFiles.flatMap((f) => {
+      const found = [...instructions(f).join('\n').matchAll(/(?:image:\s*|FROM\s+)(postgres:\d+-alpine@sha256:[0-9a-f]{64})/g)].map(
+        (m) => m[1],
+      );
+      if (found.length === 0) {
+        throw new Error(`${f} no longer pins postgres:N-alpine@sha256; update this test with the file`);
+      }
+      return found;
+    });
+    expect(new Set(pins).size).toBe(1);
+  });
+
+  it('upgrades brotli-libs in the production database image, until the official pin already has 1.2.1', () => {
+    const production = instructions('database/Dockerfile').join('\n');
+    expect(production).toMatch(/^RUN apk add --no-cache 'brotli-libs=1\.2\.1-r0'$/m);
   });
 
   it('is not older than the server image, or pg_dump refuses to dump it', () => {
@@ -400,6 +422,28 @@ describe('campaign.access.revoked, which the server sends and the client reads',
 describe('the map limits', () => {
   it('are the same file in the browser and on the server', () => {
     expect(read('frontend/src/constants/mapLimits.ts')).toBe(read('backend/src/validators/mapLimits.ts'));
+  });
+});
+
+describe('the fog operation cell cap', () => {
+  const constant = (rel: string) => {
+    const m = /export const FOG_MESSAGE_MAX_CELLS = (\d+);/.exec(read(rel));
+    if (!m) throw new Error(`${rel} no longer exports FOG_MESSAGE_MAX_CELLS; update this test with the file`);
+    return Number(m[1]);
+  };
+  const fogOperationBlock = () => {
+    const yaml = read('backend/docs/API_DOCUMENTATION.yaml');
+    const start = yaml.indexOf('\n    FogOperation:\n');
+    if (start === -1) throw new Error('API_DOCUMENTATION.yaml no longer has a FogOperation schema');
+    const rest = yaml.slice(start + 1);
+    const end = rest.slice(1).search(/\n {4}[A-Z][A-Za-z]+:/);
+    return end === -1 ? rest : rest.slice(0, end + 1);
+  };
+
+  it('is the literal 20000 on the server, the client chunk helper, and FogOperation.maxItems', () => {
+    expect(constant('backend/src/validators/walls.ts')).toBe(20000);
+    expect(constant('frontend/src/components/campaign/map/chunkFogCells.ts')).toBe(20000);
+    expect(fogOperationBlock()).toMatch(/maxItems:\s*20000/);
   });
 });
 

@@ -6,13 +6,33 @@
 import { z } from 'zod';
 import { SHEET_LIST_MAX } from './sheetLimits';
 
+/** The message `.max()` and a pre-union length check both use, so they cannot drift. */
+export function sheetListLimitMessage(max: number = SHEET_LIST_MAX): string {
+  return `Can hold at most ${max.toLocaleString('en-US')} entries`;
+}
+
 /**
  * A list on a sheet: inventory, attacks, spells, features, conditions. The
  * message is what a player whose list is over the limit is told, beside the
  * name of the list.
  */
 export function sheetList<T extends z.ZodType>(entry: T, max: number = SHEET_LIST_MAX) {
-  return z.array(entry).max(max, `Can hold at most ${max.toLocaleString('en-US')} entries`);
+  return z.array(entry).max(max, sheetListLimitMessage(max));
+}
+
+/**
+ * Fail an oversized array before a union tries its arms. Zod 4.6+ reports a
+ * failed object-or-list union as "Invalid input", and would otherwise walk
+ * both arms of a huge array.
+ */
+export function refuseOversizedSheetList(max: number = SHEET_LIST_MAX) {
+  const message = sheetListLimitMessage(max);
+  return (value: unknown, ctx: z.RefinementCtx): unknown => {
+    if (Array.isArray(value) && value.length > max) {
+      ctx.addIssue({ code: 'custom', message });
+    }
+    return value;
+  };
 }
 
 /**

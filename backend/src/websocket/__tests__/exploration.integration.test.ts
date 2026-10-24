@@ -36,7 +36,7 @@ let p1Cookie: string;
 let p2Cookie: string;
 let specCookie: string;
 
-type StateEvent = { mapId: string; cells: number[] };
+type StateEvent = { mapId: string; cells: number[]; epoch?: number; userId?: string | null };
 
 beforeAll(async () => {
   const [dm, p1, p2, spec] = await Promise.all(
@@ -354,5 +354,55 @@ describe('exploration:reset', () => {
     p1.emit('exploration:reset', { mapId });
     expect((await denial).message).toMatch(/DM/);
     p1.disconnect();
+  });
+
+  it('increments only the explored-memory epoch, keeps currentMapId, and does not drop a later token move', async () => {
+    const p1 = await server.connectAndAuth(p1Cookie, campaignId);
+    const dm = await server.connectAndAuth(dmCookie, campaignId);
+    const stored = waitForEvent<StateEvent>(p1, 'exploration:state');
+    p1.emit('exploration:reveal', { mapId, cells: [1] });
+    const before = await stored;
+    expect(typeof before.epoch).toBe('number');
+
+    const currentMapId = (await prisma.campaign.findUniqueOrThrow({
+      where: { id: campaignId },
+      select: { currentMapId: true },
+    })).currentMapId;
+
+    const cleared = waitForEvent<StateEvent>(p1, 'exploration:state');
+    dm.emit('exploration:reset', { mapId });
+    const reset = await cleared;
+    expect(reset.cells).toEqual([]);
+    expect(reset.userId ?? null).toBeNull();
+    expect(reset.epoch).toBeGreaterThan(before.epoch ?? -1);
+
+    const asked = waitForEvent<StateEvent>(p1, 'exploration:state');
+    p1.emit('exploration:request', { mapId });
+    const reply = await asked;
+    expect(reply.cells).toEqual([]);
+    expect(reply.epoch).toBe(reset.epoch);
+    expect(await prisma.mapExploration.count({ where: { mapId } })).toBe(0);
+
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const askedAgain = waitForEvent<StateEvent>(p1, 'exploration:state');
+    p1.emit('exploration:request', { mapId });
+    const later = await askedAgain;
+    expect(later.cells).toEqual([]);
+    expect(later.epoch).toBe(reset.epoch);
+    expect(await prisma.mapExploration.count({ where: { mapId } })).toBe(0);
+
+    expect((await prisma.campaign.findUniqueOrThrow({
+      where: { id: campaignId },
+      select: { currentMapId: true },
+    })).currentMapId).toBe(currentMapId);
+
+    const moved = waitForEvent<{ tokenId: string; mapId: string }>(dm, 'token.moved');
+    dm.emit('token.move.end', { tokenId: 'npc', mapId, x: 7, y: 8 });
+    const move = await moved;
+    expect(move.tokenId).toBe('npc');
+    expect(move.mapId).toBe(mapId);
+
+    p1.disconnect();
+    dm.disconnect();
   });
 });
