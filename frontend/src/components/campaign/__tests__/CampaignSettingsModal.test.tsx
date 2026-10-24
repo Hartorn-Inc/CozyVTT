@@ -14,9 +14,10 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import type { Campaign } from '@/types';
 
 const refreshCampaign = vi.fn();
+const beginSettingsWrite = vi.fn(() => 1);
 const updateCampaign = vi.fn();
 let current: Campaign;
-vi.mock('@/contexts/CampaignContext', () => ({ useCampaign: () => ({ campaign: current, refreshCampaign, userRole: 'DM' }) }));
+vi.mock('@/contexts/CampaignContext', () => ({ useCampaign: () => ({ campaign: current, refreshCampaign, beginSettingsWrite, userRole: 'DM' }) }));
 vi.mock('@/contexts/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 vi.mock('@/contexts/AuthContext', () => ({ useAuth: () => ({ user: { id: 'dm', platformRole: 'USER' } }) }));
 vi.mock('react-router', () => ({ useNavigate: () => vi.fn() }));
@@ -33,6 +34,8 @@ const campaign = (): Campaign => ({
 
 beforeEach(() => {
   refreshCampaign.mockReset();
+  beginSettingsWrite.mockReset();
+  beginSettingsWrite.mockReturnValue(1);
   updateCampaign.mockReset();
 });
 
@@ -62,6 +65,7 @@ describe('CampaignSettingsModal', () => {
       name: 'The Keep',
       description: 'Saved words',
     }));
-    expect(refreshCampaign).toHaveBeenCalledWith(saved);
+    expect(beginSettingsWrite).toHaveBeenCalled();
+    expect(refreshCampaign).toHaveBeenCalledWith(saved, 1);
   });
 });

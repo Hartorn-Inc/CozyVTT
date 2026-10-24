@@ -1187,7 +1187,9 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
       return;
     }
 
-    // Load wall segments and light sources from the map response (included in GET /maps/:id)
+    // Load wall segments and light sources from the map response (included in GET /maps/:id).
+    // Same-id hydrate (player getMap after leaving the DM seat) replaces
+    // door-locked walls and DM-only lights; id-only deps would keep the DM copy.
     resetWallHistory((currentMap.wallSegments as WallSegment[] | undefined) ?? []);
     setLightSources((currentMap.lights as LightSource[] | undefined) ?? []);
 
@@ -1196,7 +1198,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     lightingOffscreenRef.current = null;
     lightCoverageOffscreenRef.current = null;
     lightOnlyOffscreenRef.current = null;
-  }, [currentMap?.id]);  
+  }, [currentMap?.id, currentMap?.wallSegments, currentMap?.lights]);  
 
   // The stored walls and lights are asked for once the campaign is joined,
   // and again after each rejoin, so a change missed while disconnected

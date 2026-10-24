@@ -484,6 +484,36 @@ describe('walls and lights after a reconnect', () => {
   });
 });
 
+describe('same-id player hydrate', () => {
+  it('reloads walls and lights when wallSegments and lights change without a new map id', () => {
+    const locked = wall('d1', 100, 'door-locked');
+    const lamp = { id: 'l1', x: 100, y: 100, brightRadius: 2, dimRadius: 4, color: '#ffcc66', enabled: true };
+    h.set({ currentMap: { ...mapWith('map-a', [locked]), lights: [lamp] } });
+    render(<MapCanvas />);
+
+    act(() => {
+      const prev = h.state.currentMap as CampaignMap;
+      h.set({
+        currentMap: {
+          ...prev,
+          wallSegments: [wall('d1', 100, 'door-closed')],
+          lights: [],
+        },
+      });
+    });
+
+    openWallSelect();
+    press('a', { ctrlKey: true });
+    press('ArrowRight');
+    const [sent] = emittedOf('walls:replace') as Array<{ segments: WallSegment[] }>;
+    expect(sent.segments.find((s) => s.id === 'd1')?.type).toBe('door-closed');
+    expect(sent.segments.some((s) => s.type === 'door-locked')).toBe(false);
+
+    fireEvent.click(screen.getByText('Lights'));
+    expect(screen.queryByText('Clear All (1)')).not.toBeInTheDocument();
+  });
+});
+
 describe('map settings broadcast', () => {
   it('changes only the flags, keeping an edit made to the same map since it was opened', () => {
     render(<MapCanvas />);

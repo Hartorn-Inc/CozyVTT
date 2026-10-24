@@ -48,7 +48,7 @@ export default function CampaignSettingsModal({
   isOpen,
   onClose,
 }: CampaignSettingsModalProps) {
-  const { campaign, refreshCampaign, userRole } = useCampaign();
+  const { campaign, refreshCampaign, beginSettingsWrite, userRole } = useCampaign();
 
   /**
    * The panel is open to the DM and to the campaign's owner, who are not always
@@ -123,6 +123,7 @@ export default function CampaignSettingsModal({
     }
     setSavingGeneral(true);
     try {
+      const seq = beginSettingsWrite();
       const updated = await campaignService.updateCampaign(campaign.id, {
         name: trimmedName,
         // TODO(ui): an emptied box sends undefined, which leaves the field out
@@ -131,7 +132,7 @@ export default function CampaignSettingsModal({
         // server accepts it and clears the description.
         description: description.trim() || undefined,
       });
-      await refreshCampaign(updated);
+      await refreshCampaign(updated, seq);
       showToast('Campaign settings saved', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err) ?? 'Failed to save settings', 'error');
@@ -143,11 +144,12 @@ export default function CampaignSettingsModal({
   const handleSaveChat = async () => {
     setSavingChat(true);
     try {
+      const seq = beginSettingsWrite();
       const updated = await campaignService.updateCampaign(campaign.id, {
         chatCooldownEnabled,
         chatCooldownSeconds,
       });
-      await refreshCampaign(updated);
+      await refreshCampaign(updated, seq);
       showToast('Chat settings saved', 'success');
     } catch (err) {
       showToast(apiErrorMessage(err) ?? 'Failed to save chat settings', 'error');
