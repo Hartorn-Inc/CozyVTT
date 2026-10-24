@@ -88,6 +88,11 @@
       "allowedVersions": ">=4.6.7"
     },
     {
+      "description": "multer 2.5.0 is the pin for GHSA-q7qp-rjg7-q26m",
+      "matchPackageNames": ["multer"],
+      "allowedVersions": ">=2.5.0"
+    },
+    {
       "description": "Tailwind CSS 4 is a move of its own",
       "matchPackageNames": ["tailwindcss"],
       "matchUpdateTypes": ["major"],
