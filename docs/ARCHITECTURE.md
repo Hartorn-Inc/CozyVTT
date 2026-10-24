@@ -368,7 +368,7 @@ graph LR
     GS -. "token subscribers only" .-> Roster
 ```
 
-On the live table, CampaignContext fetches the campaign row and current map over REST itself (not a React Query copy of that document) and tags each apply with a load generation plus campaign id, and map id for map replies. A reply whose generation or campaign (or map) no longer matches is discarded. A socket delta for another map or an older join is discarded. A failed first map load or a failed catch-up stays on screen with Retry rather than writing an empty table; a failed write stays on the table and says so; disconnect keeps the last frame until catch-up. Saving campaign settings patches the Context document and does not remount the table.
+On the live table, CampaignContext fetches the campaign row and current-map metadata over REST itself (not a React Query copy of that document) and tags each apply with a load generation plus campaign id, and map id for map replies. GET map tokens hydrate the Zustand store on join, current-map identity change, or catch-up; after that, current-map tokens are not live truth. A reply whose generation or campaign (or map) no longer matches is discarded. A socket delta for another map or an older join is discarded. A failed first map load or a failed catch-up stays on screen with Retry rather than writing an empty table; a failed write stays on the table and says so; disconnect keeps the last frame until catch-up. Saving campaign settings patches the Context document and does not remount the table.
 
 ---
 
