@@ -15,6 +15,7 @@ on:
     branches: [dev, main]
   pull_request:
     types: [opened, synchronize, reopened, edited]
+    branches: [dev, main, 'feature/**']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -26,7 +27,7 @@ permissions:
 
 jobs:
   pr-title:
-    name: PR title
+    name: "PR title"
     runs-on: ubuntu-26.04
     timeout-minutes: 5
     steps:
