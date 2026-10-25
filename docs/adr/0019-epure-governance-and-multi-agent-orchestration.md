@@ -1,0 +1,14 @@
+---
+status: accepted
+---
+# EPURE governance, 3 Repository Rulesets, and blocking multi-agent `ai-review`
+
+CozyVTT adopts EPURE (`Giskard-AI/epure@2264187889eb547662c5ebbdc99b6ace9e4630a2`) for specification planning, task orchestration, repository rulesets, and blocking multi-agent pull request review, superseding the `@cursor` Cloud Agent kick and opt-in Cursor CLI / Grok 4.7 advisory review in [ADR 0017](0017-cloud-agent-advisory-codex-review.md) and [ADR 0018](0018-advisory-review-cursor-cli.md).
+
+Write collaborators drive planning and implementation through `/epure plan`, `/epure approve`, `/epure retry`, and `/epure pause` on GitHub Issues (`epure-issue-command.yml`), configured via `.github/agents.yml` (`harness: pi`, `merge_policy: strict`, `task_auto_merge_enabled: false`) and bootstrapped with `/setup-repo` (`.agents/skills/setup-repo/SKILL.md`). Three GitHub Repository Rulesets (`epure-feature-governance` on `refs/heads/feature/**`, `epure-dev-governance` on `refs/heads/dev`, and `epure-release-immutability` on `refs/heads/main` and `refs/tags/v*`) enforce squash-only merges, Conventional Commit PR titles (`PR title`), CozyVTT's full CI suite aggregated under `Quality (Format, Lint, Typecheck, Test & Build)` alongside `Zizmor`, and the blocking `ai-review` check (`epure-check.yml`).
+
+`.cursor/agents/*.md` holds strictly the 12 readonly EPURE reviewers (`domain-backend-reviewer`, `realtime-reviewer`, `game-systems-reviewer`, `frontend-reviewer`, `infra-reviewer`, `architecture-reviewer`, `security-reviewer`, `spec-parity-reviewer`, `standards-reviewer`, `accessibility-reviewer`, `design-reviewer`, and `user-advocate`), each returning strict JSON (`{ reviewer, summary, findings }`) under OWASP LLM01 prompt-injection immunity and tailored with CozyVTT's domain invariants (`RevokedLoginSession` fail-closed revocation, map mutex locking, three-clock live-table state, 10-point game-system registration, server-side `Keeper's Notes` stripping, `sheetLimits.ts` byte-parity, and `DESIGN.md` `-ink` theme tokens).
+
+**Status**: accepted
+
+**Considered Options**: Keeping opt-in Cursor CLI / Grok 4.7 advisory review alongside EPURE; replacing CozyVTT's multi-job PostgreSQL 18 + Docker/Trivy/Playwright `ci.yml` with EPURE's generic single-job Node template; retaining write-capable `.cursor/agents/*.md` builder files alongside the 12 reviewers. Rejected: running two review engines duplicates secrets and leaves non-blocking comments alongside the required `ai-review` gate; replacing CozyVTT's `ci.yml` would drop PostgreSQL 18 migration/schema-owner verification, OpenAPI/WebSocket doc checks, and production image/nginx/Playwright smoke gates (adding an aggregator `quality` job satisfies EPURE's required status check while preserving all 5 CozyVTT jobs); keeping legacy builder prompts in `.cursor/agents/*.md` conflicts with EPURE's dynamic reviewer roster discovery.

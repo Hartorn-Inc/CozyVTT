@@ -1,158 +1,260 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "config:recommended",
+    "config:best-practices",
+    ":dependencyDashboard",
     "helpers:pinGitHubActionDigests",
     ":pinAllExceptPeerDependencies",
-    "docker:pinDigests"
+    "docker:pinDigests",
+    "security:openssf-scorecard",
+    ":enableVulnerabilityAlertsWithLabel(security)"
   ],
   "baseBranchPatterns": [
     "dev"
   ],
-  "schedule": ["before 6am on monday"],
-  "labels": ["dependencies"],
+  "schedule": [
+    "before 6am on monday"
+  ],
+  "timezone": "UTC",
+  "labels": [
+    "dependencies",
+    "renovate"
+  ],
   "semanticCommits": "enabled",
+  "commitMessageAction": "bump",
+  "rangeStrategy": "pin",
+  "minimumReleaseAge": "3 days",
+  "internalChecksFilter": "strict",
+  "prCreation": "not-pending",
+  "rebaseWhen": "behind-base-branch",
+  "automerge": false,
+  "platformAutomerge": false,
+  "npmrc": "ignore-scripts=true\n",
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": [
+      "before 6am on the first day of the month"
+    ]
+  },
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "labels": [
+      "security",
+      "dependencies"
+    ],
+    "minimumReleaseAge": "0 days",
+    "automerge": false
+  },
   "prHourlyLimit": 2,
   "prConcurrentLimit": 5,
   "packageRules": [
     {
-      "description": "npm patch cooldown (hijacked publish window)",
-      "matchDatasources": ["npm"],
-      "matchUpdateTypes": ["patch"],
+      "description": "Supply-chain protection: never merge or propose day-1 releases (default 3-day quarantine cooldown)",
+      "matchUpdateTypes": [
+        "major",
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
       "minimumReleaseAge": "3 days"
     },
     {
-      "description": "npm minor cooldown",
-      "matchDatasources": ["npm"],
-      "matchUpdateTypes": ["minor"],
+      "description": "Expedite verified security vulnerability patches while keeping PR review trace",
+      "matchCategories": [
+        "security"
+      ],
+      "minimumReleaseAge": "0 days",
+      "automerge": false
+    },
+    {
+      "description": "Actions and container image cooldown (7 days) + automatic PR update for digests & versions",
+      "matchManagers": [
+        "github-actions",
+        "dockerfile",
+        "docker-compose"
+      ],
       "minimumReleaseAge": "7 days"
     },
     {
-      "description": "npm major cooldown",
-      "matchDatasources": ["npm"],
-      "matchUpdateTypes": ["major"],
-      "minimumReleaseAge": "14 days"
-    },
-    {
-      "description": "Actions and container image cooldown",
-      "matchManagers": ["github-actions", "dockerfile", "docker-compose"],
-      "minimumReleaseAge": "7 days"
-    },
-    {
-      "description": "Group backend npm minor, patch, and pin",
-      "groupName": "backend-minor-and-patch",
-      "matchFileNames": ["backend/package.json"],
-      "matchUpdateTypes": ["minor", "patch", "pin"]
-    },
-    {
-      "description": "Group frontend npm minor, patch, and pin",
-      "groupName": "frontend-minor-and-patch",
-      "matchFileNames": ["frontend/package.json"],
-      "matchUpdateTypes": ["minor", "patch", "pin"]
-    },
-    {
-      "description": "Group GitHub Actions updates",
+      "description": "Group GitHub Actions digest & version updates",
       "groupName": "github-actions",
-      "matchManagers": ["github-actions"]
+      "matchManagers": [
+        "github-actions"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "Require explicit maintainer review on major updates",
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "automerge": false,
+      "dependencyDashboardApproval": false
     },
     {
       "description": "Group Docker and compose image updates",
       "groupName": "docker",
-      "matchManagers": ["dockerfile", "docker-compose"]
+      "matchManagers": [
+        "dockerfile",
+        "docker-compose"
+      ],
+      "automerge": false
+    },
+    {
+      "description": "npm patch cooldown (hijacked publish window protection)",
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "patch"
+      ],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "npm minor cooldown",
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor"
+      ],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "npm major cooldown",
+      "matchDatasources": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "minimumReleaseAge": "14 days",
+      "automerge": false
+    },
+    {
+      "description": "Group frontend npm minor, patch, and pin",
+      "groupName": "frontend-minor-and-patch",
+      "matchFileNames": [
+        "frontend/package.json"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ]
+    },
+    {
+      "description": "Group backend npm minor, patch, and pin",
+      "groupName": "backend-minor-and-patch",
+      "matchFileNames": [
+        "backend/package.json"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ]
     },
     {
       "description": "TypeScript 7 cannot run under typescript-eslint or ts-jest yet",
-      "matchPackageNames": ["typescript"],
-      "matchUpdateTypes": ["major"],
+      "matchPackageNames": [
+        "typescript"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "enabled": false
     },
     {
       "description": "typescript-eslint accepts TypeScript below 6.1 only",
-      "matchPackageNames": ["typescript"],
+      "matchPackageNames": [
+        "typescript"
+      ],
       "allowedVersions": "<6.1.0"
     },
     {
       "description": "@types/node follows the Node major by hand (even LTS only)",
-      "matchPackageNames": ["@types/node"],
-      "matchUpdateTypes": ["major"],
+      "matchPackageNames": [
+        "@types/node"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "enabled": false
     },
     {
       "description": "argon2 0.45 writes hash params in an order libsodium refuses",
-      "matchPackageNames": ["argon2"],
+      "matchPackageNames": [
+        "argon2"
+      ],
       "allowedVersions": "!/^0\\.45\\./"
     },
     {
       "description": "zod 4.6.6 and 4.6.7 change union list-limit messages; 4.6.7 is the pin for GHSA-mrhx-c7xc-m3w5",
-      "matchPackageNames": ["zod"],
+      "matchPackageNames": [
+        "zod"
+      ],
       "allowedVersions": ">=4.6.7"
     },
     {
       "description": "multer 2.5.0 is the pin for GHSA-q7qp-rjg7-q26m",
-      "matchPackageNames": ["multer"],
+      "matchPackageNames": [
+        "multer"
+      ],
       "allowedVersions": ">=2.5.0"
     },
     {
       "description": "Tailwind CSS 4 is a move of its own",
-      "matchPackageNames": ["tailwindcss"],
-      "matchUpdateTypes": ["major"],
+      "matchPackageNames": [
+        "tailwindcss"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "enabled": false
     },
     {
       "description": "Node base image major moves by hand with the even LTS",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["node"],
-      "matchUpdateTypes": ["major"],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "node"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "enabled": false
     },
     {
       "description": "nginx major and minor move by hand with even stable lines",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["nginx"],
-      "matchUpdateTypes": ["major", "minor"],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "nginx"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor"
+      ],
       "enabled": false
     },
     {
       "description": "Postgres major is a dump/restore (or pg_upgrade) release: a 19 tag on the parent mount inits empty 19/docker beside unread 18 data",
-      "matchDatasources": ["docker"],
-      "matchPackageNames": ["postgres"],
-      "matchUpdateTypes": ["major"],
+      "matchDatasources": [
+        "docker"
+      ],
+      "matchPackageNames": [
+        "postgres"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
       "enabled": false
-    },
-    {
-      "description": "Group Cursor CLI version bumps so the SHA256 digest refresh can follow.",
-      "matchManagers": ["custom.regex"],
-      "matchFileNames": [".github/workflows/advisory-pr-review.yml"],
-      "groupName": "cursor-cli",
-      "groupSlug": "cursor-cli",
-      "commitMessagePrefix": "chore(deps):",
-      "commitMessageAction": "bump",
-      "commitMessageTopic": "Cursor CLI",
-      "labels": ["dependencies", "deps:cursor-cli"]
-    }
-  ],
-  "customDatasources": {
-    "cursor-cli": {
-      "defaultRegistryUrlTemplate": "https://cursor.com/install",
-      "format": "plain",
-      "transformTemplates": [
-        "{\"releases\":[{\"version\": $match($, /lab\\\\/([0-9.]+-[a-f0-9]+)/).groups[0]}]}"
-      ]
-    }
-  },
-  "customManagers": [
-    {
-      "customType": "regex",
-      "description": "Pin Cursor CLI version in the advisory review workflow. SHA256 digest is refreshed separately (scripts/ci/refresh-cursor-cli-digest.sh).",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/advisory-pr-review\\.yml$/"
-      ],
-      "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)( versioning=(?<versioning>\\S+))?\\s+CURSOR_CLI_VERSION: \"(?<currentValue>[^\"]+)\""
-      ],
-      "datasourceTemplate": "{{#if datasource}}{{{datasource}}}{{else}}custom.cursor-cli{{/if}}",
-      "extractVersionTemplate": "^v?(?<version>.*)$",
-      "versioningTemplate": "{{#if versioning}}{{{versioning}}}{{else}}loose{{/if}}"
     }
   ]
 }

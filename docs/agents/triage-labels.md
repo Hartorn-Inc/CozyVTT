@@ -12,6 +12,6 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-`ready-for-agent` does not start a Cloud Agent by itself. After the label is on, kick with a new collaborator comment that starts with `@cursor` plus an instruction (`@cursor implement this issue`). Edits of an existing comment and a bare `@cursor` do not kick. One comment per issue: a second `@cursor` starts a second run. The kick landed when the comment has an eyes reaction and `cursor[bot]` replies.
+Under EPURE governance (`docs/adr/0019-epure-governance-and-multi-agent-orchestration.md`), write collaborators orchestrate feature specifications and task execution via `/epure plan` and `/epure approve` comments on GitHub Issues (`epure-issue-command.yml`). Approved child tasks receive `ready-for-agent` and open pull requests verified by the blocking `ai-review` check and the 3 Repository Rulesets (`epure-feature-governance`, `epure-dev-governance`, `epure-release-immutability`).
 
 Edit the "Label in our tracker" column to match whatever vocabulary you actually use.
