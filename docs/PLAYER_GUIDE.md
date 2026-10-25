@@ -126,9 +126,15 @@ Click your campaign from the dashboard to enter it. This is where the action hap
 
 *Screenshot pending — Full campaign page with labeled sections.*
 
-The page has three main areas:
+The page is a **Focus table**: the map, whose turn it is, and a tray of actions sit together on every screen size. On a wide screen a party rail and a session tool rail sit beside that surface; on a smaller screen **Party** and **Session** open as drawers from the tray.
 
-### Left Sidebar — Campaign Info
+### The map and table actions
+This is the battle map. During a session, you'll see your token here and can move it: click it to pick it up, then click where it should go ([Moving Your Token](#moving-your-token)). The toolbar at its top left zooms and fits the view, and you move the view by dragging an empty part of the map ([Moving Around the Map](USER_GUIDE.md#moving-around-the-map)).
+
+Select a token on the map and the **table actions** tray under it names it, shows hit points you are allowed to see, conditions, and initiative, and offers **View character sheet** and **Roll…** when those apply. Those buttons are the everyday path; a right-click menu on the map still exists.
+
+### Party — campaign info and roster
+On a wide screen this is the left rail; on a smaller screen press **Party** in the tray.
 - Campaign name and description at the top
 - The **Campaign Roster** showing all players and their characters
 - A small dot beside each person shows whether they're **in session** right now — green if they're connected, grey if not. Handy for telling "thinking" apart from "their internet fell over"
@@ -136,18 +142,15 @@ The page has three main areas:
 - Click a character to read its sheet. Right-click one for a menu: **View Character Sheet** for anyone's character, and for your own **Roll...**, **Edit Character Sheet** and **Remove from Campaign**, which takes the character out of the campaign and keeps it in your library
 - If you're curious about your fellow adventurers, it's all here
 
-### Center — The Map
-This is the battle map. During a session, you'll see your token here and can move it: click it to pick it up, then click where it should go ([Moving Your Token](#moving-your-token)). The toolbar at its top left zooms and fits the view, and you move the view by dragging an empty part of the map ([Moving Around the Map](USER_GUIDE.md#moving-around-the-map)).
-
-### Right Sidebar — Your Tools
-A tabbed panel — click a tab to switch between:
+### Session — your tools
+A tabbed panel — the right rail on a wide screen, or **Session** from the tray on a smaller one. Click a tab to switch between:
 - **Chat** — Talk to everyone (an unread badge shows on the tab when messages arrive while you're on another tab)
 - **Dice** — Roll your dice
-- **Initiative** — See the turn order during combat
+- **Initiative** — See the turn order during combat (**Initiative** in the tray opens this tab)
 - **Notes** — Your own private notes (see [Your Own Notes](#your-own-notes))
 - **Session** — The vibe and past sessions (the Live / Paused badge is in the header)
 
-You can also drag the divider to resize the sidebar, or collapse it to give the map more room.
+On a wide screen you can collapse the rails from the header to give the map more room.
 
 ### The Header Bar
 The top bar shows:
@@ -194,7 +197,7 @@ action somebody took, not something that happens on its own.
 
 ## Chat and Dice
 
-Chat and dice are your two most-used tools. They each have their own tab in the right sidebar, one click apart during a session.
+Chat and dice are your two most-used tools. They each have their own tab in the session rail (or **Session** drawer), one click apart during a session.
 
 ### The Chat Panel
 
@@ -354,7 +357,7 @@ Shapes cover whole squares wherever the grid allows it. A cone's spreading edges
 
 ## The Initiative Tracker
 
-The **Initiative** tab in the right sidebar shows the turn order. As the DM adds combatants they appear there, and when the DM clicks **Start Combat** the first one's turn begins.
+The **Initiative** tab in the session rail (or **Initiative** from the table-actions tray) shows the turn order. As the DM adds combatants they appear there, and when the DM clicks **Start Combat** the first one's turn begins.
 
 *Screenshot pending — Initiative tracker during combat.*
 
@@ -370,6 +373,7 @@ When it's your turn, your name is highlighted. Describe your actions in chat and
 Once the DM has added your token to the tracker, you roll for yourself — you don't have to wait for the DM to do it for you. There are two ways, and they do the same thing:
 
 - **In the tracker** — a dice icon 🎲 appears beside your own name. You'll only ever see it on your own row; you can't roll for other players or for the DM's monsters
+- **Table actions** — select your token and choose **Roll…**, then **Roll Initiative** at the top of the menu
 - **On the map** — right-click your token, choose **Roll...**, and pick **Roll Initiative** at the top of the menu
 
 Either way the result drops straight into the turn order and the roll appears in the **Dice** panel, so everyone can see what you got.
@@ -450,7 +454,7 @@ Saying "no, the *other* door" never works. Instead, put your mouse where you mea
 
 A few things worth knowing:
 
-- **Your mouse has to be over the map.** Tab does nothing if the cursor is over the chat panel or the sidebar.
+- **Your mouse has to be over the map.** Tab does nothing if the cursor is over the chat panel, a rail, or a drawer.
 - **Tab still works normally everywhere else.** If you're typing in chat, or you've tabbed your way to a button, Tab keeps moving between controls as usual — it only pings when you're not in the middle of something.
 - **Anyone can ping**, players and DM alike. Your colour is assigned automatically and stays the same every session.
 - Pings are just a gesture. They don't move anything, don't reveal anything, and vanish on their own.

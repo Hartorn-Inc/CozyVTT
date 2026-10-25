@@ -1,9 +1,9 @@
 // ============================================
 // Campaign Page
-// Main campaign view with three-panel layout
-// Left: Campaign info, character, party
-// Center: Map canvas
-// Right: Chat, dice roller, controls
+// Focus table: current turn + map + contextual tray at every width.
+// Wide (≥ 1024px): that surface plus persistent party and session rails.
+// Narrow: the same surface; party/session stay mounted as overlay drawers.
+// MapCanvas is one tree — CSS/overlay, never a wide ? Group : other fork.
 // ============================================
 
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
@@ -14,6 +14,7 @@ import { CampaignProvider, useCampaign } from '@/contexts/CampaignContext';
 import { WebSocketProvider, useWebSocket } from '@/contexts/WebSocketContext';
 import { useGameStore } from '@/stores/gameStore';
 import { useInitiativeSync } from '@/hooks/useInitiativeSync';
+import { useWideViewport } from '@/hooks/useWideViewport';
 import {
   AlertCircle,
   ArrowLeft,
@@ -24,14 +25,6 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen, Settings, BookOpen } from 'lucide-react';
-import {
-  Group,
-  Panel,
-  Separator,
-  useDefaultLayout,
-  usePanelRef,
-  type PanelImperativeHandle,
-} from 'react-resizable-panels';
 
 // Campaign components
 import CampaignInfo from '@/components/campaign/CampaignInfo';
@@ -51,8 +44,12 @@ import TokenTemplateLibrary from '@/components/campaign/TokenTemplateLibrary';
 import TokenRoster from '@/components/campaign/TokenRoster';
 import CampaignSettingsModal from '@/components/campaign/CampaignSettingsModal';
 import CampaignDocumentsModal from '@/components/documents/CampaignDocumentsModal';
-import SessionSidebar from '@/components/campaign/SessionSidebar';
-import SessionToolbar, { type SessionToolKey } from '@/components/campaign/SessionToolbar';
+import SessionSidebar, { type SessionRailTab } from '@/components/campaign/SessionSidebar';
+import { type SessionToolKey } from '@/components/campaign/SessionToolbar';
+import CurrentTurnBar from '@/components/campaign/CurrentTurnBar';
+import ContextualTray from '@/components/campaign/ContextualTray';
+import TableDrawer from '@/components/campaign/TableDrawer';
+import DmToolsMenu from '@/components/campaign/DmToolsMenu';
 import ConnectionStatus from '@/components/ConnectionStatus';
 import { CampaignStatus } from '@/types';
 import type { Token } from '@/types';
@@ -200,35 +197,40 @@ function CampaignPageContent() {
   const [isCreatureLibraryOpen, setIsCreatureLibraryOpen] = useState(false);
   const [isTokenTemplateLibraryOpen, setIsTokenTemplateLibraryOpen] = useState(false);
   const [quickEditToken, setQuickEditToken] = useState<Token | null>(null);
+  // UI selection for the tray — not socket/live table state.
+  const [focusedTokenId, setFocusedTokenId] = useState<string | null>(null);
+  const [playerPreview, setPlayerPreview] = useState(false);
 
-  // Resizable panel layout — persisted to localStorage so each user's
-  // column sizes survive reloads.
-  const { defaultLayout, onLayoutChanged } = useDefaultLayout({
-    id: 'cozyvtt-session-layout',
-    storage: localStorage,
-  });
-  const leftPanelRef = usePanelRef();
-  const rightPanelRef = usePanelRef();
+  const isWide = useWideViewport();
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [partyDrawerOpen, setPartyDrawerOpen] = useState(false);
+  const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
+  const [sessionRequestedTab, setSessionRequestedTab] = useState<SessionRailTab | null>(null);
+  const [sessionTabRequestKey, setSessionTabRequestKey] = useState(0);
 
-  const togglePanel = (
-    panelRef: React.RefObject<PanelImperativeHandle | null>,
-    fallbackSize: string
-  ) => {
-    const panel = panelRef.current;
-    if (!panel) return;
-    if (panel.isCollapsed()) {
-      panel.expand();
-      // A panel restored from a collapsed saved layout has no previous
-      // size to expand back to — fall back to its default share.
-      if (panel.getSize().asPercentage === 0) {
-        panel.resize(fallbackSize);
-      }
-    } else {
-      panel.collapse();
-    }
+  const openPartyDrawer = () => {
+    setSessionDrawerOpen(false);
+    setPartyDrawerOpen(true);
   };
+  const openSessionDrawer = (tab?: SessionRailTab) => {
+    setPartyDrawerOpen(false);
+    if (tab) {
+      setSessionRequestedTab(tab);
+      setSessionTabRequestKey((key) => key + 1);
+    }
+    setSessionDrawerOpen(true);
+  };
+
+  useEffect(() => {
+    if (!isWide) return;
+    setPartyDrawerOpen(false);
+    setSessionDrawerOpen(false);
+  }, [isWide]);
+
+  useEffect(() => {
+    setFocusedTokenId(null);
+  }, [campaign?.id, currentMap?.id]);
 
   // SessionToolbar reports which tool was clicked; the open/close state
   // for each slide-over stays here.
@@ -359,7 +361,7 @@ function CampaignPageContent() {
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gradient-to-br from-soft-cream via-parchment to-warm-amber/20">
+    <div className="h-screen flex flex-col overflow-hidden bg-gradient-to-br from-soft-cream via-parchment to-warm-amber/20">
       <div id="campaign-map-retry-status" className="sr-only" aria-live="polite" aria-atomic="true">
         {mapRetryAnnouncement}
       </div>
@@ -367,11 +369,12 @@ function CampaignPageContent() {
         {syncRetryAnnouncement}
       </div>
       {/* Header Bar */}
-      <header className="flex items-center justify-between px-4 py-3 bg-moss-green/10 border-b border-moss-green/20 shadow-sm">
-        <div className="flex items-center gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 px-4 py-3 bg-moss-green/10 border-b border-moss-green/20 shadow-sm">
+        <div className="flex min-w-0 items-center gap-3">
           <Button
             onClick={() => navigate('/dashboard')}
             variant="secondary" className="flex items-center gap-2"
+            aria-label="Dashboard"
           >
             <ArrowLeft className="w-4 h-4" />
             <span className="hidden sm:inline">Dashboard</span>
@@ -379,32 +382,41 @@ function CampaignPageContent() {
 
           <div className="h-6 w-px bg-moss-green/20" />
 
-          <h1 className="text-xl font-bold text-brand-ink">
+          <h1 className="min-w-0 truncate text-xl font-bold text-brand-ink">
             {campaign.name}
           </h1>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Connection Status */}
           <ConnectionStatus />
 
           {/* Session status indicator (visible to all) */}
           {campaign.status === CampaignStatus.ACTIVE && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-success/10 border border-success/20">
+            <div
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-success/10 border border-success/20"
+              aria-label="Live"
+            >
               <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
-              <span className="text-xs font-medium text-success-ink hidden sm:inline">Live</span>
+              <span className="text-xs font-medium text-success-ink sr-only sm:not-sr-only">Live</span>
             </div>
           )}
           {campaign.status === CampaignStatus.PAUSED && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-warm-amber/10 border border-warm-amber/20">
+            <div
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-warm-amber/10 border border-warm-amber/20"
+              aria-label="Paused"
+            >
               <PauseCircle className="w-3.5 h-3.5 text-warm-amber" />
-              <span className="text-xs font-medium text-warm-amber hidden sm:inline">Paused</span>
+              <span className="text-xs font-medium text-warm-amber sr-only sm:not-sr-only">Paused</span>
             </div>
           )}
           {campaign.status === CampaignStatus.INACTIVE && (
-            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-stone-gray/10 border border-stone-gray/20">
+            <div
+              className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-stone-gray/10 border border-stone-gray/20"
+              aria-label="Inactive"
+            >
               <div className="w-2 h-2 rounded-full bg-stone-gray/50" />
-              <span className="text-xs font-medium text-stone-gray hidden sm:inline">Inactive</span>
+              <span className="text-xs font-medium text-stone-gray sr-only sm:not-sr-only">Inactive</span>
             </div>
           )}
 
@@ -418,11 +430,13 @@ function CampaignPageContent() {
             </div>
           )}
 
-          {/* DM tools — grouped icon toolbar */}
+          {/* DM tools — grouped icon toolbar on wide; labelled menu on narrow
+              so Map Library / tokens / creatures / settings are not clipped. */}
           {userRole === 'DM' && (
             <>
               <div className="h-6 w-px bg-moss-green/20" />
-              <SessionToolbar
+              <DmToolsMenu
+                isWide={isWide}
                 openPanels={{
                   maps: isMapManagerOpen,
                   tokens: isTokenManagerOpen,
@@ -434,6 +448,11 @@ function CampaignPageContent() {
                 }}
                 onOpen={(key) => sessionPanelOpeners[key]()}
                 spiritLayerEnabled={campaign?.spiritLayerEnabled}
+                dismissed={partyDrawerOpen || sessionDrawerOpen}
+                onWillOpen={() => {
+                  setPartyDrawerOpen(false);
+                  setSessionDrawerOpen(false);
+                }}
               />
             </>
           )}
@@ -472,28 +491,32 @@ function CampaignPageContent() {
             />
           </Tooltip>
 
-          {/* Sidebar collapse toggles (all roles) */}
-          <div className="h-6 w-px bg-moss-green/20" />
-          <div className="flex items-center gap-1">
-            <Tooltip content={leftCollapsed ? 'Show party panel' : 'Hide party panel'} side="bottom">
-              <Button
-                variant="ghost"
-                iconOnly
-                icon={leftCollapsed ? PanelLeftOpen : PanelLeftClose}
-                aria-label={leftCollapsed ? 'Show party panel' : 'Hide party panel'}
-                onClick={() => togglePanel(leftPanelRef, '20%')}
-              />
-            </Tooltip>
-            <Tooltip content={rightCollapsed ? 'Show session panel' : 'Hide session panel'} side="bottom">
-              <Button
-                variant="ghost"
-                iconOnly
-                icon={rightCollapsed ? PanelRightOpen : PanelRightClose}
-                aria-label={rightCollapsed ? 'Show session panel' : 'Hide session panel'}
-                onClick={() => togglePanel(rightPanelRef, '25%')}
-              />
-            </Tooltip>
-          </div>
+          {/* Sidebar collapse toggles — wide rails only. Narrow uses drawers. */}
+          {isWide && (
+            <>
+              <div className="h-6 w-px bg-moss-green/20" />
+              <div className="flex items-center gap-1">
+                <Tooltip content={leftCollapsed ? 'Show party panel' : 'Hide party panel'} side="bottom">
+                  <Button
+                    variant="ghost"
+                    iconOnly
+                    icon={leftCollapsed ? PanelLeftOpen : PanelLeftClose}
+                    aria-label={leftCollapsed ? 'Show party panel' : 'Hide party panel'}
+                    onClick={() => setLeftCollapsed((value) => !value)}
+                  />
+                </Tooltip>
+                <Tooltip content={rightCollapsed ? 'Show session panel' : 'Hide session panel'} side="bottom">
+                  <Button
+                    variant="ghost"
+                    iconOnly
+                    icon={rightCollapsed ? PanelRightOpen : PanelRightClose}
+                    aria-label={rightCollapsed ? 'Show session panel' : 'Hide session panel'}
+                    onClick={() => setRightCollapsed((value) => !value)}
+                  />
+                </Tooltip>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
@@ -536,39 +559,29 @@ function CampaignPageContent() {
         </div>
       )}
 
-      {/* Main Content - Three Resizable Panels */}
-      <main className="flex-1 min-h-0 overflow-hidden hidden lg:block">
-        <Group
-          orientation="horizontal"
-          className="h-full w-full"
-          defaultLayout={defaultLayout}
-          onLayoutChanged={onLayoutChanged}
-        >
-          {/* Left Panel — party & campaign info */}
-          <Panel
-            id="party"
-            defaultSize={20}
-            minSize="260px"
-            collapsible
-            panelRef={leftPanelRef}
-            onResize={(size) => setLeftCollapsed(size.asPercentage === 0)}
-            className="h-full"
+      {/* Focus table. Party and Session stay mounted at every width so roster
+          socket listeners and chat history survive the breakpoint and drawers. */}
+      <main className="flex-1 min-h-0 overflow-hidden">
+        <div className="relative flex h-full w-full min-h-0">
+          <TableDrawer
+            id="party-drawer"
+            title="Party"
+            side="left"
+            isWide={isWide}
+            collapsed={leftCollapsed}
+            open={partyDrawerOpen}
+            onClose={() => setPartyDrawerOpen(false)}
           >
-            <aside className="h-full overflow-y-auto p-4 space-y-4 bg-parchment/30 border-r border-moss-green/20">
-              <CampaignInfo />
-              <CampaignRoster />
-              {/* Token Roster — DM only */}
-              {userRole === 'DM' && (
-                <TokenRoster onEditToken={setQuickEditToken} />
-              )}
-            </aside>
-          </Panel>
+            <CampaignInfo />
+            <CampaignRoster />
+            {userRole === 'DM' && (
+              <TokenRoster onEditToken={setQuickEditToken} />
+            )}
+          </TableDrawer>
 
-          <Separator className="w-1.5 bg-moss-green/10 transition-colors data-[separator=hover]:bg-brand/30 data-[separator=active]:bg-brand/50" />
-
-          {/* Center Panel — map canvas */}
-          <Panel id="map" defaultSize={55} minSize={30} className="h-full">
-            <section className="h-full min-w-0 p-4 relative">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <CurrentTurnBar playerPreview={playerPreview} />
+            <section className="min-h-0 min-w-0 flex-1 p-2 sm:p-4">
               {mapLoadError && (!currentMap || currentMap.id === mapLoadError.mapId) ? (
                 <div className="w-full h-full flex items-center justify-center">
                   <div className="card-cozy max-w-md text-center space-y-4">
@@ -601,27 +614,45 @@ function CampaignPageContent() {
                     </div>
                   }
                 >
-                  <MapCanvas onEditToken={setQuickEditToken} />
+                  <MapCanvas
+                    onEditToken={setQuickEditToken}
+                    focusedTokenId={focusedTokenId}
+                    onFocusToken={setFocusedTokenId}
+                    onPlayerPreviewChange={setPlayerPreview}
+                  />
                 </Suspense>
               )}
             </section>
-          </Panel>
+            <ContextualTray
+              focusedTokenId={focusedTokenId}
+              isWide={isWide}
+              playerPreview={playerPreview}
+              onFocusToken={setFocusedTokenId}
+              onEditToken={setQuickEditToken}
+              onOpenParty={openPartyDrawer}
+              onOpenSession={() => openSessionDrawer()}
+              onOpenInitiative={() => openSessionDrawer('initiative')}
+              partyOpen={partyDrawerOpen}
+              sessionOpen={sessionDrawerOpen}
+            />
+          </div>
 
-          <Separator className="w-1.5 bg-moss-green/10 transition-colors data-[separator=hover]:bg-brand/30 data-[separator=active]:bg-brand/50" />
-
-          {/* Right Panel — tabbed session rail (Chat / Dice / Initiative / Session) */}
-          <Panel
-            id="rail"
-            defaultSize={25}
-            minSize="300px"
-            collapsible
-            panelRef={rightPanelRef}
-            onResize={(size) => setRightCollapsed(size.asPercentage === 0)}
-            className="h-full"
+          <TableDrawer
+            id="session-drawer"
+            title="Session"
+            side="right"
+            isWide={isWide}
+            collapsed={rightCollapsed}
+            open={sessionDrawerOpen}
+            onClose={() => setSessionDrawerOpen(false)}
+            scrollBody={false}
           >
-            <SessionSidebar />
-          </Panel>
-        </Group>
+            <SessionSidebar
+              requestedTab={sessionRequestedTab}
+              requestKey={sessionTabRequestKey}
+            />
+          </TableDrawer>
+        </div>
       </main>
 
       {/* Map Manager slide-over panel (DM only) */}
@@ -709,22 +740,6 @@ function CampaignPageContent() {
 
       {/* Atmosphere Player — mounts for ALL users, manages ambient audio sync */}
       <AtmospherePlayer />
-
-      {/* Mobile Warning */}
-      <div className="lg:hidden fixed inset-0 bg-black/80 flex items-center justify-center p-4 z-50">
-        <div className="card-cozy max-w-md text-center space-y-4">
-          <h2 className="text-xl font-bold text-brand-ink">
-            Desktop Required
-          </h2>
-          <p className="text-stone-gray">
-            The campaign view is optimized for desktop screens (1024px+). Mobile
-            support will be added in future updates.
-          </p>
-          <Button onClick={() => navigate('/dashboard')}>
-            Back to Dashboard
-          </Button>
-        </div>
-      </div>
     </div>
   );
 }

@@ -3,7 +3,7 @@
 // HTML Canvas-based map viewer with zoom/pan controls
 // ============================================
 
-import { useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, type ReactNode } from 'react';
 import { ZoomIn, ZoomOut, Maximize2, Grid3x3, Palette, Ghost, Ruler, Zap } from 'lucide-react';
 import { useCampaign } from '@/contexts/CampaignContext';
 import { useWebSocket } from '@/contexts/WebSocketContext';
@@ -54,7 +54,7 @@ import {
   type Viewport,
 } from './map/layers';
 import { createVisionCache } from './map/vision';
-import { pickTokenAt, pickMovableTokenAt, blockingTokensAt, visibleTokenHp } from './map/tokenHitTest';
+import { pickTokenAt, pickMovableTokenAt, blockingTokensAt, visibleTokenHp, isTokenVisibleTo } from './map/tokenHitTest';
 import { cachedTokenImage, placeholderColor } from './map/layers/drawTokens';
 import { fogRectFromDrag, fogCellsInRect, revealedSetFromFogState } from './map/fogSelection';
 import { chunkFogCells, FOG_MESSAGE_MAX_CELLS, FOG_OPERATION_CHUNK_GAP_MS } from './map/chunkFogCells';
@@ -133,9 +133,18 @@ interface AoEConfig {
 
 interface MapCanvasProps {
   onEditToken?: (token: Token) => void;
+  /** Tray selection, owned by CampaignPage. The canvas reports via onFocusToken. */
+  focusedTokenId?: string | null;
+  /** Called when the viewer focuses or clears a token from the map. */
+  onFocusToken?: (tokenId: string | null) => void;
+  /**
+   * Player Preview is local to the canvas; the tray needs it so inspect
+   * matches the projector (no Keeper notes, true names, or NPC HP).
+   */
+  onPlayerPreviewChange?: (previewing: boolean) => void;
 }
 
-export default function MapCanvas({ onEditToken }: MapCanvasProps) {
+export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, onPlayerPreviewChange }: MapCanvasProps) {
   const { currentMap, mapGeometryGen, setCurrentMap, userRole, campaign, updateCampaignSpiritLayer, dmViewBothPlanes, playerSpiritVisible, setPlayerSpiritVisible, activeVibeEffect, updateVibe, activeAtmosphereEffect, characterHpCache } = useCampaign();
   // Live token state comes from the game store, not the campaign context —
   // socket handlers write there directly (outside React), and this
@@ -324,6 +333,9 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
   // comes from the grid the DM already holds, and the same visibility rule
   // decides what is drawn.
   const previewing = isDM && dmPreviewPlayerView && previewSelection !== null;
+  useLayoutEffect(() => {
+    onPlayerPreviewChange?.(previewing);
+  }, [previewing, onPlayerPreviewChange]);
   // The plane the previewed viewer is on, by the server's rule: a player whose
   // token has crossed to the spirit layer is sent that plane and sees through
   // that token, so the preview draws the spirit realm as their screen does.
@@ -1538,7 +1550,8 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
           !!el &&
           (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A'].includes(el.tagName) ||
             el.isContentEditable);
-        if (onFormControl) return;
+        // Tray actions are the keyboard path for a selected token; don't steal Tab for a ping.
+        if (onFormControl || focusedTokenId) return;
 
         e.preventDefault();
         socket?.emitMapPing({ mapId: currentMap.id, x: at.x, y: at.y });
@@ -1652,7 +1665,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [wallMode, wallInProgress, polygonPoints, showAoE, aoeAnchor, isDM, currentMap, undoWalls, redoWalls, socket, wallSegments, selectedWallIds, deleteSelectedWalls, moveSelectedWalls]);
+  }, [wallMode, wallInProgress, polygonPoints, showAoE, aoeAnchor, isDM, currentMap, undoWalls, redoWalls, socket, wallSegments, selectedWallIds, deleteSelectedWalls, moveSelectedWalls, focusedTokenId]);
 
   // ============================================
   // Close Polygon — commits all polygon edges as one wall history entry
@@ -1887,7 +1900,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
       draggedToken: previewing ? (drawn.find((t) => t.id === draggedToken?.id) ?? null) : draggedToken,
       dragOffset,
       hoverCoords,
-      hoverTokenId: hoverToken?.id ?? null,
+      hoverTokenId: hoverToken?.id ?? focusedTokenId ?? null,
       revealedCells: viewerRevealed,
       isDM: renderIsDM,
       dmShowSpiritTokens,
@@ -1902,7 +1915,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     }, viewport);
 
     ctx.restore();
-  }, [currentMap, imageLoaded, mapImage, mapControls.panOffset, mapControls.zoom, userRole, user?.id, campaign?.characters, campaign?.spiritLayerStyle, tokens, tokenImages, animatingTokens, heldAt, draggedToken, dragOffset, hoverCoords, hoverToken, viewerRevealed, viewerOwn, previewing, previewedPlane, ruleFor, dmShowSpiritTokens, dmViewBothPlanes, characterHpCache, currentTurnTokenId, prefersReducedMotion, peekTokenId]);
+  }, [currentMap, imageLoaded, mapImage, mapControls.panOffset, mapControls.zoom, userRole, user?.id, campaign?.characters, campaign?.spiritLayerStyle, tokens, tokenImages, animatingTokens, heldAt, draggedToken, dragOffset, hoverCoords, hoverToken, focusedTokenId, viewerRevealed, viewerOwn, previewing, previewedPlane, ruleFor, dmShowSpiritTokens, dmViewBothPlanes, characterHpCache, currentTurnTokenId, prefersReducedMotion, peekTokenId]);
 
   /**
    * Draw the OVERLAY layer (top canvas): dynamic-lighting darkness, DM light
@@ -2234,13 +2247,54 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     [tokens, currentMap, tokenView, previewing, previewedPlane, mapControls.zoom, mapControls.panOffset, ruleFor, viewerOwn, viewerRevealed, dmShowSpiritTokens]
   );
 
-  const getTokenAtPosition = useCallback(
-    (gridX: number, gridY: number): Token | null => {
-      if (!currentMap) return null;
-      return pickTokenAt(tokens, gridX, gridY, tokenView);
-    },
-    [tokens, currentMap, tokenView]
-  );
+  useLayoutEffect(() => {
+    if (!focusedTokenId) return;
+    const token = tokens.find((t) => t.id === focusedTokenId);
+    if (!token) {
+      onFocusToken?.(null);
+      return;
+    }
+    if (!previewing) {
+      if (!isTokenVisibleTo(token, tokenView)) onFocusToken?.(null);
+      return;
+    }
+    if (!currentMap) return;
+    const viewport: Viewport = {
+      zoom: mapControls.zoom,
+      panOffset: mapControls.panOffset,
+      gridSize: currentMap.gridSize,
+      mapWidth: currentMap.width,
+      mapHeight: currentMap.height,
+    };
+    const rule = (currentMap.lightingEnabled ?? false) ? ruleFor(tokens.filter(viewerOwn), viewport) : null;
+    const shown = previewTokens(tokens, viewerOwn, previewControls, rule?.canSee ?? null, viewport, previewedPlane);
+    const previewView = {
+      isDM: false,
+      revealedCells: viewerRevealed,
+      isOwnToken: viewerOwn,
+      dmShowSpiritTokens,
+      mapWidth: currentMap.width,
+      mapHeight: currentMap.height,
+    };
+    if (!shown.some((t) => t.id === token.id) || !isTokenVisibleTo(token, previewView)) {
+      onFocusToken?.(null);
+    }
+  }, [
+    focusedTokenId,
+    tokens,
+    previewing,
+    currentMap,
+    tokenView,
+    mapControls.zoom,
+    mapControls.panOffset,
+    ruleFor,
+    viewerOwn,
+    previewControls,
+    viewerRevealed,
+    dmShowSpiritTokens,
+    previewedPlane,
+    onFocusToken,
+  ]);
 
   /**
    * Check if user can move a token (DM or owner only)
@@ -2268,7 +2322,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
   /**
    * The topmost token on a cell that this user is allowed to move.
    *
-   * Distinct from `getTokenAtPosition`, which answers "what is drawn here" and
+   * Distinct from `getHoverTokenAt`, which answers "what is drawn here" and
    * is what hovering and the context menu want. Picking a token up has to look
    * further down the stack: an NPC sharing the square is drawn on top of it, and
    * stopping at that NPC left a player unable to pick up their own token at all.
@@ -2712,6 +2766,14 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
       return;
     }
 
+    // Focus is UI selection for the contextual tray, not a hold. A click on a
+    // visible token focuses it even when this viewer cannot move it; pick-up
+    // below is additional, not a replacement. An empty click clears it.
+    const visibleToken = getHoverTokenAt(gridCoords.x, gridCoords.y);
+    if (visibleToken) {
+      onFocusToken?.(visibleToken.id);
+    }
+
     // Check if clicked on a token to pick it up.
     //
     // Deliberately looks past tokens this user cannot move rather than stopping
@@ -2744,8 +2806,12 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
         console.warn('⚠️ Cannot emit token.move.start - socket not connected');
       }
     } else if (!draggedToken) {
-      // Only start panning if we're not holding a token
-      mapControls.startDrag(e);
+      // A visible token that this viewer cannot move must not start a pan:
+      // that hid inspect-on-tap. Empty map still pans, and clears focus.
+      if (!visibleToken) {
+        onFocusToken?.(null);
+        mapControls.startDrag(e);
+      }
     }
   };
 
@@ -3288,8 +3354,9 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
     const gridCoords = mapControls.screenToGrid({ x: screenX, y: screenY });
 
     // Check tokens first — they sit on a higher visual layer than doors
-    const token = getTokenAtPosition(gridCoords.x, gridCoords.y);
+    const token = getHoverTokenAt(gridCoords.x, gridCoords.y);
     if (token) {
+      onFocusToken?.(token.id);
       setContextMenu({ token, x: e.clientX, y: e.clientY });
       return;
     }
@@ -4157,7 +4224,7 @@ export default function MapCanvas({ onEditToken }: MapCanvasProps) {
             <Grid3x3 className="w-12 h-12 text-brand-ink/30 mx-auto mb-3" />
             <p className="text-sm text-warm-gray mb-2">No map loaded</p>
             <p className="text-xs text-stone-gray/70">
-              Upload a map to get started
+              {isDM ? 'Upload a map to get started' : 'Waiting for the DM to load a map.'}
             </p>
           </div>
         </div>

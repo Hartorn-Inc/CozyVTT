@@ -67,3 +67,21 @@ describe('the name a roll is filed under', () => {
     expect(name).toBe('Unknown creature');
   });
 });
+
+describe('the roll picker dialog', () => {
+  it('is a named dialog with a Close control', () => {
+    const onClose = vi.fn();
+    render(
+      <CharacterRollPicker
+        character={seelah}
+        onRoll={() => undefined}
+        onClose={onClose}
+        anchorX={0}
+        anchorY={0}
+      />
+    );
+    expect(screen.getByRole('dialog', { name: 'Roll for Seelah' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalled();
+  });
+});

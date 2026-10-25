@@ -25,7 +25,9 @@ import SessionHistory from './SessionHistory';
 import PersonalNotes from './PersonalNotes';
 import type { ChatMessageBroadcast } from '@/types';
 
-type RailTab = 'chat' | 'dice' | 'initiative' | 'notes' | 'session';
+export type SessionRailTab = 'chat' | 'dice' | 'initiative' | 'notes' | 'session';
+
+type RailTab = SessionRailTab;
 
 const TAB_STORAGE_KEY = 'cozyvtt-session-tab';
 
@@ -44,12 +46,24 @@ function loadInitialTab(): RailTab {
   return TABS.some((t) => t.key === stored) ? (stored as RailTab) : 'chat';
 }
 
-export default function SessionSidebar() {
+interface SessionSidebarProps {
+  /** Switch to this tab when `requestKey` changes (narrow Initiative control). */
+  requestedTab?: SessionRailTab | null;
+  requestKey?: number;
+}
+
+export default function SessionSidebar({ requestedTab = null, requestKey = 0 }: SessionSidebarProps) {
   const { socket } = useWebSocket();
   const { user } = useAuth();
 
   const [activeTab, setActiveTab] = useState<RailTab>(loadInitialTab);
   const [unreadChat, setUnreadChat] = useState(0);
+
+  useEffect(() => {
+    if (!requestedTab) return;
+    if (!TABS.some((t) => t.key === requestedTab)) return;
+    setActiveTab(requestedTab);
+  }, [requestedTab, requestKey]);
 
   // Ref mirror so the socket listener sees the current tab without
   // re-subscribing on every tab switch.
@@ -93,7 +107,7 @@ export default function SessionSidebar() {
   };
 
   return (
-    <aside className="h-full flex flex-col bg-parchment/30 border-l border-moss-green/20">
+    <div className="h-full flex flex-col bg-surface">
       {/* Tab bar */}
       <div
         role="tablist"
@@ -142,6 +156,8 @@ export default function SessionSidebar() {
           id="session-tabpanel-chat"
           role="tabpanel"
           aria-labelledby="session-tab-chat"
+          aria-hidden={activeTab === 'chat' ? undefined : true}
+          inert={activeTab !== 'chat' ? true : undefined}
           className={cn('absolute inset-0 p-3', activeTab === 'chat' ? 'animate-fade-in' : 'invisible')}
         >
           <ChatPanel />
@@ -151,6 +167,8 @@ export default function SessionSidebar() {
           id="session-tabpanel-dice"
           role="tabpanel"
           aria-labelledby="session-tab-dice"
+          aria-hidden={activeTab === 'dice' ? undefined : true}
+          inert={activeTab !== 'dice' ? true : undefined}
           className={cn('absolute inset-0 p-3', activeTab === 'dice' ? 'animate-fade-in' : 'invisible')}
         >
           <DiceRoller />
@@ -160,6 +178,8 @@ export default function SessionSidebar() {
           id="session-tabpanel-initiative"
           role="tabpanel"
           aria-labelledby="session-tab-initiative"
+          aria-hidden={activeTab === 'initiative' ? undefined : true}
+          inert={activeTab !== 'initiative' ? true : undefined}
           className={cn(
             'absolute inset-0 p-3 overflow-y-auto',
             activeTab === 'initiative' ? 'animate-fade-in' : 'invisible'
@@ -172,6 +192,8 @@ export default function SessionSidebar() {
           id="session-tabpanel-notes"
           role="tabpanel"
           aria-labelledby="session-tab-notes"
+          aria-hidden={activeTab === 'notes' ? undefined : true}
+          inert={activeTab !== 'notes' ? true : undefined}
           className={cn(
             'absolute inset-0 p-3',
             activeTab === 'notes' ? 'animate-fade-in' : 'invisible'
@@ -184,6 +206,8 @@ export default function SessionSidebar() {
           id="session-tabpanel-session"
           role="tabpanel"
           aria-labelledby="session-tab-session"
+          aria-hidden={activeTab === 'session' ? undefined : true}
+          inert={activeTab !== 'session' ? true : undefined}
           className={cn(
             'absolute inset-0 p-3 overflow-y-auto space-y-4',
             activeTab === 'session' ? 'animate-fade-in' : 'invisible'
@@ -196,6 +220,6 @@ export default function SessionSidebar() {
           <SessionHistory />
         </div>
       </div>
-    </aside>
+    </div>
   );
 }
