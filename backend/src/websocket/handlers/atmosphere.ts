@@ -41,6 +41,8 @@ export function registerAtmosphereHandlers(io: Server, socket: AuthenticatedSock
 
       // Re-read vibeSettings in the same transaction as the write so a track
       // (or settings save) that committed during authz is not overwritten.
+      // Merge the effect onto the stored JSON: periods stay as written, and
+      // this is not a vibe-settings write so the blob is not revalidated.
       await prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "Campaign" WHERE id = ${campaignId} FOR UPDATE`;
         const campaign = await tx.campaign.findUnique({

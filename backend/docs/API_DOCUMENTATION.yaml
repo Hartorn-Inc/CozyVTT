@@ -2448,12 +2448,17 @@ paths:
         Update campaign settings (DM only). Every field is optional and is
         validated when present; a bad value is a 400 whose message describes
         the first problem found. Most messages name the field; a value of the
-        wrong type for `name` or `description`, a `spiritLayerStyle` over 100
-        characters and most `vibeSettings` problems get a generic message
-        such as `Invalid input: expected string, received number`.
-        Unknown fields are ignored. Changing `gameSystem` after characters
-        have been created logs a warning, but the change is still allowed.
-        Nothing is broadcast; open pages see the change on their next fetch.
+        wrong type for `name` or `description` and a `spiritLayerStyle` over
+        100 characters get a generic message such as
+        `Invalid input: expected string, received number`.
+        `vibeSettings` uses the same rules as
+        `PUT /api/campaigns/{campaignId}/vibe` (`enabled` required, at least
+        one period, unique names ignoring case, period names at most 50
+        characters, allowlisted filters). Period `audio` is not checked
+        against the asset library on this route. Unknown fields are ignored.
+        Changing `gameSystem` after characters have been created logs a
+        warning, but the change is still allowed. Nothing is broadcast; open
+        pages see the change on their next fetch.
       operationId: updateCampaign
       security:
         - cookieAuth: []
@@ -2485,30 +2490,38 @@ paths:
                 vibeSettings:
                   type: object
                   description: >-
-                    Replaces the campaign's atmosphere settings. Validated more
-                    loosely than `PUT /api/campaigns/{campaignId}/vibe`: only
-                    `periods` is required (0 to 20 entries), `enabled` and any
-                    other top-level field are stored as sent without a check,
-                    a period needs no `audio` field, names need not be unique,
-                    and a period `audio` is not checked against the asset
-                    library (switching to a period whose track the DM may not
-                    open plays nothing). Unknown fields inside a period are
-                    dropped. `atmosphereAudio` is ignored and the stored value
-                    kept. The current period is not cleared when it disappears
-                    from the list, unlike on the dedicated vibe route.
-                  required: [periods]
+                    Replaces the campaign's atmosphere settings. Same rules as
+                    `PUT /api/campaigns/{campaignId}/vibe`: `enabled` is
+                    required, `periods` must have 1 to 20 entries with unique
+                    names ignoring case, a period name is 1 to 50 characters
+                    (non-empty after trim, stored as sent), `hue` is `#RRGGBB`,
+                    and `filter` is an allowlisted CSS filter. A period needs
+                    no `audio` field. Period `audio` is not checked against
+                    the asset library (switching to a period whose track the
+                    DM may not open plays nothing). Unknown fields inside a
+                    period are dropped. Extra top-level keys such as
+                    `currentPeriod` are stored as sent. `atmosphereAudio` is
+                    ignored and the stored value kept. The current period is
+                    not cleared when it disappears from the list, unlike on
+                    the dedicated vibe route.
+                  required: [enabled, periods]
                   properties:
+                    enabled:
+                      type: boolean
                     periods:
                       type: array
+                      minItems: 1
                       maxItems: 20
+                      description: At least one period; names must be unique ignoring case.
                       items:
                         type: object
                         required: [name, hue, filter]
                         properties:
                           name:
                             type: string
-                            maxLength: 100
-                            description: May be empty here; the dedicated vibe route requires 1 to 50 characters.
+                            minLength: 1
+                            maxLength: 50
+                            description: Must contain something other than whitespace; stored as sent.
                           hue:
                             type: string
                             pattern: '^#[0-9A-Fa-f]{6}$'
@@ -3063,16 +3076,16 @@ paths:
         Each period's `hue` must be a `#RRGGBB` colour and its `filter` may use
         only `brightness()`, `saturate()`, `contrast()` and `hue-rotate()`,
         the functions the atmosphere editor produces; anything else is a 400.
-        A period's `audio` must be present: null for no track, or the id of
+        A period's `audio` may be omitted or null for no track, or the id of
         an audio asset the DM can read (their admin rights are not counted)
         that does not belong to another campaign. Anything else is a 400
         naming the period. Switching to a period plays its track for
         everyone; a period without one silences the table. Period names must
         be unique ignoring case. If the current period no longer exists in
-        the new list it is cleared (matched ignoring case). Other fields, at
-        the top level or in a period, are stored as sent, except
-        `atmosphereAudio`, which is ignored in favour of the stored value.
-        Nothing is broadcast.
+        the new list it is cleared (matched ignoring case). Unknown fields
+        inside a period are dropped. Extra top-level keys such as
+        `currentPeriod` are stored as sent. `atmosphereAudio` is ignored
+        and the stored value kept. Nothing is broadcast.
       operationId: updateVibe
       security:
         - cookieAuth: []
@@ -3100,7 +3113,7 @@ paths:
                       description: At least one period; names must be unique ignoring case.
                       items:
                         type: object
-                        required: [name, hue, filter, audio]
+                        required: [name, hue, filter]
                         properties:
                           name:
                             type: string
@@ -3121,7 +3134,8 @@ paths:
                             description: >-
                               The id of an audio asset to play for the whole
                               table while this period is the vibe, or null
-                              for no audio.
+                              or omitted for no audio. This route ACL-checks
+                              a present value; campaign PUT does not.
       responses:
         '200':
           description: Atmosphere settings updated
@@ -9057,7 +9071,14 @@ paths:
         that still does not fit is left off its token or template; a
         creature without one is listed in `skipped`. A game system that is
         not a `GameSystem` value, on the campaign or a creature, imports as
-        none. A data file nested more than 32 levels deep leaves out its map,
+        none. An illegal vibe (the same write rules as
+        `PUT /api/campaigns/{campaignId}/vibe`: `enabled` required, at least
+        one period, unique names ignoring case, period names at most 50
+        characters, allowlisted filters) is omitted with a warning (`The
+        archive's vibe settings could not be used, so they were omitted.`)
+        and the campaign still imports with the default periods; the archive
+        is not refused. An omitted `vibeSettings` key, `null`, or empty
+        object uses the default periods with no warning. A data file nested more than 32 levels deep leaves out its map,
         or its creatures or templates, and refuses the import when it is the
         manifest, campaign settings or asset manifest. Tokens are moved to
         whole squares with their

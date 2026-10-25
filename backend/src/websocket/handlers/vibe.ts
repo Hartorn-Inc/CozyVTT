@@ -2,6 +2,7 @@
 // Vibe tracker handler: vibe.update
 // ============================================
 
+import { z } from 'zod';
 import { Server } from 'socket.io';
 import { AuthenticatedSocket } from '../auth';
 import { prisma } from '../../config/database';
@@ -13,13 +14,24 @@ import { withinCeiling } from '../shared';
 import logger from '../../utils/logger';
 import { confirmWriteAuthorization } from '../writeAuthz';
 
+/**
+ * Incoming switch payload. Only `period` is read: extra keys (including a
+ * client `vibeSettings` object) are stripped and never written. No max length
+ * — a grandfathered stored name can be longer than the write schema allows.
+ */
+const VibeUpdatePayloadSchema = z.object({
+  period: z.string({ error: 'period (string) is required' }).min(1, { error: 'period (string) is required' }),
+}).strip();
+
 export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): void {
   /**
    * VIBE.UPDATE - DM changes the current vibe period and its audio follows.
    * Updates campaign.currentVibe, broadcasts period data to all members, and
    * sets the period's track as the table's ambient audio (none means silence).
+   * Reads `{ period }` against stored settings; extra payload keys are ignored
+   * and this event does not write vibeSettings.
    */
-  socket.on('vibe.update', async (data: { period: string }) => {
+  socket.on('vibe.update', async (data: unknown) => {
     try {
       if (!socket.campaignId || !socket.userId) {
         socket.emit('error', { message: 'Not authenticated to a campaign' });
@@ -34,12 +46,12 @@ export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): v
         return;
       }
 
-      const { period } = data;
-
-      if (!period || typeof period !== 'string') {
-        socket.emit('error', { message: 'period (string) is required' });
+      const parsed = VibeUpdatePayloadSchema.safeParse(data);
+      if (!parsed.success) {
+        socket.emit('error', { message: parsed.error.issues[0]?.message ?? 'period (string) is required' });
         return;
       }
+      const { period } = parsed.data;
 
       // Fetch campaign vibe settings
       const campaign = await prisma.campaign.findUnique({
@@ -52,7 +64,9 @@ export function registerVibeHandlers(io: Server, socket: AuthenticatedSocket): v
         return;
       }
 
-      // Normalize settings to handle old and new formats
+      // Convert only the legacy string[] periods + hues shape. A stored
+      // object-period blob is used as-is, including names the write schema
+      // would refuse, so a grandfathered period can still be switched to.
       const vibeSettings = normalizeVibeSettings(campaign.vibeSettings);
 
       // Check if vibe tracker is enabled
