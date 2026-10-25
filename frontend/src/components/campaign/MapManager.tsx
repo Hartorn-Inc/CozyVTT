@@ -469,8 +469,8 @@ export default function MapManager({ isOpen, onClose }: MapManagerProps) {
     if (!campaign?.id || map.id === activeMapId) return;
 
     if (currentMap) {
-      // Fetch full current map to get actual tokens (context tokens may be empty
-      // because they come from the lightweight campaign maps list)
+      // Fetch full current map for the live token list (current map in
+      // context is metadata, so currentMap.tokens is not live truth)
       setIsSwitching(true);
       try {
         const fullCurrentMap = await mapService.getMap(campaign.id, currentMap.id);
@@ -523,7 +523,7 @@ export default function MapManager({ isOpen, onClose }: MapManagerProps) {
       // 3. Fetch full map (with filtered tokens)
       const fullMap = await mapService.getMap(campaign.id, targetMap.id);
 
-      // 4. Update context + live token store
+      // 4. Current map in context is metadata; hydrate the live token store.
       setCurrentMap(fullMap);
       useGameStore.getState().setTokens(fullMap.tokens || []);
 

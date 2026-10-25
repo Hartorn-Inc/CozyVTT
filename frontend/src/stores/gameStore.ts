@@ -13,7 +13,8 @@
 //     fog / lights may move here in future (they are currently
 //     MapCanvas-local state with their own undo/redo history).
 //   - react-query owns SERVER RESOURCES fetched over REST (campaign
-//     lists, characters, assets, map metadata).
+//     lists, characters, assets). Live-table current-map metadata is
+//     CampaignContext, not a React Query copy of that document.
 //   - CampaignContext owns campaign-level metadata and low-frequency
 //     UI state (vibe, atmosphere, session, HP cache).
 //   Never represent the same datum in two of these places.
@@ -75,7 +76,7 @@ interface GameState {
   peekSource: 'tracker' | 'map' | null;
 
   // ---- Actions (named after the events that drive them) ----
-  /** Wholesale replace — map load, map change, reconnect resync. */
+  /** Wholesale replace — join, current-map identity change, catch-up, map.changed. */
   setTokens: (tokens: Token[]) => void;
   /** `token.moved` stream + local drag commit: position-only update. */
   applyTokenMove: (tokenId: string, position: Position) => void;

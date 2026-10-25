@@ -25,6 +25,7 @@ import socketClient from '@/services/socket';
 import { apiErrorMessage, apiErrorStatus } from '@/utils/errors';
 import { withMemberRole } from '@/utils/campaignRoles';
 import { tokenSentTo } from '@/utils/tokenMask';
+import { asCurrentMapMetadata } from '@/components/campaign/map/currentMapMetadata';
 
 // ============================================
 // Types
@@ -100,12 +101,13 @@ interface CampaignContextState {
    * GET that is still the current campaign-row read also copies status and
    * activeSession when statusEpoch is unchanged (same contract as catch-up
    * and roster.updated). Does not set `loading`. A settings PUT document
-   * does not rewrite tokens; a current-row GET catch-up hydrates the table
-   * map, including when that id is already on screen. Given a
-   * document (the body a settings PUT already returned), apply it; otherwise
-   * GET the row and apply that. A settings PUT should pass the seq from
-   * `beginSettingsWrite` (taken before the HTTP await) so an earlier write
-   * cannot rewind a later one. Omitting the seq takes one at apply for
+   * does not rewrite tokens; a current-row GET hydrates tokens only when
+   * current-map identity changes or this user left the DM seat. Catch-up
+   * still hydrates tokens when that id is already on screen. Given a
+   * document (the body a settings PUT already returned), apply it;
+   * otherwise GET the row and apply that. A settings PUT should pass the seq
+   * from `beginSettingsWrite` (taken before the HTTP await) so an earlier
+   * write cannot rewind a later one. Omitting the seq takes one at apply for
    * callers that have not begun the write. Returns whether that PUT's
    * settings were applied; a skipped older document is false. GET returns
    * true when the row was applied.
@@ -277,7 +279,8 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // Overlapping campaign-row GETs: catch-up, roster.updated, and
   // refreshCampaign. An older memberships/characters/status body must not
   // overwrite a newer one, and a stale 403/404 or syncError must not land
-  // after a newer row has already been applied.
+  // after a newer row has already been applied. Losing this clock does not
+  // skip catch-up token hydrate when the map identity clock still allows it.
   const campaignRowSeq = useRef(0);
   // In-flight getMap reads (load, refresh, retry, catch-up). Demotion strips
   // spirit immediately and starts a player getMap of the map on screen even
@@ -358,18 +361,15 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       const nextWalls = hadLockedDoor && walls
         ? walls.map((w) => (w.type === 'door-locked' ? { ...w, type: 'door-closed' as const } : w))
         : walls;
-      const nextTokens = prev.tokens
-        ? tokensVisibleToDemotedPlayer(prev.tokens)
-        : prev.tokens;
       const nextLights = prev.lights?.filter((light) => light.enabled === true);
       const lightsChanged = Boolean(prev.lights?.some((light) => light.enabled !== true));
       const spiritChanged = Boolean(prev.spiritLayerUrl);
-      if (!hadLockedDoor && !spiritChanged && !lightsChanged && nextTokens === prev.tokens) return prev;
+      if (!hadLockedDoor && !spiritChanged && !lightsChanged) return prev;
       return {
         ...prev,
         spiritLayerUrl: spiritChanged ? null : prev.spiritLayerUrl,
         wallSegments: nextWalls,
-        tokens: nextTokens ?? prev.tokens,
+        tokens: [],
         lights: nextLights ?? prev.lights,
       };
     });
@@ -574,33 +574,36 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   const applyHydratedMap = (
     map: Map,
     spiritVisible?: boolean,
-    options?: { playerDemotion?: boolean },
+    options?: { playerDemotion?: boolean; preserveSyncError?: boolean },
   ) => {
     currentMapIdRef.current = map.id;
-    setCurrentMapState(map);
+    setCurrentMapState(asCurrentMapMetadata(map));
     useGameStore.getState().setTokens(map.tokens || []);
     setPlayerSpiritVisible(spiritVisible ?? false);
     setMapLoadError(null);
-    setSyncError(null);
+    if (!options?.preserveSyncError) {
+      setSyncError(null);
+    }
     if (options?.playerDemotion) {
       setMapGeometryGen((n) => n + 1);
     }
   };
 
   /**
-   * Hydrate or clear the table to a campaign-row currentMapId. Catch-up and
-   * a winning roster/refresh GET always run this tail, including when the
-   * fetched id is already on screen (token catch-up). Different-id claims
-   * with mapReadSeq so an in-flight getMap of a different map cannot apply.
-   * Same-id token catch-up does not bump mapGeometryGen; a player-filtered
-   * demotion hydrate of the same id does.
+   * Hydrate or clear the table to a campaign-row currentMapId. Catch-up
+   * always runs this tail, including when the fetched id is already on
+   * screen (token catch-up). Roster/refresh GETs call it for a different
+   * identity or a same-id demotion, not for an ordinary same-id row.
+   * Different-id claims with mapReadSeq so an in-flight getMap of a
+   * different map cannot apply. Same-id token catch-up does not bump
+   * mapGeometryGen; a player-filtered demotion hydrate of the same id does.
    */
   const syncTableToFetchedMapId = async (
     campaignId: string,
     mapId: string | null,
     mapEpochWhenStarted: number,
     stillShown: () => boolean,
-    options?: { playerDemotion?: boolean },
+    options?: { playerDemotion?: boolean; preserveSyncError?: boolean },
   ): Promise<TableRetryOutcome> => {
     if (!mapId) {
       if (!stillShown()) return { discarded: true };
@@ -644,6 +647,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       }
       applyHydratedMap(map, spiritVisible, {
         playerDemotion: !claimingDifferent && Boolean(options?.playerDemotion),
+        preserveSyncError: options?.preserveSyncError,
       });
       setCampaign((prev) =>
         prev && prev.currentMapId !== map.id ? { ...prev, currentMapId: map.id } : prev,
@@ -664,11 +668,11 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
 
   /**
    * A winning campaign-row GET (latest campaignRowSeq) hydrates or clears
-   * when currentMapId differs from the map on screen, and catch-up getMaps
-   * when that id is already showing. A same-id demotion hydrates
-   * player-filtered geometry. If this GET demoted and the fetched map was
-   * not applied (discarded or failed), still refetch the map on screen as
-   * PLAYER.
+   * when currentMapId differs from the map on screen. A same-id demotion
+   * hydrates player-filtered geometry. Ordinary same-id roster/refresh GETs
+   * do not rewrite live tokens — catch-up is the clock for that snapshot.
+   * If this GET demoted and the fetched map was not applied (discarded or
+   * failed), still refetch the map on screen as PLAYER.
    */
   const hydrateWinningRowMap = async (
     campaignId: string,
@@ -690,12 +694,13 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       }
       return;
     }
+    if (!demoted) return;
     await syncTableToFetchedMapId(
       campaignId,
       fetchedMapId,
       mapEpochWhenStarted,
       stillShown,
-      { playerDemotion: demoted },
+      { playerDemotion: true },
     );
   };
 
@@ -1118,6 +1123,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     // write over the next campaign's singleton token store.
     const stillShown = () => replyIsCurrent(campaignId, generation);
     const mapEpochWhenStarted = mapEpoch.current;
+    const shownMapIdWhenStarted = currentMapIdRef.current;
     const sessionEpochWhenStarted = sessionEpoch.current;
     const statusEpochWhenStarted = statusEpoch.current;
     const mapListGenWhenStarted = mapListGen.current;
@@ -1127,45 +1133,68 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     // status/memberships/activeSession or surface a stale 403/404/syncError.
     // Do not bump mapReadSeq here: a same-map refresh while GET is in flight
     // must not discard this catch-up after it learns a different currentMapId.
+    // Losing the row still hydrates tokens when identity still allows it;
+    // a later roster/refresh GET that already applied a different map (or
+    // cleared) must not be rewound.
     const rowSeq = bumpCampaignRowSeq();
     try {
       const fresh = await campaignService.getCampaign(campaignId);
       if (!stillShown() || fresh.id !== campaignId) {
         return { discarded: true };
       }
-      if (rowSeq !== campaignRowSeq.current) {
-        return { discarded: true };
-      }
-      // Status, memberships, characters, and maps still land even if getMap
-      // later fails. Copy status/activeSession while the status clock is
-      // unchanged (a concurrent role event must not drop a missed pause).
-      // Copy memberships and characters while the role clock is unchanged.
-      // Copy maps when this user's role on the body matches liveRoleRef.
-      // Do not write currentMapId until a hydrate passes mayApplyFetchedMap
-      // — a GET that started on map A must not rewind the table after a
-      // live switch.
-      const statusClockMoved = statusEpoch.current !== statusEpochWhenStarted;
-      const roleClockMoved = sessionEpoch.current !== sessionEpochWhenStarted;
-      const demoted = !roleClockMoved ? adoptOwnRoleFromGet(fresh.memberships) : false;
-      applyCampaignDocument(fresh, {
-        keepMemberships: roleClockMoved,
-        keepCharacters: roleClockMoved,
-        keepMaps: keepGetMaps(fresh, mapListGen.current !== mapListGenWhenStarted),
-        keepSettings: settingsGen.current !== settingsGenWhenStarted,
-      });
-      if (!statusClockMoved) {
-        setCampaign((prev) =>
-          prev && prev.id === fresh.id ? { ...prev, status: fresh.status } : prev,
-        );
-        setActiveSessionState(fresh.activeSession ?? null);
+      const rowWon = rowSeq === campaignRowSeq.current;
+      let demoted = false;
+      if (rowWon) {
+        // Status, memberships, characters, and maps still land even if getMap
+        // later fails. Copy status/activeSession while the status clock is
+        // unchanged (a concurrent role event must not drop a missed pause).
+        // Copy memberships and characters while the role clock is unchanged.
+        // Copy maps when this user's role on the body matches liveRoleRef.
+        // Do not write currentMapId until a hydrate passes mayApplyFetchedMap
+        // — a GET that started on map A must not rewind the table after a
+        // live switch.
+        const statusClockMoved = statusEpoch.current !== statusEpochWhenStarted;
+        const roleClockMoved = sessionEpoch.current !== sessionEpochWhenStarted;
+        demoted = !roleClockMoved ? adoptOwnRoleFromGet(fresh.memberships) : false;
+        applyCampaignDocument(fresh, {
+          keepMemberships: roleClockMoved,
+          keepCharacters: roleClockMoved,
+          keepMaps: keepGetMaps(fresh, mapListGen.current !== mapListGenWhenStarted),
+          keepSettings: settingsGen.current !== settingsGenWhenStarted,
+        });
+        if (!statusClockMoved) {
+          setCampaign((prev) =>
+            prev && prev.id === fresh.id ? { ...prev, status: fresh.status } : prev,
+          );
+          setActiveSessionState(fresh.activeSession ?? null);
+        }
       }
       const mapId = fresh.currentMapId ?? null;
+      if (!rowWon) {
+        // Applied or claimed REST identity (roster/refresh GET) moved off the
+        // map this catch-up started on. Do not rewind that hydrate. A claim
+        // already in flight for this same map must apply: bumping mapReadSeq
+        // would drop that snapshot if this getMap then failed. Same-id
+        // catch-up still getMaps when there is no claim: losing the row
+        // clock is not the token clock.
+        const claimed = claimedMapRef.current;
+        if (claimed && claimed.id === mapId) {
+          return { discarded: true };
+        }
+        const restIdentity = claimed ? claimed.id : currentMapIdRef.current;
+        const identityMovedByRest =
+          mapEpoch.current === mapEpochWhenStarted
+          && restIdentity !== shownMapIdWhenStarted;
+        if (identityMovedByRest && restIdentity !== mapId) {
+          return { discarded: true };
+        }
+      }
       const outcome = await syncTableToFetchedMapId(
         campaignId,
         mapId,
         mapEpochWhenStarted,
         stillShown,
-        { playerDemotion: demoted },
+        { playerDemotion: demoted, preserveSyncError: !rowWon },
       );
       if (demoted && !('ok' in outcome && outcome.ok === true) && stillShown() && currentMapIdRef.current) {
         await refreshCurrentMapRef.current({ playerDemotion: true });
@@ -1228,18 +1257,27 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         // Same-id patches (fog/illumination) must not bump; a real id change
         // including a clear still counts as a live switch.
         adoptLiveMapId(next?.id ?? null);
-        return next;
+        // Function form never switches maps: persist metadata only.
+        return next ? asCurrentMapMetadata(next) : next;
       });
       return;
     }
-    adoptLiveMapId(map?.id ?? null);
-    setCurrentMapState(map);
-    if (map) {
-      setMapLoadError(null);
-      setCampaign((prev) =>
-        prev && prev.currentMapId !== map.id ? { ...prev, currentMapId: map.id } : prev,
-      );
+    const nextId = map?.id ?? null;
+    const identityChanged = currentMapIdRef.current !== nextId;
+    adoptLiveMapId(nextId);
+    if (!map) {
+      setCurrentMapState(null);
+      if (identityChanged) useGameStore.getState().setTokens([]);
+      return;
     }
+    if (identityChanged) {
+      useGameStore.getState().setTokens(map.tokens || []);
+    }
+    setCurrentMapState(asCurrentMapMetadata(map));
+    setMapLoadError(null);
+    setCampaign((prev) =>
+      prev && prev.currentMapId !== map.id ? { ...prev, currentMapId: map.id } : prev,
+    );
   }, []);
 
   // Keep campaign.maps in step with the Map Library (create, rename, import).
