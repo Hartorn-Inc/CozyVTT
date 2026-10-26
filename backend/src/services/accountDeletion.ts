@@ -27,7 +27,7 @@ import { prisma } from '../config/database';
 import { isAssetInUse } from './assetUsage';
 import { deleteFile } from '../utils/fileUtils';
 import logger from '../utils/logger';
-import { destroyUserLoginSessions, lockLoginSessionUser } from './sessionStore';
+import { checkoutSessionClient, destroyUserLoginSessions, lockLoginSessionUser } from './sessionStore';
 import { isOnlyAdmin } from './platformAdmins';
 import { inSerializableTransaction } from '../utils/serializable';
 
@@ -66,85 +66,93 @@ export type AccountDeletion =
  */
 export async function deleteAccount(userId: string): Promise<AccountDeletion> {
   return inSerializableTransaction(async (tx): Promise<AccountDeletion> => {
-    // First statement: production logins take this lock before INSERT, so
-    // they cannot commit a new sid until this transaction finishes. The
-    // SERIALIZABLE snapshot is still taken at the start of this statement
-    // (before a lock wait); a sid committed during the wait is invisible on
-    // this client, which is why destroy deletes session rows from a
-    // read-committed view on the session-store pool. Returning after the
-    // lock (onlyAdmin / runsCampaigns) is fine; the lock is
-    // transaction-scoped. Destroy is not called on those paths.
-    await lockLoginSessionUser(tx, userId);
-    const account = await tx.user.findUnique({ where: { id: userId }, select: { platformRole: true } });
-    if (account?.platformRole === 'ADMIN' && (await isOnlyAdmin(userId, tx))) {
-      return { deleted: false, refused: 'onlyAdmin' };
-    }
+    // Check out the session-store client before taking the user lock so a
+    // concurrent writeLoginSessionUnlessRevoked holding a pool connection
+    // cannot exhaust the pool and deadlock revoke while waiting on that lock.
+    const sessionClient = await checkoutSessionClient();
+    try {
+      // First statement: production logins take this lock before INSERT, so
+      // they cannot commit a new sid until this transaction finishes. The
+      // SERIALIZABLE snapshot is still taken at the start of this statement
+      // (before a lock wait); a sid committed during the wait is invisible on
+      // this client, which is why destroy deletes session rows from a
+      // read-committed view on the session-store pool. Returning after the
+      // lock (onlyAdmin / runsCampaigns) is fine; the lock is
+      // transaction-scoped. Destroy is not called on those paths.
+      await lockLoginSessionUser(tx, userId);
+      const account = await tx.user.findUnique({ where: { id: userId }, select: { platformRole: true } });
+      if (account?.platformRole === 'ADMIN' && (await isOnlyAdmin(userId, tx))) {
+        return { deleted: false, refused: 'onlyAdmin' };
+      }
 
-    // The campaigns they own, and the ones whose DM seat is theirs.
-    const theirs = await tx.campaign.findMany({
-      where: { OR: [{ ownerId: userId }, { memberships: { some: { userId, role: 'DM' } } }] },
-      select: {
-        id: true,
-        name: true,
-        ownerId: true,
-        memberships: { select: { userId: true, role: true, user: { select: { displayName: true } } } },
-      },
-    });
-    const dmOf = (c: (typeof theirs)[number]) => c.memberships.find((m) => m.role === 'DM')?.userId;
-    const owned = theirs.filter((c) => c.ownerId === userId);
-    const runs = theirs
-      .filter((c) => dmOf(c) === userId || (c.ownerId === userId && dmOf(c) === undefined))
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        members: c.memberships
-          .filter((m) => m.userId !== userId)
-          .map((m) => ({ userId: m.userId, displayName: m.user.displayName, role: m.role })),
-      }));
-    if (runs.length > 0) return { deleted: false, refused: 'runsCampaigns', runs };
+      // The campaigns they own, and the ones whose DM seat is theirs.
+      const theirs = await tx.campaign.findMany({
+        where: { OR: [{ ownerId: userId }, { memberships: { some: { userId, role: 'DM' } } }] },
+        select: {
+          id: true,
+          name: true,
+          ownerId: true,
+          memberships: { select: { userId: true, role: true, user: { select: { displayName: true } } } },
+        },
+      });
+      const dmOf = (c: (typeof theirs)[number]) => c.memberships.find((m) => m.role === 'DM')?.userId;
+      const owned = theirs.filter((c) => c.ownerId === userId);
+      const runs = theirs
+        .filter((c) => dmOf(c) === userId || (c.ownerId === userId && dmOf(c) === undefined))
+        .map((c) => ({
+          id: c.id,
+          name: c.name,
+          members: c.memberships
+            .filter((m) => m.userId !== userId)
+            .map((m) => ({ userId: m.userId, displayName: m.user.displayName, role: m.role })),
+        }));
+      if (runs.length > 0) return { deleted: false, refused: 'runsCampaigns', runs };
 
-    // Every campaign left here has a DM other than this user.
-    for (const campaign of owned) {
-      const dm = dmOf(campaign);
-      if (dm !== undefined) await tx.campaign.update({ where: { id: campaign.id }, data: { ownerId: dm } });
-    }
-    // Documents they shared into a campaign stay shared: the share passes to
-    // the campaign's DM, or to its owner when the DM seat is empty.
-    // Owned campaigns have just passed to their DM above.
-    const shares = await tx.campaignDocument.findMany({
-      where: { linkedById: userId },
-      select: {
-        id: true,
-        campaign: { select: { ownerId: true, memberships: { where: { role: 'DM' }, select: { userId: true } } } },
-      },
-    });
-    for (const share of shares) {
-      const dm = share.campaign.memberships[0]?.userId;
-      const heir = dm !== undefined && dm !== userId ? dm : share.campaign.ownerId;
-      if (heir !== userId) await tx.campaignDocument.update({ where: { id: share.id }, data: { linkedById: heir } });
-    }
+      // Every campaign left here has a DM other than this user.
+      for (const campaign of owned) {
+        const dm = dmOf(campaign);
+        if (dm !== undefined) await tx.campaign.update({ where: { id: campaign.id }, data: { ownerId: dm } });
+      }
+      // Documents they shared into a campaign stay shared: the share passes to
+      // the campaign's DM, or to its owner when the DM seat is empty.
+      // Owned campaigns have just passed to their DM above.
+      const shares = await tx.campaignDocument.findMany({
+        where: { linkedById: userId },
+        select: {
+          id: true,
+          campaign: { select: { ownerId: true, memberships: { where: { role: 'DM' }, select: { userId: true } } } },
+        },
+      });
+      for (const share of shares) {
+        const dm = share.campaign.memberships[0]?.userId;
+        const heir = dm !== undefined && dm !== userId ? dm : share.campaign.ownerId;
+        if (heir !== userId) await tx.campaignDocument.update({ where: { id: share.id }, data: { linkedById: heir } });
+      }
 
-    // The campaigns they were in, read before the cascade removes the rows.
-    const campaignIds = (await tx.campaignMembership.findMany({ where: { userId }, select: { campaignId: true } }))
-      .map((m) => m.campaignId);
-    // Their personal uploads, read while the rows still name them.
-    const personal = await tx.asset.findMany({ where: { uploadedById: userId, scope: 'USER' }, select: { id: true, type: true } });
-    // Their sign-ins end with the row, in the same transaction: the guards
-    // read the session, so a deleted admin's other device would otherwise
-    // keep the role until the session expired. Destroy last so a later
-    // failure cannot leave the account deleted while login sessions remain;
-    // sessions are not FK-bound to User. Durable revoke (advisory lock,
-    // revoked row, then DELETE) skips a later store write. Destroy's
-    // session-row DELETE uses a read-committed view on another connection
-    // while this transaction holds the user lock: the SERIALIZABLE snapshot
-    // cannot see a sid committed after the first statement. That DELETE
-    // runs on the session-store pool, not a second Prisma checkout, and is
-    // durable if this transaction later rolls back (fail-closed). Live
-    // sockets end when that RC revoke commits, so a later 409 still drops
-    // an already-open connection.
-    await tx.user.delete({ where: { id: userId } });
-    await destroyUserLoginSessions(userId, undefined, tx, 'Your account was deleted.');
-    return { deleted: true, campaignIds, personal };
+      // The campaigns they were in, read before the cascade removes the rows.
+      const campaignIds = (await tx.campaignMembership.findMany({ where: { userId }, select: { campaignId: true } }))
+        .map((m) => m.campaignId);
+      // Their personal uploads, read while the rows still name them.
+      const personal = await tx.asset.findMany({ where: { uploadedById: userId, scope: 'USER' }, select: { id: true, type: true } });
+      // Their sign-ins end with the row, in the same transaction: the guards
+      // read the session, so a deleted admin's other device would otherwise
+      // keep the role until the session expired. Destroy last so a later
+      // failure cannot leave the account deleted while login sessions remain;
+      // sessions are not FK-bound to User. Durable revoke (advisory lock,
+      // revoked row, then DELETE) skips a later store write. Destroy's
+      // session-row DELETE uses a read-committed view on another connection
+      // while this transaction holds the user lock: the SERIALIZABLE snapshot
+      // cannot see a sid committed after the first statement. That DELETE
+      // runs on the session-store pool, not a second Prisma checkout, and is
+      // durable if this transaction later rolls back (fail-closed). Live
+      // sockets end when that RC revoke commits, so a later 409 still drops
+      // an already-open connection.
+      await tx.user.delete({ where: { id: userId } });
+      await destroyUserLoginSessions(userId, undefined, tx, 'Your account was deleted.', sessionClient);
+      return { deleted: true, campaignIds, personal };
+    } finally {
+      sessionClient.release();
+    }
   });
 }
 
