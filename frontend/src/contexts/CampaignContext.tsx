@@ -309,7 +309,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   const claimedMapRef = useRef<{ id: string | null; seq: number } | null>(null);
   // Demotion asked for a player getMap of the on-screen map while a
   // different id was claimed. Run that read when the claim actually clears.
-  const pendingPlayerDemotionReadRef = useRef(false);
+  const pendingPlayerDemotionReadRef = useRef<string | null>(null);
   const bumpGeneration = () => {
     loadGeneration.current += 1;
     return loadGeneration.current;
@@ -334,26 +334,27 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   const isNonDmRole = (role: CampaignRole | null | undefined) =>
     role === 'PLAYER' || role === 'SPECTATOR';
   /**
-   * This user just left the DM seat. Drop spirit-plane UI, maps a player
-   * cannot read, hidden tokens, Keeper notes/stat blocks, door locks, off
-   * lights, and token fields a player is not sent (`tokenSentTo`). A
-   * player-filtered GET/getMap still replaces the rest; this frame must
-   * already be masked if that read cannot start or fails.
+   * This user just left the DM seat or became SPECTATOR. Drop spirit-plane UI,
+   * maps a player/spectator cannot read, hidden tokens, Keeper notes/stat blocks,
+   * door locks, off lights, and token fields not sent to that role (`tokenSentTo`).
+   * A follow-up getMap still replaces the rest; this frame must already be masked
+   * if that read cannot start or fails.
    */
-  const tokensVisibleToDemotedPlayer = (tokens: Token[]): Token[] => {
+  const tokensVisibleAfterDemotion = (tokens: Token[], role: CampaignRole): Token[] => {
     const userId = userIdRef.current;
+    const isSpectator = role === 'SPECTATOR';
     return tokens
       .filter((t) => t.layer !== TokenLayer.SPIRIT && t.visible !== false)
       .map((t) => ({
-        ...tokenSentTo(t, t.controlledBy === userId),
+        ...tokenSentTo(t, !isSpectator && t.controlledBy === userId),
         notes: '',
         statBlock: null,
       }));
   };
-  const stripDemotedDmSpirit = () => {
+  const stripDemotedState = (role: CampaignRole) => {
     setPlayerSpiritVisible(false);
     const tokens = Object.values(useGameStore.getState().tokens);
-    useGameStore.getState().setTokens(tokensVisibleToDemotedPlayer(tokens));
+    useGameStore.getState().setTokens(tokensVisibleAfterDemotion(tokens, role));
     setCurrentMapState((prev) => {
       if (!prev) return prev;
       const walls = prev.wallSegments;
@@ -367,7 +368,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       if (!hadLockedDoor && !spiritChanged && !lightsChanged) return prev;
       return {
         ...prev,
-        spiritLayerUrl: spiritChanged ? null : prev.spiritLayerUrl,
+        spiritLayerUrl: null,
         wallSegments: nextWalls,
         tokens: [],
         lights: nextLights ?? prev.lights,
@@ -400,8 +401,8 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     const hadRole = liveRoleRef.current !== null;
     const previous = liveRoleRef.current;
     liveRoleRef.current = role;
-    if (hadRole && leftDmSeat(previous, role)) {
-      stripDemotedDmSpirit();
+    if (hadRole && (role === 'SPECTATOR' || leftDmSeat(previous, role))) {
+      stripDemotedState(role);
       if (currentMapIdRef.current) {
         void refreshCurrentMapRef.current({ playerDemotion: true });
       }
@@ -425,8 +426,12 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     if (!own) return false;
     const previous = liveRoleRef.current;
     liveRoleRef.current = own;
+    if (own === 'SPECTATOR' && previous !== 'SPECTATOR') {
+      stripDemotedState(own);
+      return true;
+    }
     if (leftDmSeat(previous, own)) {
-      stripDemotedDmSpirit();
+      stripDemotedState(own);
       return true;
     }
     return false;
@@ -566,8 +571,10 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   const releaseFetchedMapClaim = (seq: number) => {
     if (claimedMapRef.current?.seq !== seq) return;
     claimedMapRef.current = null;
-    if (!pendingPlayerDemotionReadRef.current) return;
-    pendingPlayerDemotionReadRef.current = false;
+    const pendingMapId = pendingPlayerDemotionReadRef.current;
+    if (!pendingMapId) return;
+    pendingPlayerDemotionReadRef.current = null;
+    if (currentMapIdRef.current !== pendingMapId) return;
     void refreshCurrentMapRef.current({ playerDemotion: true });
   };
 
@@ -787,7 +794,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       liveSessionRef.current = null;
     }
     claimedMapRef.current = null;
-    pendingPlayerDemotionReadRef.current = false;
+    pendingPlayerDemotionReadRef.current = null;
     shownCampaignId.current = campaignId;
     setLoading(true);
     setError(null);
@@ -847,8 +854,12 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
         // this request. A pre-request DM ref must not stay over a PLAYER GET,
         // even if another member's role moved sessionEpoch while we waited.
         if (ownFromGet) liveRoleRef.current = ownFromGet;
-        if (ownFromGet && leftDmSeat(liveRoleWhenStarted, ownFromGet)) {
-          stripDemotedDmSpirit();
+        if (
+          ownFromGet &&
+          ((ownFromGet === 'SPECTATOR' && liveRoleWhenStarted && liveRoleWhenStarted !== 'SPECTATOR') ||
+            leftDmSeat(liveRoleWhenStarted, ownFromGet))
+        ) {
+          stripDemotedState(ownFromGet);
         }
       }
 
@@ -1033,16 +1044,16 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
   // doesn't blip atmosphere/audio state.
   const refreshCurrentMap = useCallback(async (opts?: { playerDemotion?: boolean }) => {
     const campaignId = campaign?.id;
-    const mapId = currentMap?.id;
+    const mapId = currentMapIdRef.current;
     if (!campaignId || !mapId) return;
     // A claim of a different id (catch-up hydrating B) must not be stolen.
     // A claim of this same id does not skip: demotion of the on-screen map
     // must bump mapReadSeq so a hung DM getMap of this id cannot apply.
     if (hasConflictingMapClaim(mapId)) {
-      if (opts?.playerDemotion) pendingPlayerDemotionReadRef.current = true;
+      if (opts?.playerDemotion) pendingPlayerDemotionReadRef.current = mapId;
       return;
     }
-    pendingPlayerDemotionReadRef.current = false;
+    pendingPlayerDemotionReadRef.current = null;
     const generation = loadGeneration.current;
     const mapEpochWhenStarted = mapEpoch.current;
     const seq = bumpMapReadSeq();
@@ -1051,6 +1062,7 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
       const { map, spiritVisible } = await withMapRead(() => api.getMap(campaignId, mapId));
       if (!replyIsCurrent(campaignId, generation)) return;
       if (map.id !== mapId) return;
+      if (currentMapIdRef.current !== mapId) return;
       if (!mapReadIsCurrent(seq, ownRoleWhenStarted, map.id, mapEpochWhenStarted)) {
         rejectStaleOwnRoleHydrate(seq, ownRoleWhenStarted, mapId, mapEpochWhenStarted, 'sync');
         return;
@@ -1059,11 +1071,12 @@ export function CampaignProvider({ children }: CampaignProviderProps) {
     } catch (err) {
       if (!replyIsCurrent(campaignId, generation)) return;
       if (seq !== mapReadSeq.current) return;
+      if (currentMapIdRef.current !== mapId) return;
       console.error('[CampaignContext] Failed to refresh current map after reconnect:', err);
       // Keep the last frame. Never treat a failed refresh as a successful empty table.
       setSyncError(apiErrorMessage(err) || MAP_REFRESH_FALLBACK);
     }
-  }, [campaign?.id, currentMap?.id]);
+  }, [campaign?.id]);
   refreshCurrentMapRef.current = refreshCurrentMap;
 
   const retryMapLoad = useCallback(async (): Promise<TableRetryOutcome> => {

@@ -1648,7 +1648,7 @@ const onRoleChangedHandler = () =>
     .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
 
 const holdGetMap = () => {
-  let releaseMap: (value?: { map: { id: string; tokens: Token[]; spiritLayerUrl?: string }; spiritVisible: boolean }) => void = () => {};
+  let releaseMap: (value?: { map: { id: string; tokens?: Token[]; spiritLayerUrl?: string | null }; spiritVisible: boolean }) => void = () => {};
   let failMap: (err: unknown) => void = () => {};
   getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve, reject) => {
     releaseMap = (value) => resolve(value ?? { map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false });
@@ -1656,7 +1656,7 @@ const holdGetMap = () => {
   }));
   return {
     release: () => releaseMap(),
-    releaseWith: (value: { map: { id: string; tokens: Token[]; spiritLayerUrl?: string }; spiritVisible: boolean }) => releaseMap(value),
+    releaseWith: (value: { map: { id: string; tokens?: Token[]; spiritLayerUrl?: string | null }; spiritVisible: boolean }) => releaseMap(value),
     fail: (err: unknown) => failMap(err),
   };
 };
@@ -1830,6 +1830,143 @@ it('does not apply a DM first-load getMap after this user is demoted and offers 
   expect(latest!.mapLoadError).toEqual({ mapId: 'm1', message: 'Failed to load map' });
   expect(latest!.playerSpiritVisible).toBe(false);
   expect(Object.keys(useGameStore.getState().tokens)).not.toContain('spirit-1');
+});
+
+it('skips deferred demotion read when a later PLAYER row hydrates the claimed id and leaves syncError null', async () => {
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'DM'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('visible', 1, 1)],
+        spiritLayerUrl: null,
+      },
+      spiritVisible: false,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('DM');
+  const getMapCallsAfterMount = getMap.mock.calls.length;
+
+  const onRoleChanged = onRoleChangedHandler();
+  expect(onRoleChanged).toBeDefined();
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'DM'));
+  const mapHold = holdGetMap();
+  let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
+  act(() => { catching = latest!.catchUpAfterReconnect(); });
+  await waitFor(() => expect(getMap).toHaveBeenLastCalledWith('c1', 'm2'));
+
+  act(() => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'PLAYER' });
+  });
+  expect(latest!.userRole).toBe('PLAYER');
+
+  getMap.mockImplementation((_c: string, mapId: string) => {
+    if (mapId === 'm1') return Promise.reject(mapUnavailable());
+    return Promise.resolve({
+      map: { id: mapId, tokens: [tokenAt('visible-m2', 2, 2)], spiritLayerUrl: null },
+      spiritVisible: false,
+    });
+  });
+
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+  await act(async () => {
+    onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newcomer' });
+  });
+
+  await waitFor(() => expect(latest!.currentMap?.id).toBe('m2'));
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(latest!.syncError).toBeNull();
+  expect(useGameStore.getState().tokens['visible-m2']).toBeDefined();
+
+  let catchUpResult: TableRetryOutcome | undefined;
+  await act(async () => {
+    mapHold.releaseWith({
+      map: {
+        id: 'm2',
+        tokens: [tokenAt('visible-m2', 2, 2)],
+        spiritLayerUrl: null,
+      },
+      spiritVisible: false,
+    });
+    catchUpResult = await catching;
+  });
+
+  expect(catchUpResult).toEqual({ discarded: true });
+  expect(latest!.currentMap?.id).toBe('m2');
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(latest!.syncError).toBeNull();
+  expect(useGameStore.getState().tokens['visible-m2']).toBeDefined();
+  expect(getMap.mock.calls.slice(getMapCallsAfterMount).some(([, mapId]) => mapId === 'm1')).toBe(false);
+  expect(getMap.mock.calls.slice(getMapCallsAfterMount).map(([, mapId]) => mapId)).toEqual(['m2', 'm2']);
+});
+
+it('immediately strips spirit and masks tokens with spectator rule on role changed to SPECTATOR when follow-up getMap fails', async () => {
+  const obscuredOwn = {
+    ...tokenAt('obscured-1', 3, 3),
+    controlledBy: 'me',
+    obscured: true,
+    name: 'Harvey Secret',
+    imageUrl: 'https://example/harvey.png',
+    conditions: ['frightened'],
+    hp: { current: 15, max: 20 },
+    notes: 'Keeper secret notes',
+    statBlock: { ac: 15 },
+  } as Token;
+  const spiritToken = {
+    id: 'spirit-t1',
+    name: 'Ghost',
+    layer: TokenLayer.SPIRIT,
+    visible: true,
+    controlledBy: 'me',
+  } as Token;
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm1', 'PLAYER'));
+  getMap.mockImplementationOnce((_c: string, mapId: string) =>
+    Promise.resolve({
+      map: {
+        id: mapId,
+        tokens: [tokenAt('regular', 1, 1), obscuredOwn, spiritToken],
+        spiritLayerUrl: 'https://example/spirit-art.png',
+      },
+      spiritVisible: true,
+    }),
+  );
+  renderCampaign();
+  await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
+  expect(latest!.userRole).toBe('PLAYER');
+  expect(latest!.playerSpiritVisible).toBe(true);
+  expect(latest!.currentMap?.spiritLayerUrl).toBe('https://example/spirit-art.png');
+  expect(useGameStore.getState().tokens['spirit-t1']).toBeDefined();
+  expect(useGameStore.getState().tokens['obscured-1']?.name).toBe('Harvey Secret');
+
+  const onRoleChanged = onRoleChangedHandler();
+  expect(onRoleChanged).toBeDefined();
+
+  getMap.mockRejectedValueOnce(mapUnavailable());
+
+  await act(async () => {
+    onRoleChanged!({ campaignId: 'c1', userId: 'me', role: 'SPECTATOR' });
+  });
+
+  expect(latest!.userRole).toBe('SPECTATOR');
+  expect(latest!.playerSpiritVisible).toBe(false);
+  expect(latest!.currentMap?.spiritLayerUrl).toBeNull();
+  expect(useGameStore.getState().tokens['spirit-t1']).toBeUndefined();
+  const masked = useGameStore.getState().tokens['obscured-1'];
+  expect(masked).toBeDefined();
+  expect(masked?.name).toBe('');
+  expect(masked?.imageUrl).toBe('');
+  expect(masked?.hp).toBeNull();
+  expect(masked?.conditions).toEqual([]);
+  expect(masked?.notes).toBe('');
+  expect(masked?.statBlock).toBeNull();
+  expect(masked?.controlledBy).toBeNull();
 });
 
 it('does not apply a DM catch-up getMap of claimed B after demotion and offers Retry', async () => {
