@@ -18,9 +18,9 @@ function fakeSocket() {
   const emitted: Array<{ mapId: string; operation: { op: string; cells?: number[] } }> = [];
   const stateRequests: Array<{ mapId: string }> = [];
   const socket: FogOperationSocket = {
-    emit(event: string, data: any) {
-      if (event === 'fog:operation') emitted.push(data);
-      if (event === 'fog:request_state') stateRequests.push(data);
+    emit(event: string, data: unknown) {
+      if (event === 'fog:operation') emitted.push(data as { mapId: string; operation: { op: string; cells?: number[] } });
+      if (event === 'fog:request_state') stateRequests.push(data as { mapId: string });
     },
   };
   return { socket, emitted, stateRequests };
@@ -291,5 +291,48 @@ describe('overlayOps / ackEcho', () => {
     q.handleDrop('map-1');
     expect(s.stateRequests).toEqual([{ mapId: 'map-1' }]);
     expect(q.overlayOps()).toHaveLength(0);
+  });
+
+  it('acknowledges in-flight chunks incrementally when snapshot reflects their changes', () => {
+    const s = fakeSocket();
+    const { q, advance } = queueHarness(() => s.socket);
+    q.enqueue([op([0, 1]), op([2, 3])]);
+    advance(100);
+    expect(q.pending()).toEqual([]);
+    expect(q.overlayOps()).toHaveLength(2);
+
+    const fog = (revealed: boolean[]) => ({ fogCols: revealed.length, fogRows: 1, cellPx: 32, revealed });
+
+    const partial = fog([true, true, false, false]);
+    const advanced = q.ackEcho(false, partial);
+    expect(advanced).toBe(true);
+    expect(q.overlayOps()).toHaveLength(1);
+    expect(q.overlayOps()[0]).toEqual(op([2, 3]));
+
+    const full = fog([true, true, true, true]);
+    const fullAdvanced = q.ackEcho(true, full);
+    expect(fullAdvanced).toBe(true);
+    expect(q.overlayOps()).toHaveLength(0);
+  });
+
+  it('detects when in-flight operations have timed out', () => {
+    const s = fakeSocket();
+    const { q, advance } = queueHarness(() => s.socket);
+    q.enqueue([op([1])]);
+    expect(q.hasTimedOut()).toBe(false);
+    advance(5000);
+    expect(q.hasTimedOut()).toBe(true);
+  });
+
+  it('does not acknowledge in-flight chunk when snapshot does not reflect it', () => {
+    const s = fakeSocket();
+    const { q } = queueHarness(() => s.socket);
+    q.enqueue([op([5])]);
+    const fog = (revealed: boolean[]) => ({ fogCols: revealed.length, fogRows: 1, cellPx: 32, revealed });
+    const unrelated = fog([false, false, false, false, false, false]);
+    const advanced = q.ackEcho(false, unrelated);
+    expect(advanced).toBe(false);
+    expect(q.overlayOps()).toHaveLength(1);
+    expect(q.hasTimedOut()).toBe(false);
   });
 });
