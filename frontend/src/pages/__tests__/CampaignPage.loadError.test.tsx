@@ -81,6 +81,13 @@ vi.mock('@/components/campaign/CampaignSettingsModal', nothing);
 vi.mock('@/components/documents/CampaignDocumentsModal', nothing);
 vi.mock('@/components/campaign/SessionSidebar', nothing);
 vi.mock('@/components/campaign/SessionToolbar', nothing);
+vi.mock('@/components/campaign/CurrentTurnBar', nothing);
+vi.mock('@/components/campaign/ContextualTray', nothing);
+vi.mock('@/components/campaign/DmToolsMenu', nothing);
+vi.mock('@/components/campaign/TableDrawer', () => ({
+  default: ({ children }: { children?: unknown }) => <>{children as never}</>,
+}));
+vi.mock('@/hooks/useWideViewport', () => ({ useWideViewport: () => true }));
 vi.mock('@/components/ConnectionStatus', nothing);
 vi.mock('@/components/campaign/MapCanvas', nothing);
 vi.mock('@/components/campaign/TokenRoster', nothing);
