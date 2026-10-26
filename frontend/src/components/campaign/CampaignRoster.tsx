@@ -19,7 +19,7 @@ import CharacterSheetViewerModal from '../character/CharacterSheetViewerModal';
 import CharacterSheetEditorModal from '../character/CharacterSheetEditorModal';
 import CharacterContextMenu from './CharacterContextMenu';
 import CharacterRollPicker from './CharacterRollPicker';
-import Toast, { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import type { CampaignRole, GameSystem, Character, RosterMember } from '@/types';
 import { TokenLayer } from '@/types';
@@ -28,7 +28,7 @@ export default function CampaignRoster() {
   const { campaign, currentMap, userRole, characterHpCache, seedCharacterHpCache } = useCampaign();
   const { socket } = useWebSocket();
   const { user } = useAuth();
-  const { toast, showToast, hideToast } = useToast();
+  const { showToast } = useToast();
   const [roster, setRoster] = useState<RosterMember[]>([]);
   // User IDs with at least one live connection to this campaign.
   const [onlineUserIds, setOnlineUserIds] = useState<Set<string>>(new Set());
@@ -443,8 +443,6 @@ export default function CampaignRoster() {
           onSaved={handleEditorSaved}
         />
       )}
-
-      <Toast message={toast.message} type={toast.type} show={toast.show} onClose={hideToast} />
 
       <ConfirmDialog
         isOpen={confirmRemove}

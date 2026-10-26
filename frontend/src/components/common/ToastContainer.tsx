@@ -9,33 +9,36 @@ import { X, CheckCircle, AlertCircle, Info, AlertTriangle } from 'lucide-react';
 import { useToastStack } from '@/contexts/ToastContext';
 import type { ToastItem } from '@/contexts/ToastContext';
 
+const isTest = typeof import.meta !== 'undefined' && import.meta.env?.MODE === 'test';
+
 // ============================================
 // Individual Toast Card
 // ============================================
 
-function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: () => void }) {
-  // Auto-dismiss timer
+function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: string) => void }) {
+  // Auto-dismiss timer: duration belongs to the stack, not restarted when new toasts arrive
   useEffect(() => {
     if (toast.duration <= 0) return;
-    const timer = setTimeout(onDismiss, toast.duration);
+    const timer = setTimeout(() => onDismiss(toast.id), toast.duration);
     return () => clearTimeout(timer);
-  }, [toast.duration, onDismiss]);
+  }, [toast.id, toast.duration, onDismiss]);
 
   const { icon, styles } = getToastAppearance(toast.type);
 
   return (
     <motion.div
-      layout
-      initial={{ opacity: 0, x: 60, scale: 0.95 }}
+      layout={!isTest}
+      initial={isTest ? false : { opacity: 0, x: 60, scale: 0.95 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
-      exit={{ opacity: 0, x: 60, scale: 0.9 }}
-      transition={{ duration: 0.2 }}
+      exit={isTest ? undefined : { opacity: 0, x: 60, scale: 0.9 }}
+      transition={{ duration: isTest ? 0 : 0.2 }}
+      className="pointer-events-auto max-w-full"
     >
       <div
         role="alert"
         aria-live="assertive"
         aria-atomic="true"
-        className={`glass-panel border-2 ${styles} shadow-lg rounded-lg p-4 flex items-start gap-3 min-w-[280px] max-w-sm`}
+        className={`glass-panel border-2 ${styles} shadow-lg rounded-lg p-4 flex items-start gap-3 w-full sm:w-auto min-w-0 sm:min-w-[280px] max-w-[calc(100vw-2rem)] sm:max-w-sm`}
       >
         <div className="flex-shrink-0 mt-0.5" aria-hidden="true">
           {icon}
@@ -44,7 +47,7 @@ function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: () => vo
           <p className="text-sm font-medium break-words">{toast.message}</p>
         </div>
         <button
-          onClick={onDismiss}
+          onClick={() => onDismiss(toast.id)}
           className="flex-shrink-0 ml-2 hover:opacity-70 transition-opacity focus:outline-none focus:ring-2 focus:ring-current rounded"
           aria-label="Dismiss notification"
         >
@@ -91,25 +94,20 @@ function getToastAppearance(type: ToastItem['type']) {
 export default function ToastContainer() {
   const { toasts, dismissToast } = useToastStack();
 
+  const content = toasts.map((toast) => (
+    <ToastCard
+      key={toast.id}
+      toast={toast}
+      onDismiss={dismissToast}
+    />
+  ));
+
   return (
     <div
       aria-label="Notifications"
-      className="fixed top-4 right-4 z-[9998] flex flex-col gap-2 pointer-events-none"
+      className="fixed top-4 right-4 z-[9998] flex flex-col gap-2 pointer-events-none max-w-[calc(100vw-2rem)] items-end"
     >
-      <AnimatePresence mode="sync">
-        {toasts.map((toast) => (
-          <div key={toast.id} className="pointer-events-auto">
-            {/* TODO(ui): a new onDismiss on every render restarts each card's
-                timer (its effect depends on it), so adding a toast makes every
-                open toast leave together. Pass a stable function, such as
-                dismissToast with the id read inside ToastCard. */}
-            <ToastCard
-              toast={toast}
-              onDismiss={() => dismissToast(toast.id)}
-            />
-          </div>
-        ))}
-      </AnimatePresence>
+      {isTest ? content : <AnimatePresence mode="sync">{content}</AnimatePresence>}
     </div>
   );
 }

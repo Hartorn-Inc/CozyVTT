@@ -32,6 +32,10 @@ vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({ user: { id: 'dm-user' } }),
 }));
 
+vi.mock('@/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}));
+
 vi.mock('@/services/api', () => ({
   default: { updateVibeSettings: vi.fn(), listAssets: vi.fn() },
   api: { updateVibeSettings: vi.fn(), listAssets: vi.fn() },

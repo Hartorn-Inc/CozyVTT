@@ -5,7 +5,7 @@
 import { useState, useEffect } from 'react';
 import { Check, XCircle, Users } from 'lucide-react';
 import { api } from '@/services/api';
-import Toast, { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 import type { CampaignInvitation, CharacterSummary } from '@/types';
 import { Modal } from '@/components/ui';
 import { apiErrorMessage } from '@/utils/errors';
@@ -29,7 +29,7 @@ export default function InvitationModal({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [processing, setProcessing] = useState(false);
-  const { toast, showToast, hideToast } = useToast();
+  const { showToast } = useToast();
 
   // Fetch user's characters
   useEffect(() => {
@@ -241,8 +241,6 @@ export default function InvitationModal({
             </button>
           </div>
       </Modal>
-
-      <Toast message={toast.message} type={toast.type} show={toast.show} onClose={hideToast} />
     </>
   );
 }

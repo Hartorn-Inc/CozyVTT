@@ -12,6 +12,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useNavigate, useParams } from 'react-router';
 import { CampaignProvider, useCampaign } from '@/contexts/CampaignContext';
 import { WebSocketProvider, useWebSocket } from '@/contexts/WebSocketContext';
+import { ToastProvider } from '@/contexts/ToastContext';
+import ToastContainer from '@/components/common/ToastContainer';
 import { useGameStore } from '@/stores/gameStore';
 import { useInitiativeSync } from '@/hooks/useInitiativeSync';
 import { useWideViewport } from '@/hooks/useWideViewport';
@@ -750,10 +752,13 @@ function CampaignPageContent() {
 
 export default function CampaignPage() {
   return (
-    <CampaignProvider>
-      <WebSocketProvider>
-        <CampaignPageContent />
-      </WebSocketProvider>
-    </CampaignProvider>
+    <ToastProvider>
+      <CampaignProvider>
+        <WebSocketProvider>
+          <ToastContainer />
+          <CampaignPageContent />
+        </WebSocketProvider>
+      </CampaignProvider>
+    </ToastProvider>
   );
 }
