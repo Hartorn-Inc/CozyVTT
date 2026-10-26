@@ -1,10 +1,11 @@
-// ============================================
-// Ordered fog:operation queue
+// ============================================// Ordered fog:operation queue
 //
 // Reveal/hide cell lists are chunked. Emits stay inside the server's
 // 10/1000ms silent limiter: a minimum gap between messages plus a sliding
-// window (10 per 1000ms with a safety margin) so jitter or a second tab
-// cannot drop a hide tail. A later rectangle is appended; it does not
+// window that reserves headroom under the shared per-user ceiling and uses
+// a safety margin so jitter on this tab cannot drop a hide tail. Note: the
+// 50ms margin is local to this page and does not cover a second DM tab while
+// the limiter key stays the user id. A later rectangle is appended; it does not
 // cancel earlier chunks. reveal_all / hide_all wait for window room, then
 // go out as the only emit in that slot; leftover unsent cell ops from
 // *before* the all-op are dropped then, not before. Cell ops queued
@@ -35,14 +36,27 @@ export interface FogAllOperation {
 
 export type FogQueuedOperation = FogCellOperation | FogAllOperation;
 
+export interface InFlightOperation {
+  op: FogQueuedOperation;
+  sentAt: number;
+}
+
+export const DEFAULT_IN_FLIGHT_TIMEOUT_MS = 5000;
+
 export type FogWireOperation =
   | { op: 'reveal' | 'hide'; cells: number[] }
   | { op: 'reveal_all' | 'hide_all' };
+
+import type { FogState } from '@/types/walls';
 
 export interface FogOperationSocket {
   emit(
     event: 'fog:operation',
     data: { mapId: string; operation: FogWireOperation }
+  ): unknown;
+  emit(
+    event: 'fog:request_state',
+    data: { mapId: string }
   ): unknown;
 }
 
@@ -60,9 +74,58 @@ export interface FogOperationQueue {
   overlayOps(): FogQueuedOperation[];
   /**
    * After overlaying a `fog:updated` echo: drop in-flight only when nothing
-   * remains unsent and the snapshot already matched the overlay (server caught up).
+   * remains unsent and the snapshot already matched the overlay (server caught up),
+   * or acknowledge in-flight ops incrementally as snapshot reflects their changes.
    */
-  ackEcho(snapshotMatchedOverlay: boolean): void;
+  ackEcho(snapshotMatchedOverlay: boolean, snapshot?: FogState): boolean;
+  /** Whether the oldest in-flight operation has exceeded its timeout waiting for an echo. */
+  hasTimedOut(): boolean;
+  /** Retire in-flight operations when a newer grid arrives from the server. */
+  retireInFlight(): void;
+  /**
+   * On a drop, clear in-flight operations without replaying them and request
+   * a fresh fog state from the server.
+   */
+  handleDrop(mapId: string): void;
+}
+
+export function isOpReflectedInSnapshot(op: FogQueuedOperation, snapshot: FogState): boolean {
+  const revealed = snapshot.revealed;
+  const total = revealed.length;
+  if (total === 0) return false;
+
+  switch (op.op) {
+    case 'reveal': {
+      if (op.cells.length === 0) return true;
+      for (const idx of op.cells) {
+        if (idx < 0 || idx >= total || !revealed[idx]) {
+          return false;
+        }
+      } 
+      return true;
+    }
+    case 'hide': {
+      if (op.cells.length === 0) return true;
+      for (const idx of op.cells) {
+        if (idx < 0 || idx >= total || revealed[idx]) {
+          return false;
+        }
+      }
+      return true;
+    }
+    case 'reveal_all': {
+      for (let i = 0; i < total; i++) {
+        if (!revealed[i]) return false;
+      }
+      return true;
+    }
+    case 'hide_all': {
+      for (let i = 0; i < total; i++) {
+        if (revealed[i]) return false;
+      }
+      return true;
+    }
+  }
 }
 
 export function createFogOperationQueue(options: {
@@ -71,13 +134,16 @@ export function createFogOperationQueue(options: {
   windowLimit?: number;
   windowMs?: number;
   windowMarginMs?: number;
+  inFlightTimeoutMs?: number;
   now?: () => number;
   schedule?: (fn: () => void, delayMs: number) => () => void;
+  onDrop?: (mapId: string) => void;
 }): FogOperationQueue {
   const gapMs = options.gapMs ?? FOG_OPERATION_CHUNK_GAP_MS;
   const windowLimit = options.windowLimit ?? FOG_OPERATION_WINDOW_LIMIT;
   const windowMs = options.windowMs ?? FOG_OPERATION_WINDOW_MS;
   const windowMarginMs = options.windowMarginMs ?? FOG_OPERATION_WINDOW_MARGIN_MS;
+  const inFlightTimeoutMs = options.inFlightTimeoutMs ?? DEFAULT_IN_FLIGHT_TIMEOUT_MS;
   const now = options.now ?? Date.now;
   const schedule = options.schedule ?? ((fn, delayMs) => {
     const id = setTimeout(fn, delayMs);
@@ -87,9 +153,10 @@ export function createFogOperationQueue(options: {
   const pendingOps: FogCellOperation[] = [];
   /** Cell ops queued after a waiting all-op; sent after it, not dropped with leftovers. */
   const afterAllOps: FogCellOperation[] = [];
-  const inFlight: FogQueuedOperation[] = [];
+  const inFlight: InFlightOperation[] = [];
   let pendingAll: FogAllOperation | null = null;
   let cancelTimer: (() => void) | null = null;
+  let cancelInFlightTimer: (() => void) | null = null;
   let lastEmitAt: number | null = null;
   const emitTimes: number[] = [];
 
@@ -138,6 +205,38 @@ export function createFogOperationQueue(options: {
     return { op: op.op };
   }
 
+  function handleDrop(mapId: string): void {
+    inFlight.length = 0;
+    cancelInFlightTimer?.();
+    cancelInFlightTimer = null;
+    const socket = options.getSocket();
+    socket?.emit('fog:request_state', { mapId });
+    options.onDrop?.(mapId);
+  }
+
+  function armInFlightTimer(): void {
+    if (cancelInFlightTimer || inFlight.length === 0) return;
+    const oldest = inFlight[0];
+    if (!oldest) return;
+    const delay = Math.max(0, oldest.sentAt + inFlightTimeoutMs - now());
+    cancelInFlightTimer = schedule(() => {
+      cancelInFlightTimer = null;
+      if (inFlight.length === 0) return;
+      const currentOldest = inFlight[0];
+      if (currentOldest && now() - currentOldest.sentAt >= inFlightTimeoutMs) {
+        handleDrop(currentOldest.op.mapId);
+      } else {
+        armInFlightTimer();
+      }
+    }, delay);
+  }
+
+  function retireInFlight(): void {
+    inFlight.length = 0;
+    cancelInFlightTimer?.();
+    cancelInFlightTimer = null;
+  }
+
   /** Send one op if a live socket is ready. False means retry later (null socket or empty). */
   function tryEmit(): boolean {
     const socket = options.getSocket();
@@ -150,17 +249,21 @@ export function createFogOperationQueue(options: {
         pendingOps.push(...afterAllOps);
         afterAllOps.length = 0;
       }
-      inFlight.push(allOp);
+      const emitTime = now();
+      inFlight.push({ op: allOp, sentAt: emitTime });
       socket.emit('fog:operation', { mapId: allOp.mapId, operation: wirePayload(allOp) });
-      recordEmit(now());
+      recordEmit(emitTime);
+      armInFlightTimer();
       return true;
     }
     const next = pendingOps[0];
     if (!next) return false;
     pendingOps.shift();
-    inFlight.push(next);
+    const emitTime = now();
+    inFlight.push({ op: next, sentAt: emitTime });
     socket.emit('fog:operation', { mapId: next.mapId, operation: wirePayload(next) });
-    recordEmit(now());
+    recordEmit(emitTime);
+    armInFlightTimer();
     return true;
   }
 
@@ -217,12 +320,14 @@ export function createFogOperationQueue(options: {
       pendingAll = null;
       cancelTimer?.();
       cancelTimer = null;
+      cancelInFlightTimer?.();
+      cancelInFlightTimer = null;
     },
     pending() {
       return [...pendingOps, ...afterAllOps];
     },
     overlayOps() {
-      const ops: FogQueuedOperation[] = [...inFlight];
+      const ops: FogQueuedOperation[] = inFlight.map((item) => item.op);
       if (pendingAll) {
         ops.push(pendingAll);
         ops.push(...afterAllOps);
@@ -231,8 +336,45 @@ export function createFogOperationQueue(options: {
       }
       return ops;
     },
-    ackEcho(snapshotMatchedOverlay) {
-      if (snapshotMatchedOverlay && !hasUnsent()) inFlight.length = 0;
+    ackEcho(snapshotMatchedOverlay, snapshot) {
+      if (snapshotMatchedOverlay && !hasUnsent()) {
+        inFlight.length = 0;
+        cancelInFlightTimer?.();
+        cancelInFlightTimer = null;
+        return true;
+      }
+      if (snapshot) {
+        let advanced = false;
+        while (inFlight.length > 0) {
+          const head = inFlight[0];
+          if (head && isOpReflectedInSnapshot(head.op, snapshot)) {
+            inFlight.shift();
+            advanced = true;
+          } else {
+            break;
+          }
+        }
+        if (inFlight.length === 0) {
+          cancelInFlightTimer?.();
+          cancelInFlightTimer = null;
+        } else if (advanced) {
+          cancelInFlightTimer?.();
+          cancelInFlightTimer = null;
+          armInFlightTimer();
+        }
+        if (inFlight.length === 0 && !hasUnsent() && snapshotMatchedOverlay) {
+          return true;
+        }
+        return advanced;
+      }
+      return false;
     },
+    hasTimedOut() {
+      if (inFlight.length === 0) return false;
+      const oldest = inFlight[0];
+      return oldest !== undefined && (now() - oldest.sentAt >= inFlightTimeoutMs);
+    },
+    retireInFlight,
+    handleDrop,
   };
 }
