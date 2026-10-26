@@ -479,6 +479,80 @@ describe('a login-session row committed after a SERIALIZABLE snapshot', () => {
     expect(rows).toEqual([]);
     expect((await request(app).get('/api/auth/me').set('Cookie', cookieFor(racedSid))).status).toBe(401);
   });
+
+  it('commits account deletion when writeLoginSessionUnlessRevoked blocks on user lock before revoke; sid is absent and next request is 401', async () => {
+    const user = await createTestUser({ email: `pg-store-regress-del-${stamp}@test.cozyvtt.local` });
+    created.push(user.id);
+    const racedSid = `raced-regress-del-${stamp}`;
+
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      destroyUserLoginSessionsBarrier.reached = resolve;
+    });
+    destroyUserLoginSessionsBarrier.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const deletion = deleteAccount(user.id);
+    await reached;
+
+    const write = writeLoginSessionUnlessRevoked(sessionPool, racedSid, cookieOf({
+      userId: user.id,
+      platformRole: 'USER',
+      loginSessionEpoch: 0,
+    }));
+    await waitForAdvisoryWaiters(LOGIN_SESSION_USER_LOCK, user.id, 1);
+
+    release();
+    const result = await deletion;
+    expect(result.deleted).toBe(true);
+    await write;
+
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${racedSid}`;
+    expect(rows).toEqual([]);
+    expect((await request(app).get('/api/auth/ping').set('Cookie', cookieFor(racedSid))).status).toBe(401);
+  });
+
+  it('commits USER demotion when writeLoginSessionUnlessRevoked blocks on user lock before revoke; sid is absent and next request is 401', async () => {
+    const admin = await createTestUser({
+      email: `pg-store-regress-demote-admin-${stamp}@test.cozyvtt.local`,
+      role: 'ADMIN',
+    });
+    const target = await createTestUser({
+      email: `pg-store-regress-demote-target-${stamp}@test.cozyvtt.local`,
+      role: 'ADMIN',
+    });
+    created.push(admin.id, target.id);
+    const asAdmin = await signIn(admin.email);
+    const racedSid = `raced-regress-demote-${stamp}`;
+
+    let release!: () => void;
+    const reached = new Promise<void>((resolve) => {
+      destroyUserLoginSessionsBarrier.reached = resolve;
+    });
+    destroyUserLoginSessionsBarrier.wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+
+    const demotion = Promise.resolve(asAdmin.put(`/api/users/${target.id}`).send({ platformRole: 'USER' }));
+    await reached;
+
+    const write = writeLoginSessionUnlessRevoked(sessionPool, racedSid, cookieOf({
+      userId: target.id,
+      platformRole: 'USER',
+      loginSessionEpoch: 0,
+    }));
+    await waitForAdvisoryWaiters(LOGIN_SESSION_USER_LOCK, target.id, 1);
+
+    release();
+    const res = await demotion;
+    expect(res.status).toBe(200);
+    await write;
+
+    const rows = await prisma.$queryRaw<{ sid: string }[]>`SELECT sid FROM session WHERE sid = ${racedSid}`;
+    expect(rows).toEqual([]);
+    expect((await request(app).get('/api/auth/me').set('Cookie', cookieFor(racedSid))).status).toBe(401);
+  });
 });
 
 describe('an in-flight MFA verify-login after destroy', () => {

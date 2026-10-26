@@ -4,6 +4,7 @@ import { prisma } from '../config/database';
 import { sessionPool } from '../config/session';
 import { rememberMeMaxAge } from '../config/sessionDurations';
 import {
+  inLoginSessionClientTx,
   inLoginSessionWriteTx,
   LOGIN_SESSION_SID_LOCK,
   LOGIN_SESSION_USER_LOCK,
@@ -86,6 +87,19 @@ async function selectUserLoginSessionSids(
  * statement. Reentrant in the same transaction (destroy may lock again
  * after the caller already has).
  */
+/**
+ * Check out a client from the session pool before acquiring the user
+ * advisory lock, avoiding deadlocks when writeLoginSessionUnlessRevoked holds
+ * a pool client while waiting on that user lock.
+ */
+export async function checkoutSessionClient(): Promise<PoolClient> {
+  try {
+    return await sessionPool.connect();
+  } catch (err) {
+    throw new LoginSessionStoreUnavailable(err);
+  }
+}
+
 export async function lockLoginSessionUser(db: Prisma.TransactionClient, userId: string): Promise<void> {
   await db.$queryRaw<{ ok: number }[]>`
     SELECT 1 AS ok FROM (SELECT pg_advisory_xact_lock(${LOGIN_SESSION_USER_LOCK}, hashtext(${userId}::text))) AS lock
@@ -245,7 +259,13 @@ async function revokeSessionRowsOnClient(
 async function revokeSessionRowsOnReadCommitted(
   userId: string,
   exceptSessionId: string | undefined,
+  sessionClient?: PoolClient,
 ): Promise<string[]> {
+  if (sessionClient) {
+    return inLoginSessionClientTx(sessionClient, (client) =>
+      revokeSessionRowsOnClient(userId, exceptSessionId, client),
+    );
+  }
   return inLoginSessionWriteTx(sessionPool, (client) =>
     revokeSessionRowsOnClient(userId, exceptSessionId, client),
   );
@@ -311,6 +331,7 @@ export async function destroyUserLoginSessions(
   exceptSessionId?: string,
   db: Prisma.TransactionClient = prisma,
   liveSocketMessage = 'Your sign-in ended. Sign in again.',
+  sessionClient?: PoolClient,
 ): Promise<number> {
   // A revocation that did not take must fail the request that asked for it,
   // so the person is told, instead of reporting success while the old
@@ -345,7 +366,7 @@ export async function destroyUserLoginSessions(
       await db.$executeRaw`
         UPDATE "User" SET "loginSessionEpoch" = "loginSessionEpoch" + 1 WHERE id = ${userId}
       `;
-      sids = await revokeSessionRowsOnReadCommitted(userId, exceptSessionId);
+      sids = await revokeSessionRowsOnReadCommitted(userId, exceptSessionId, sessionClient);
       blockLoginSessions(sids);
       // After the RC revoke commits, including last-admin 409 after 40001.
       // Called even when this SELECT found no sids: epoch was incremented
