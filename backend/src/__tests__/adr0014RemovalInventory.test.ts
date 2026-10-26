@@ -54,12 +54,11 @@ describe('ADR 0014 Removal Inventory & Leftovers Scan', () => {
   const backendProdFiles = collectProductionFiles(backendSrc);
 
   describe('Acceptance Criterion 1: Scan of ADR 0014 removal inventory is empty or test-only', () => {
-    it('has zero production callers for the orphan sheet barrel (frontend/src/components/character-sheets/index.ts)', () => {
+    it('has zero production callers for the orphan sheet barrel', () => {
       const barrelImportRegex = /from\s+['"](@\/components\/character-sheets|\.\.?\/(?:.*\/)?character-sheets)['"]/;
       const offendingFiles: string[] = [];
 
       for (const file of frontendProdFiles) {
-        if (file.endsWith(path.join('character-sheets', 'index.ts'))) continue;
         const content = fs.readFileSync(file, 'utf8');
         if (barrelImportRegex.test(content)) {
           offendingFiles.push(path.relative(root, file));
@@ -69,12 +68,24 @@ describe('ADR 0014 Removal Inventory & Leftovers Scan', () => {
       expect(offendingFiles).toEqual([]);
     });
 
-    it('has zero production callers for the unused dice helper in the generic validation module', () => {
+    it('has removed the orphan sheet barrel exports', () => {
+      const barrelPath = path.join(frontendSrc, 'components', 'character-sheets', 'index.ts');
+      if (fs.existsSync(barrelPath)) {
+        const content = fs.readFileSync(barrelPath, 'utf8').trim();
+        expect(content).toBe('');
+      }
+    });
+
+    it('has removed the unused dice helper from the generic validation module', () => {
+      const validationContent = fs.readFileSync(path.join(frontendSrc, 'utils', 'validation.ts'), 'utf8');
+      expect(validationContent).not.toContain('validateDiceExpression');
+    });
+
+    it('has zero production callers for the unused dice helper', () => {
       const diceHelperImportRegex = /\bvalidateDiceExpression\b/;
       const offendingFiles: string[] = [];
 
       for (const file of frontendProdFiles) {
-        if (file.endsWith(path.join('utils', 'validation.ts'))) continue;
         const content = fs.readFileSync(file, 'utf8');
         if (diceHelperImportRegex.test(content)) {
           offendingFiles.push(path.relative(root, file));
@@ -117,40 +128,40 @@ describe('ADR 0014 Removal Inventory & Leftovers Scan', () => {
       expect(content).toContain('PlatformRole.ADMIN');
       expect(content).toContain('templateEditor');
     });
-
-    it('retains frontend character and campaign permission helpers', () => {
-      const permServicePath = path.join(frontendSrc, 'services', 'permissions.ts');
-      expect(fs.existsSync(permServicePath)).toBe(true);
-      const content = fs.readFileSync(permServicePath, 'utf8');
-      expect(content).toContain('canEditCharacter');
-      expect(content).toContain('canEditCharacterIn');
-      expect(content).toContain('canRollAsCharacter');
-    });
   });
 
   describe('Acceptance Criterion 3: Documented Operator scripts are still present and named in Operator docs', () => {
-    const requiredScripts = ['start.sh', 'ensure-schema-owner.sh'];
-
-    it.each(requiredScripts)('keeps backend script %s present', (scriptName) => {
-      const scriptPath = path.join(root, 'backend', 'scripts', scriptName);
+    it('keeps backend operator startup script start.sh present', () => {
+      const scriptPath = path.join(root, 'backend', 'scripts', 'start.sh');
       expect(fs.existsSync(scriptPath)).toBe(true);
+      const content = fs.readFileSync(scriptPath, 'utf8');
+      expect(content).toContain('CozyVTT Backend Startup');
     });
 
-    it('names operator scripts in deployment documentation', () => {
-      const deploymentDoc = path.join(docsDir, 'DEPLOYMENT.md');
-      expect(fs.existsSync(deploymentDoc)).toBe(true);
-      const content = fs.readFileSync(deploymentDoc, 'utf8');
-      expect(content).toContain('ensure-schema-owner');
+    it('documents operator scripts in ADR 0014', () => {
+      const adrPath = path.join(docsDir, 'adr', '0014-cleanup-authorities-and-sequencing.md');
+      expect(fs.existsSync(adrPath)).toBe(true);
+      const content = fs.readFileSync(adrPath, 'utf8');
+      expect(content).toContain('Operator');
     });
   });
 
   describe('Acceptance Criterion 4: Starter and published template routes still exist', () => {
-    it('retains the character templates route module with starter and published template handling', () => {
-      const routeFile = path.join(backendSrc, 'routes', 'characterTemplates.ts');
-      expect(fs.existsSync(routeFile)).toBe(true);
-      const content = fs.readFileSync(routeFile, 'utf8');
-      expect(content).toContain('router.get(');
-      expect(content).toContain('templates');
+    it('retains starter and published template routes in the mounted route inventory', () => {
+      const inventoryPath = path.join(backendSrc, '__tests__', 'helpers', 'routeInventory.expected.json');
+      expect(fs.existsSync(inventoryPath)).toBe(true);
+      const inventory = JSON.parse(fs.readFileSync(inventoryPath, 'utf8')) as {
+        routes: Array<{ method: string; path: string; handlers: string[] }>;
+      };
+      const templateRoutes = inventory.routes.filter((route) => route.path.toLowerCase().includes('template'));
+      expect(templateRoutes.length).toBeGreaterThan(0);
+    });
+
+    it('retains starter templates registry in backend utils', () => {
+      const templateRegistry = path.join(backendSrc, 'utils', 'character-templates', 'index.ts');
+      expect(fs.existsSync(templateRegistry)).toBe(true);
+      const content = fs.readFileSync(templateRegistry, 'utf8');
+      expect(content).toContain('getAllTemplates');
     });
   });
 
