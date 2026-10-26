@@ -16,6 +16,35 @@ max_concurrent_tasks_per_feature: 3
 trace_retention_days: 30
 preview_retention_days: 14
 github_pages_previews: false
+verification:
+  wait_for_external_ci: true
+  external_ci_timeout_minutes: 30
+  grace_window_seconds: 45
+  deferred_external_workflows: [".github/workflows/ci.yml"]
+  targets:
+    - name: frontend
+      working_directory: frontend
+      kind: node
+      path_patterns: ["frontend/**"]
+      install_command: "npm ci"
+      typecheck_command: "npm run typecheck"
+      lint_command: "npm run lint"
+      build_command: "npm run build"
+    - name: backend
+      working_directory: backend
+      kind: node
+      path_patterns: ["backend/**"]
+      install_command: "npm ci"
+      codegen_command: "npx prisma generate"
+      typecheck_command: "npx tsc --noEmit"
+      lint_command: "npm run lint"
+      build_command: "npm run build"
+    - name: scripts
+      working_directory: .
+      kind: custom
+      path_patterns: ["scripts/**", "docs/**", "*.md", "backend/**", "frontend/**"]
+      install_command: "pip install pyyaml"
+      test_command: "python3 scripts/spec-coverage.py && python3 scripts/websocket-events.py --check && python3 -m unittest discover -s scripts/tests"
 security_invariants:
   require_write_permission: true
   sandbox_isolation: true
