@@ -7,3 +7,4 @@
 FROM postgres:18-alpine@sha256:898c60cb390d1085bc97bdd6a1ae968757421df394b071848b52b1c09c89d6a5
 
 RUN apk add --no-cache 'brotli-libs=1.2.1-r0'
+RUN apk add --no-cache 'libcurl=8.23.0-r0'
