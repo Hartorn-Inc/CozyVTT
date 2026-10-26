@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { ToastProvider, useToast } from '@/contexts/ToastContext';
 import ToastContainer from '../ToastContainer';
 
