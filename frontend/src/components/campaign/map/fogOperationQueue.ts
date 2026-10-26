@@ -137,6 +137,7 @@ export function createFogOperationQueue(options: {
   inFlightTimeoutMs?: number;
   now?: () => number;
   schedule?: (fn: () => void, delayMs: number) => () => void;
+  onDrop?: (mapId: string) => void;
 }): FogOperationQueue {
   const gapMs = options.gapMs ?? FOG_OPERATION_CHUNK_GAP_MS;
   const windowLimit = options.windowLimit ?? FOG_OPERATION_WINDOW_LIMIT;
@@ -155,6 +156,7 @@ export function createFogOperationQueue(options: {
   const inFlight: InFlightOperation[] = [];
   let pendingAll: FogAllOperation | null = null;
   let cancelTimer: (() => void) | null = null;
+  let cancelInFlightTimer: (() => void) | null = null;
   let lastEmitAt: number | null = null;
   const emitTimes: number[] = [];
 
@@ -203,6 +205,38 @@ export function createFogOperationQueue(options: {
     return { op: op.op };
   }
 
+  function handleDrop(mapId: string): void {
+    inFlight.length = 0;
+    cancelInFlightTimer?.();
+    cancelInFlightTimer = null;
+    const socket = options.getSocket();
+    socket?.emit('fog:request_state', { mapId });
+    options.onDrop?.(mapId);
+  }
+
+  function armInFlightTimer(): void {
+    if (cancelInFlightTimer || inFlight.length === 0) return;
+    const oldest = inFlight[0];
+    if (!oldest) return;
+    const delay = Math.max(0, oldest.sentAt + inFlightTimeoutMs - now());
+    cancelInFlightTimer = schedule(() => {
+      cancelInFlightTimer = null;
+      if (inFlight.length === 0) return;
+      const currentOldest = inFlight[0];
+      if (currentOldest && now() - currentOldest.sentAt >= inFlightTimeoutMs) {
+        handleDrop(currentOldest.op.mapId);
+      } else {
+        armInFlightTimer();
+      }
+    }, delay);
+  }
+
+  function retireInFlight(): void {
+    inFlight.length = 0;
+    cancelInFlightTimer?.();
+    cancelInFlightTimer = null;
+  }
+
   /** Send one op if a live socket is ready. False means retry later (null socket or empty). */
   function tryEmit(): boolean {
     const socket = options.getSocket();
@@ -219,6 +253,7 @@ export function createFogOperationQueue(options: {
       inFlight.push({ op: allOp, sentAt: emitTime });
       socket.emit('fog:operation', { mapId: allOp.mapId, operation: wirePayload(allOp) });
       recordEmit(emitTime);
+      armInFlightTimer();
       return true;
     }
     const next = pendingOps[0];
@@ -228,6 +263,7 @@ export function createFogOperationQueue(options: {
     inFlight.push({ op: next, sentAt: emitTime });
     socket.emit('fog:operation', { mapId: next.mapId, operation: wirePayload(next) });
     recordEmit(emitTime);
+    armInFlightTimer();
     return true;
   }
 
@@ -284,6 +320,8 @@ export function createFogOperationQueue(options: {
       pendingAll = null;
       cancelTimer?.();
       cancelTimer = null;
+      cancelInFlightTimer?.();
+      cancelInFlightTimer = null;
     },
     pending() {
       return [...pendingOps, ...afterAllOps];
@@ -301,6 +339,8 @@ export function createFogOperationQueue(options: {
     ackEcho(snapshotMatchedOverlay, snapshot) {
       if (snapshotMatchedOverlay && !hasUnsent()) {
         inFlight.length = 0;
+        cancelInFlightTimer?.();
+        cancelInFlightTimer = null;
         return true;
       }
       if (snapshot) {
@@ -314,6 +354,14 @@ export function createFogOperationQueue(options: {
             break;
           }
         }
+        if (inFlight.length === 0) {
+          cancelInFlightTimer?.();
+          cancelInFlightTimer = null;
+        } else if (advanced) {
+          cancelInFlightTimer?.();
+          cancelInFlightTimer = null;
+          armInFlightTimer();
+        }
         if (inFlight.length === 0 && !hasUnsent() && snapshotMatchedOverlay) {
           return true;
         }
@@ -326,13 +374,7 @@ export function createFogOperationQueue(options: {
       const oldest = inFlight[0];
       return oldest !== undefined && (now() - oldest.sentAt >= inFlightTimeoutMs);
     },
-    retireInFlight() {
-      inFlight.length = 0;
-    },
-    handleDrop(mapId: string) {
-      inFlight.length = 0;
-      const socket = options.getSocket();
-      socket?.emit('fog:request_state', { mapId });
-    },
+    retireInFlight,
+    handleDrop,
   };
 }

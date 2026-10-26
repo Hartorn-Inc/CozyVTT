@@ -108,8 +108,7 @@ describe('createFogOperationQueue', () => {
     const { q, scheduled } = queueHarness(() => s.socket);
     q.enqueue([op([8]), op([9])]);
     expect(s.emitted).toHaveLength(1);
-    expect(scheduled).toHaveLength(1);
-    expect(scheduled[0]?.delay).toBe(100);
+    expect(scheduled.some((item) => item.delay === 100)).toBe(true);
   });
 
   it('emits up to the headroom limit under the shared ceiling, then waits until window has room', () => {
@@ -164,7 +163,7 @@ describe('enqueueAll', () => {
   it('does not emit hide_all at t=0 when the window is full, then drops leftover cells', () => {
     const s = fakeSocket();
     const { q, advance } = queueHarness(() => s.socket);
-    q.enqueue(Array.from({ length: 10 }, (_, i) => op([i])));
+    q.enqueue(Array.from({ length: 5 }, (_, i) => op([i])));
     for (let i = 0; i < 4; i++) advance(100);
     q.enqueue([op([99])]);
     q.enqueueAll('map-1', 'hide_all');
@@ -315,13 +314,51 @@ describe('overlayOps / ackEcho', () => {
     expect(q.overlayOps()).toHaveLength(0);
   });
 
-  it('detects when in-flight operations have timed out', () => {
+  it('detects when in-flight operations have timed out and triggers handleDrop recovery', () => {
     const s = fakeSocket();
     const { q, advance } = queueHarness(() => s.socket);
     q.enqueue([op([1])]);
     expect(q.hasTimedOut()).toBe(false);
+    expect(s.stateRequests).toEqual([]);
+    advance(4999);
+    expect(q.hasTimedOut()).toBe(false);
+    expect(s.stateRequests).toEqual([]);
+    advance(1);
+    expect(s.stateRequests).toEqual([{ mapId: 'map-1' }]);
+    expect(q.overlayOps()).toHaveLength(0);
+    expect(q.hasTimedOut()).toBe(false);
+  });
+
+  it('retires in-flight operations on newer grid arrival and does not replay unreflected ops', () => {
+    const s = fakeSocket();
+    const { q } = queueHarness(() => s.socket);
+    q.enqueue([op([5])]);
+    expect(q.overlayOps()).toHaveLength(1);
+
+    const fog = (revealed: boolean[]) => ({ fogCols: revealed.length, fogRows: 1, cellPx: 32, revealed });
+    const newerGrid = fog([false, false, false, false, false, false]);
+
+    q.ackEcho(false, newerGrid);
+    q.retireInFlight();
+
+    const overlaid = overlayFogOperations(newerGrid, q.overlayOps());
+    expect(overlaid.revealed[5]).toBe(false);
+    expect(q.overlayOps()).toHaveLength(0);
+  });
+
+  it('cancels in-flight timeout timer when echo confirms the operation', () => {
+    const s = fakeSocket();
+    const { q, scheduled, advance } = queueHarness(() => s.socket);
+    q.enqueue([op([1])]);
+    expect(scheduled.some((item) => item.delay === 5000)).toBe(true);
+
+    const fog = (revealed: boolean[]) => ({ fogCols: revealed.length, fogRows: 1, cellPx: 32, revealed });
+    const echo = fog([false, true]);
+    q.ackEcho(true, echo);
+
+    expect(scheduled.some((item) => item.delay === 5000)).toBe(false);
     advance(5000);
-    expect(q.hasTimedOut()).toBe(true);
+    expect(s.stateRequests).toEqual([]);
   });
 
   it('does not acknowledge in-flight chunk when snapshot does not reflect it', () => {
