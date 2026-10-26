@@ -92,31 +92,43 @@ function isPgDeadlock(err: unknown, depth = 0): boolean {
  * serializable destroy's session-row revoke, which must not check out a
  * second Prisma connection.
  */
+/**
+ * Run work on a caller-provided session-store PoolClient inside a Read
+ * Committed transaction with deadlock retry. Used when serializable
+ * deletion/demotion checks out the client before acquiring the user lock.
+ */
+export async function inLoginSessionClientTx<T>(
+  client: PoolClient,
+  work: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    try {
+      await client.query('BEGIN');
+      await client.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (err) {
+      lastErr = err;
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        // The connection is already failed; retry or throw below.
+      }
+      if (!isPgDeadlock(err)) throw err;
+    }
+  }
+  throw lastErr;
+}
+
 export async function inLoginSessionWriteTx<T>(
   pool: Pool,
   work: (client: PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
   try {
-    let lastErr: unknown;
-    for (let attempt = 0; attempt < 8; attempt++) {
-      try {
-        await client.query('BEGIN');
-        await client.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
-        const result = await work(client);
-        await client.query('COMMIT');
-        return result;
-      } catch (err) {
-        lastErr = err;
-        try {
-          await client.query('ROLLBACK');
-        } catch {
-          // The connection is already failed; retry or throw below.
-        }
-        if (!isPgDeadlock(err)) throw err;
-      }
-    }
-    throw lastErr;
+    return await inLoginSessionClientTx(client, work);
   } finally {
     client.release();
   }
