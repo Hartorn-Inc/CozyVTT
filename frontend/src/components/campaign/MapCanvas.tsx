@@ -1332,15 +1332,17 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
 
     const handleFogUpdated = (data: { mapId: string; fogState: FogState }) => {
       if (!currentMap || data.mapId !== currentMap.id) return;
-      // Chunked own ops echo as a full grid that is only as far as that
-      // chunk. Re-apply in-flight already-emitted ops and pending unsent
-      // ops in order so an optimistic rectangle (or a second stroke) is not
-      // snapped back. Drop in-flight only when the snapshot already matches
-      // that overlay (the server has caught up); a late partial chunk must
-      // not clear reveal_all and snap the grid back.
+      // When a newer grid arrives from the server, acknowledge reflected ops
+      // and retire inFlight so unconfirmed in-flight ops are not replayed over
+      // authoritative server state, while preserving any unsent pending operations.
       const queue = fogOpQueueRef.current;
+      queue?.ackEcho(false, data.fogState);
+      queue?.retireInFlight();
       const next = overlayFogOperations(data.fogState, queue?.overlayOps() ?? []);
-      queue?.ackEcho(fogRevealedEquals(data.fogState, next));
+      const matched = fogRevealedEquals(data.fogState, next);
+      if (matched) {
+        queue?.ackEcho(true);
+      }
       setFogState((prev) => {
         if (prev) {
           next.revealed.forEach((revealed, i) => {

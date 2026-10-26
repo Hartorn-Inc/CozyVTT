@@ -16,16 +16,21 @@ export const FOG_MESSAGE_MAX_CELLS = 20000;
  */
 export const FOG_OPERATION_CHUNK_GAP_MS = 100;
 
-/** Same ceiling as `fogOperationLimiter.check(key, 10, 1000)` on the server. */
-export const FOG_OPERATION_WINDOW_LIMIT = 10;
+/**
+ * Window limit reserving headroom under the shared 10 ops / 1000ms per-user
+ * ceiling so a second tab cannot easily exhaust the budget and drop chunks.
+ */
+export const FOG_OPERATION_WINDOW_LIMIT = 5;
 
 /** Server window: timestamps with `now - timestamp < 1000` still count. */
 export const FOG_OPERATION_WINDOW_MS = 1000;
 
 /**
- * Extra wait so the oldest of the last 10 emits is at least this far past the
- * server window before the 11th is sent. Clock jitter or a second tab would
+ * Extra wait so the oldest emit in the window is at least this far past the
+ * server window before the next is sent. Clock jitter on this tab would
  * otherwise land a tail chunk on the silent drop; a dropped hide fails open.
+ * Note: this per-page 50ms margin only paces the local queue and does not
+ * coordinate across separate DM tabs sharing the per-user limiter key.
  */
 export const FOG_OPERATION_WINDOW_MARGIN_MS = 50;
 
