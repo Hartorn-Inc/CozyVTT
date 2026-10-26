@@ -129,7 +129,12 @@ vi.mock('@/components/campaign/ContextualTray', () => ({
     </div>
   ),
 }));
-vi.mock('@/contexts/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
+vi.mock('@/components/common/ToastContainer', nothing);
+vi.mock('@/contexts/ToastContext', () => ({
+  ToastProvider: ({ children }: { children?: unknown }) => <>{children as never}</>,
+  useToast: () => ({ showToast: vi.fn() }),
+  useToastStack: () => ({ toasts: [], showToast: vi.fn(), dismissToast: vi.fn() }),
+}));
 
 import CampaignPage from '../CampaignPage';
 

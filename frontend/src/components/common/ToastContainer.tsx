@@ -9,6 +9,8 @@ import { X, CheckCircle, AlertCircle, Info, AlertTriangle } from 'lucide-react';
 import { useToastStack } from '@/contexts/ToastContext';
 import type { ToastItem } from '@/contexts/ToastContext';
 
+const isTest = typeof import.meta !== 'undefined' && import.meta.env?.MODE === 'test';
+
 // ============================================
 // Individual Toast Card
 // ============================================
@@ -25,11 +27,11 @@ function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: str
 
   return (
     <motion.div
-      layout
-      initial={{ opacity: 0, x: 60, scale: 0.95 }}
+      layout={!isTest}
+      initial={isTest ? false : { opacity: 0, x: 60, scale: 0.95 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
-      exit={{ opacity: 0, x: 60, scale: 0.9 }}
-      transition={{ duration: (typeof import.meta !== 'undefined' && import.meta.env?.MODE === 'test') ? 0 : 0.2 }}
+      exit={isTest ? undefined : { opacity: 0, x: 60, scale: 0.9 }}
+      transition={{ duration: isTest ? 0 : 0.2 }}
       className="pointer-events-auto"
     >
       <div
@@ -92,20 +94,20 @@ function getToastAppearance(type: ToastItem['type']) {
 export default function ToastContainer() {
   const { toasts, dismissToast } = useToastStack();
 
+  const content = toasts.map((toast) => (
+    <ToastCard
+      key={toast.id}
+      toast={toast}
+      onDismiss={dismissToast}
+    />
+  ));
+
   return (
     <div
       aria-label="Notifications"
       className="fixed top-4 right-4 z-[9998] flex flex-col gap-2 pointer-events-none"
     >
-      <AnimatePresence mode="sync">
-        {toasts.map((toast) => (
-          <ToastCard
-            key={toast.id}
-            toast={toast}
-            onDismiss={dismissToast}
-          />
-        ))}
-      </AnimatePresence>
+      {isTest ? content : <AnimatePresence mode="sync">{content}</AnimatePresence>}
     </div>
   );
 }
