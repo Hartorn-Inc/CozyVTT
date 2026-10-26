@@ -17,6 +17,10 @@ vi.mock('@/services/api', () => {
   const client = { listCharacters: vi.fn(), acceptInvitation: vi.fn(), declineInvitation: vi.fn() };
   return { api: client, default: client };
 });
+
+vi.mock('@/contexts/ToastContext', () => ({
+  useToast: () => ({ showToast: vi.fn() }),
+}));
 import { api } from '@/services/api';
 const listCharacters = api.listCharacters as ReturnType<typeof vi.fn>;
 

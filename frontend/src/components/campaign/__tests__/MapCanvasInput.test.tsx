@@ -364,7 +364,7 @@ describe('moving a token: click to pick it up, click again to put it down', () =
     click(at(0, 19));
     click(at(3, 19));
 
-    expect(await screen.findByText('Wolf is already standing there.')).toBeInTheDocument();
+    expect(h.showTableToast).toHaveBeenCalledWith('Wolf is already standing there.', 'info');
     expect(sentOf('token.move.end')).toEqual([]);
     expect(lastOf('token.move')).toEqual({ tokenId: 'tok-mine', mapId: 'map-a', x: 0, y: 19 });
   });

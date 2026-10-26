@@ -29,7 +29,8 @@ function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: str
       initial={{ opacity: 0, x: 60, scale: 0.95 }}
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={{ opacity: 0, x: 60, scale: 0.9 }}
-      transition={{ duration: 0.2 }}
+      transition={{ duration: (typeof import.meta !== 'undefined' && import.meta.env?.MODE === 'test') ? 0 : 0.2 }}
+      className="pointer-events-auto"
     >
       <div
         role="alert"
@@ -98,12 +99,11 @@ export default function ToastContainer() {
     >
       <AnimatePresence mode="sync">
         {toasts.map((toast) => (
-          <div key={toast.id} className="pointer-events-auto">
-            <ToastCard
-              toast={toast}
-              onDismiss={dismissToast}
-            />
-          </div>
+          <ToastCard
+            key={toast.id}
+            toast={toast}
+            onDismiss={dismissToast}
+          />
         ))}
       </AnimatePresence>
     </div>

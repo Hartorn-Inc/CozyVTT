@@ -32,6 +32,7 @@ const h = vi.hoisted(() => {
   const setPlayerSpiritVisible = vi.fn();
   const deleteToken = vi.fn();
   const getCharacter = vi.fn();
+  const showToast = vi.fn();
   const raw = {
     connected: true,
     on(event: string, fn: (data: never) => void) {
@@ -53,6 +54,7 @@ const h = vi.hoisted(() => {
     setPlayerSpiritVisible,
     deleteToken,
     getCharacter,
+    showToast,
     handlers,
     emitted,
     raw,
@@ -120,7 +122,7 @@ vi.mock('@/contexts/WebSocketContext', async () => {
 });
 
 vi.mock('@/contexts/ToastContext', () => ({
-  useToast: () => ({ showToast: vi.fn() }),
+  useToast: () => ({ showToast: h.showToast }),
 }));
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -186,6 +188,7 @@ beforeEach(() => {
   h.setPlayerSpiritVisible.mockClear();
   h.deleteToken.mockReset().mockResolvedValue({});
   h.getCharacter.mockReset();
+  h.showToast.mockClear();
   useGameStore.getState().setTokens([]);
   h.handlers.clear();
   h.set({ userRole: 'DM', joinedEpoch: 1, characters: [], mapGeometryGen: 0, currentMap: mapWith('map-a', [wall('a1', 100), wall('a2', 300)]) });
@@ -651,7 +654,7 @@ describe("the token menu's Remove from Map", () => {
     openTokenMenu();
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Remove' })); });
 
-    expect(await screen.findByText(/Network down|Failed to remove the token/)).toBeInTheDocument();
+    expect(h.showToast).toHaveBeenCalledWith(expect.stringMatching(/Network down|Failed to remove the token/), 'error');
     expect(useGameStore.getState().tokens['tok-1']).toBeDefined();
   });
 
@@ -706,6 +709,6 @@ describe("the token menu's View Character Sheet", () => {
     await act(async () => { fireEvent.click(screen.getByText('View Character Sheet')); });
 
     expect(h.getCharacter).toHaveBeenCalledWith('char-here');
-    expect(await screen.findByText('You do not have permission to view this character')).toBeInTheDocument();
+    expect(h.showToast).toHaveBeenCalledWith('You do not have permission to view this character', 'error');
   });
 });
