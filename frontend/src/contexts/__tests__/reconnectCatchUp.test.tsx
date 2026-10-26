@@ -1847,11 +1847,12 @@ it('skips deferred demotion read when a later PLAYER row hydrates the claimed id
   renderCampaign();
   await waitFor(() => expect(latest?.currentMap?.id).toBe('m1'));
   expect(latest!.userRole).toBe('DM');
+  const getMapCallsAfterMount = getMap.mock.calls.length;
 
   const onRoleChanged = onRoleChangedHandler();
   expect(onRoleChanged).toBeDefined();
 
-  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'DM'));
   const mapHold = holdGetMap();
   let catching: Promise<TableRetryOutcome> = Promise.resolve({ discarded: true });
   act(() => { catching = latest!.catchUpAfterReconnect(); });
@@ -1870,6 +1871,20 @@ it('skips deferred demotion read when a later PLAYER row hydrates the claimed id
     });
   });
 
+  const onRoster = socketOn.mock.calls.filter(([event]) => event === 'roster.updated').pop()?.[1] as ((d: unknown) => void) | undefined;
+  expect(onRoster).toBeDefined();
+
+  getCampaign.mockResolvedValueOnce(campaignAs('ACTIVE', 'm2', 'PLAYER'));
+  await act(async () => {
+    onRoster!({ action: 'member.joined', campaignId: 'c1', userId: 'newcomer' });
+  });
+
+  await waitFor(() => expect(latest!.currentMap?.id).toBe('m2'));
+  expect(latest!.campaign?.currentMapId).toBe('m2');
+  expect(latest!.syncError).toBeNull();
+  expect(useGameStore.getState().tokens['visible-m2']).toBeDefined();
+
+  let catchUpResult: TableRetryOutcome | undefined;
   await act(async () => {
     mapHold.releaseWith({
       map: {
@@ -1879,13 +1894,16 @@ it('skips deferred demotion read when a later PLAYER row hydrates the claimed id
       },
       spiritVisible: false,
     });
-    await catching;
+    catchUpResult = await catching;
   });
 
+  expect(catchUpResult).toEqual({ discarded: true });
   expect(latest!.currentMap?.id).toBe('m2');
   expect(latest!.campaign?.currentMapId).toBe('m2');
   expect(latest!.syncError).toBeNull();
   expect(useGameStore.getState().tokens['visible-m2']).toBeDefined();
+  expect(getMap.mock.calls.slice(getMapCallsAfterMount).some(([, mapId]) => mapId === 'm1')).toBe(false);
+  expect(getMap.mock.calls.slice(getMapCallsAfterMount).map(([, mapId]) => mapId)).toEqual(['m2', 'm2']);
 });
 
 it('immediately strips spirit and masks tokens with spectator rule on role changed to SPECTATOR when follow-up getMap fails', async () => {
