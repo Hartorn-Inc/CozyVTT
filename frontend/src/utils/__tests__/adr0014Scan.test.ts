@@ -42,7 +42,7 @@ describe('ADR 0014 Client-Side Parity & Authority Invariants', () => {
   describe('Keep-in-step validation rules', () => {
     it('strictly requires 12 characters and all character classes', () => {
       expect(meetsPasswordRequirements('Short1!')).toBe(false);
-      expect(meetsPasswordRequirements('Alllowercase1!')).toBe(false);
+      expect(meetsPasswordRequirements('alllowercase1!')).toBe(false);
       expect(meetsPasswordRequirements('ALLUPPERCASE1!')).toBe(false);
       expect(meetsPasswordRequirements('NoSpecialChars123')).toBe(false);
       expect(meetsPasswordRequirements('ValidPassw0rd!')).toBe(true);
