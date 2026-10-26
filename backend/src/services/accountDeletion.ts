@@ -27,7 +27,7 @@ import { prisma } from '../config/database';
 import { isAssetInUse } from './assetUsage';
 import { deleteFile } from '../utils/fileUtils';
 import logger from '../utils/logger';
-import { checkoutSessionClient, destroyUserLoginSessions, lockLoginSessionUser } from './sessionStore';
+import { checkoutSessionClient, destroyUserLoginSessions, lockLoginSessionUser, releaseSessionClient } from './sessionStore';
 import { isOnlyAdmin } from './platformAdmins';
 import { inSerializableTransaction } from '../utils/serializable';
 
@@ -69,7 +69,7 @@ export async function deleteAccount(userId: string): Promise<AccountDeletion> {
     // Check out the session-store client before taking the user lock so a
     // concurrent writeLoginSessionUnlessRevoked holding a pool connection
     // cannot exhaust the pool and deadlock revoke while waiting on that lock.
-    const sessionClient = await checkoutSessionClient();
+    const sessionClient = await checkoutSessionClient(tx);
     try {
       // First statement: production logins take this lock before INSERT, so
       // they cannot commit a new sid until this transaction finishes. The
@@ -148,10 +148,10 @@ export async function deleteAccount(userId: string): Promise<AccountDeletion> {
       // sockets end when that RC revoke commits, so a later 409 still drops
       // an already-open connection.
       await tx.user.delete({ where: { id: userId } });
-      await destroyUserLoginSessions(userId, undefined, tx, 'Your account was deleted.', sessionClient);
+      await destroyUserLoginSessions(userId, undefined, tx, 'Your account was deleted.');
       return { deleted: true, campaignIds, personal };
     } finally {
-      sessionClient.release();
+      releaseSessionClient(tx, sessionClient);
     }
   });
 }

@@ -7,7 +7,7 @@ import { toJson } from '../utils/prisma-json';
 import { sanitizeUser, hashPassword, verifyPassword } from '../services/auth';
 import { validateEmail, sanitizeInput } from '../utils/validation';
 import { isSmtpConfigured, sendPasswordResetEmail, sendEmailChangedNotice } from '../services/email';
-import { checkoutSessionClient, destroyUserLoginSessions, lockLoginSessionUser, rethrowIfLoginSessionStoreUnavailable } from '../services/sessionStore';
+import { checkoutSessionClient, destroyUserLoginSessions, lockLoginSessionUser, releaseSessionClient, rethrowIfLoginSessionStoreUnavailable } from '../services/sessionStore';
 import { voidOutstandingResetLinks, issueResetToken, RESET_LINK_TTL_MS } from '../services/passwordResetTokens';
 import { isOnlyAdmin } from '../services/platformAdmins';
 import { inSerializableTransaction } from '../utils/serializable';
@@ -299,7 +299,7 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
         // Check out the session-store client before taking the user lock so a
         // concurrent writeLoginSessionUnlessRevoked holding a pool connection
         // cannot exhaust the pool and deadlock revoke while waiting on that lock.
-        const sessionClient = await checkoutSessionClient();
+        const sessionClient = await checkoutSessionClient(tx);
         try {
           // First statement: production logins take this lock before INSERT.
           // The SERIALIZABLE snapshot is still taken at the start of this
@@ -314,11 +314,11 @@ router.put('/:id', requireAuth, passwordCheckLimiter, async (req: Request<{ id: 
           const row = await tx.user.update({ where: { id }, data: updateData });
           if (emailChangedFrom !== null) await voidOutstandingResetLinks(id, tx);
           if (updateData.platformRole !== current.platformRole) {
-            await destroyUserLoginSessions(id, undefined, tx, 'Your platform role changed. Sign in again.', sessionClient);
+            await destroyUserLoginSessions(id, undefined, tx, 'Your platform role changed. Sign in again.');
           }
           return { kind: 'written', before: current, row };
         } finally {
-          sessionClient.release();
+          releaseSessionClient(tx, sessionClient);
         }
       })
       : emailChangedFrom === null && !roleIsChanging

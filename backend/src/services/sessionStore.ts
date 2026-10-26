@@ -87,14 +87,33 @@ async function selectUserLoginSessionSids(
  * statement. Reentrant in the same transaction (destroy may lock again
  * after the caller already has).
  */
+const sessionClients = new WeakMap<object, PoolClient>();
+
+/**
+ * Release a checked-out session client and unbind it from its transaction.
+ */
+export function releaseSessionClient(tx?: Prisma.TransactionClient, client?: PoolClient): void {
+  if (tx && typeof tx === 'object') {
+    sessionClients.delete(tx);
+  }
+  client?.release();
+}
+
 /**
  * Check out a client from the session pool before acquiring the user
  * advisory lock, avoiding deadlocks when writeLoginSessionUnlessRevoked holds
  * a pool client while waiting on that user lock.
+ *
+ * If passed a transaction client, the connection is bound to it so
+ * destroyUserLoginSessions can retrieve it without requiring a 5th argument.
  */
-export async function checkoutSessionClient(): Promise<PoolClient> {
+export async function checkoutSessionClient(tx?: Prisma.TransactionClient): Promise<PoolClient> {
   try {
-    return await sessionPool.connect();
+    const client = await sessionPool.connect();
+    if (tx && typeof tx === 'object') {
+      sessionClients.set(tx, client);
+    }
+    return client;
   } catch (err) {
     throw new LoginSessionStoreUnavailable(err);
   }
@@ -353,6 +372,7 @@ export async function destroyUserLoginSessions(
   // blocks in memory after that connection commits and ends live sockets.
   // If this helper fails after blocking, those sids are unblocked.
   let sids: string[] = [];
+  const clientToUse = sessionClient ?? (typeof db === 'object' && db !== null ? sessionClients.get(db) : undefined);
   try {
     destroyUserLoginSessionsBarrier.reached?.();
     if (destroyUserLoginSessionsBarrier.wait) await destroyUserLoginSessionsBarrier.wait;
@@ -366,7 +386,7 @@ export async function destroyUserLoginSessions(
       await db.$executeRaw`
         UPDATE "User" SET "loginSessionEpoch" = "loginSessionEpoch" + 1 WHERE id = ${userId}
       `;
-      sids = await revokeSessionRowsOnReadCommitted(userId, exceptSessionId, sessionClient);
+      sids = await revokeSessionRowsOnReadCommitted(userId, exceptSessionId, clientToUse);
       blockLoginSessions(sids);
       // After the RC revoke commits, including last-admin 409 after 40001.
       // Called even when this SELECT found no sids: epoch was incremented
