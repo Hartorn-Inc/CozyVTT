@@ -1648,7 +1648,7 @@ const onRoleChangedHandler = () =>
     .pop()?.[1] as ((d: { campaignId: string; userId: string; role: string }) => void) | undefined;
 
 const holdGetMap = () => {
-  let releaseMap: (value?: { map: { id: string; tokens: Token[]; spiritLayerUrl?: string }; spiritVisible: boolean }) => void = () => {};
+  let releaseMap: (value?: { map: { id: string; tokens?: Token[]; spiritLayerUrl?: string | null }; spiritVisible: boolean }) => void = () => {};
   let failMap: (err: unknown) => void = () => {};
   getMap.mockImplementationOnce((_c: string, mapId: string) => new Promise((resolve, reject) => {
     releaseMap = (value) => resolve(value ?? { map: { id: mapId, tokens: [tokenAt('t1', 1, 1)] }, spiritVisible: false });
@@ -1656,7 +1656,7 @@ const holdGetMap = () => {
   }));
   return {
     release: () => releaseMap(),
-    releaseWith: (value: { map: { id: string; tokens: Token[]; spiritLayerUrl?: string }; spiritVisible: boolean }) => releaseMap(value),
+    releaseWith: (value: { map: { id: string; tokens?: Token[]; spiritLayerUrl?: string | null }; spiritVisible: boolean }) => releaseMap(value),
     fail: (err: unknown) => failMap(err),
   };
 };
