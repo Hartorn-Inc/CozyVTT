@@ -2,14 +2,7 @@
 
 Thank you for your interest! CozyVTT is built with a very specific, "comfy" vision in mind. As the sole maintainer balancing this with limited hobby time, I have to be protective of the codebase and the project's direction.
 
-**I am not accepting unsolicited ("cold") Pull Requests at this time.** GitHub restricts **opening** pull requests to collaborators (write, maintain, or admin). AGPL forks remain allowed. Automation that implements or reviews work (`ready-for-agent`, `@cursor`, `/review`, `advisory-review`) is collaborator-only. The `advisory-review` label starts a no-secret request, then advisory review with `CURSOR_API_KEY` runs from `dev` via `workflow_run`. `/review` is handled on `dev`. See [ADR 0017](adr/0017-cloud-agent-advisory-codex-review.md) and [ADR 0018](adr/0018-advisory-review-cursor-cli.md). After a Cursor CLI version bump, run `bash scripts/ci/refresh-cursor-cli-digest.sh` (or apply the `deps:cursor-cli` label) so the tarball SHA256 matches.
-
-Until the Operator cutover below is done, YAML on `dev` has no inference secret and the reviewer job fails closed. After those workflows exist on `dev`:
-
-1. Create GitHub Environment `advisory-review`, restricted to branch `dev` only (never `refs/pull/*/merge`).
-2. Put a user Cursor API key in that Environment as `CURSOR_API_KEY`.
-3. Create label `advisory-review`.
-4. After a green advisory review, retire Environment `codex-review`, secret `OPENROUTER_API_KEY`, and label `codex-review`.
+**I am not accepting unsolicited ("cold") Pull Requests at this time.** GitHub restricts **opening** pull requests to collaborators (write, maintain, or admin). AGPL forks remain allowed. Specification planning, task execution, and multi-agent pull request review (`epure-issue-command.yml`, `epure-approved-task-run.yml`, `epure-check.yml`, `ai-review`) are orchestrated through EPURE (`Giskard-AI/epure` `v1.3.0`) and restricted to write collaborators (`author_association` gate and repository-scoped GitHub App tokens in Environments `gemini` and `release`). See [ADR 0019](adr/0019-epure-governance-and-multi-agent-orchestration.md).
 
 ---
 

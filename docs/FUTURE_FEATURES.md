@@ -79,7 +79,6 @@ _Nothing at present._
 - `1.5.4` **A player rolling initiative for their own obscured token sees it logged as "Unknown creature",** unlike a roll from their sheet (`handlers/initiative.ts`).
 - `1.5.4` **Starting a session through the API while one is paused leaves the paused one open for good.** `POST /api/campaigns/:id/sessions` refuses only while a session is active, so the paused session never gets an end time. The app offers Start only when no session is running or paused.
 - `1.5.4` **Ending a session with `saveState: false` throws away the state saved when it was paused** (`routes/campaigns.ts`).
-- `1.5.4` **Saving Campaign Settings reloads the whole live table,** every token picture included, and reopens the settings on General. Several saves in a minute can reach the 300 requests a minute limit, after which token pictures fail to load until it passes (`CampaignContext.tsx`).
 - `1.5.4` **Pop-up messages that arrive one after another all leave together,** when the newest one's time is up (`ToastContainer.tsx`).
 - `1.5.4` **A dice formula that divides by zero, such as `5/0`, fails with "Failed to roll dice"** where it should be refused as an invalid expression (`utils/dice-parser.ts`).
 
@@ -165,16 +164,16 @@ _Nothing at present._
   advisories that could not be reached in CozyVTT, a single-page app with no
   server rendering whose one address taken from a link, the page to go back to
   after signing in, is followed only when it is a path on this site with no
-  backslash in it; React Router 8.4 clears both. **Done** for the advisories
+  backslash in it; React Router 8.4 clears both.   **Done** for the advisories
   against the backend's developer tools: an npm override gives the coverage
-  tool js-yaml 4 in place of the js-yaml 3 it asks for, and Node's own watch
+  tool js-yaml 5 in place of the js-yaml 3 it asks for, and Node's own watch
   mode restarts the development server in place of nodemon. **Done** for
   TypeScript: 6.0 in both packages. **Done** for the advisory against Tailwind
   CSS 3's selector parser: an npm override gives it the fixed release, and the
-  built stylesheets are byte for byte the same. Dependabot held back major
-  versions of npm packages until 1.5.3; since then each comes as a pull
-  request of its own, apart from those it names as waiting, and its automatic
-  security pull requests are turned on once 1.5.3 is on `main`.
+  built stylesheets are byte for byte the same. Renovate manages dependency
+  updates with supply-chain cooldowns (`minimumReleaseAge` 3d/7d/14d) and
+  `ignore-scripts=true`, pinning npm versions (except peer dependencies) and
+  Docker/Action digests.
   **Do** Prisma 8 next in the data layer: it is a rewrite and still a release
   candidate, so wait until it is stable with a patch release or two, and move
   to the `prisma-client` generator with it. **Do** Tailwind CSS 4 in 1.5.4,
@@ -325,15 +324,6 @@ _Nothing at present._
   and dynamic lighting", and not fixed. A spirit-realm player with no spirit
   token arguably wants either their own token back as a vision source, or a
   message saying why the map is empty.
-
-- **CI holds back only pull requests into `main`.** `.github/workflows/ci.yml`
-  runs on every push to `dev` and `main` and on pull requests into them. A
-  ruleset in the repository's settings keeps a pull request into `main` from
-  merging until the Frontend, Backend, Docs, Dependency advisories and
-  production images jobs pass. A push to `dev` is not held: CI only reports
-  a failure there. Holding `dev` too would need a ruleset like `main`'s and
-  every change landing through a pull request. **Revisit if** more people
-  start pushing to `dev`.
 
 - **Serving the frontend from a folder, like `example.com/cozyvtt/`.** Asked for
   in #36 by a Traefik user; a subdomain works today and is what the deployment
