@@ -10,7 +10,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Play, Pause, Square, RotateCcw, Clock, Hash } from 'lucide-react';
 import { useCampaign } from '@/contexts/CampaignContext';
-import Toast, { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 import api from '@/services/api';
 import { CampaignStatus } from '@/types';
 import EndSessionModal from '@/components/campaign/EndSessionModal';
@@ -59,7 +59,7 @@ function useSessionTimer(startedAt: string | null): string {
 
 export default function SessionControls() {
   const { campaign, userRole, activeSession, setActiveSession, updateCampaignStatus } = useCampaign();
-  const { toast, showToast, hideToast } = useToast();
+  const { showToast } = useToast();
 
   const [isLoading, setIsLoading] = useState(false);
   const [isEndModalOpen, setIsEndModalOpen] = useState(false);
@@ -270,8 +270,6 @@ export default function SessionControls() {
           isSubmitting={isLoading}
         />
       )}
-
-      <Toast message={toast.message} type={toast.type} show={toast.show} onClose={hideToast} />
     </>
   );
 }

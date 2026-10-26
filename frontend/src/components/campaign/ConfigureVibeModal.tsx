@@ -11,7 +11,7 @@ import { useState, useCallback, useEffect } from 'react';
 import { Plus, Trash2, RotateCcw, Music } from 'lucide-react';
 import { useCampaign } from '@/contexts/CampaignContext';
 import { useAuth } from '@/contexts/AuthContext';
-import Toast, { useToast } from '@/components/Toast';
+import { useToast } from '@/contexts/ToastContext';
 import api from '@/services/api';
 import type { Asset, VibePeriod, VibeSettings } from '@/types';
 import { Button, Modal } from '@/components/ui';
@@ -277,7 +277,7 @@ interface ConfigureVibeModalProps {
 export default function ConfigureVibeModal({ onClose }: ConfigureVibeModalProps) {
   const { campaign, updateVibeSettings } = useCampaign();
   const { user } = useAuth();
-  const { toast, showToast, hideToast } = useToast();
+  const { showToast } = useToast();
 
   // Initialize local state from campaign's current vibeSettings
   const [periods, setPeriods] = useState<VibePeriod[]>(
@@ -483,8 +483,6 @@ export default function ConfigureVibeModal({ onClose }: ConfigureVibeModalProps)
           )}
         </div>
       </Modal>
-
-      <Toast message={toast.message} type={toast.type} show={toast.show} onClose={hideToast} />
     </>
   );
 }
