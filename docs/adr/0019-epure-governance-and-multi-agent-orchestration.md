@@ -3,7 +3,7 @@ status: accepted
 ---
 # EPURE governance, 3 Repository Rulesets, and blocking multi-agent `ai-review`
 
-CozyVTT adopts EPURE (`Giskard-AI/epure@2264187889eb547662c5ebbdc99b6ace9e4630a2`) for specification planning, task orchestration, repository rulesets, and blocking multi-agent pull request review, superseding the `@cursor` Cloud Agent kick and opt-in Cursor CLI / Grok 4.7 advisory review in [ADR 0017](0017-cloud-agent-advisory-codex-review.md) and [ADR 0018](0018-advisory-review-cursor-cli.md).
+CozyVTT adopts EPURE (`Giskard-AI/epure@f7116c4156b839159cb6a3a61e190d333c66d35a`, `v1.3.0`) for specification planning, task orchestration, repository rulesets, and blocking multi-agent pull request review, superseding the former `@cursor` Cloud Agent kick and opt-in Cursor CLI / Grok 4.7 advisory review.
 
 Write collaborators drive planning and implementation through `/epure plan`, `/epure approve`, `/epure retry`, and `/epure pause` on GitHub Issues (`epure-issue-command.yml`), configured via `.github/agents.yml` (`harness: pi`, `merge_policy: strict`, `task_auto_merge_enabled: false`) and bootstrapped with `/setup-repo` (`.agents/skills/setup-repo/SKILL.md`). Three GitHub Repository Rulesets (`epure-feature-governance` on `refs/heads/feature/**`, `epure-dev-governance` on `refs/heads/dev`, and `epure-release-immutability` on `refs/heads/main` and `refs/tags/v*`) enforce squash-only merges, Conventional Commit PR titles (`PR title`), CozyVTT's full CI suite aggregated under `Quality (Format, Lint, Typecheck, Test & Build)` alongside `Zizmor`, and the blocking `ai-review` check (`epure-check.yml`).
 
