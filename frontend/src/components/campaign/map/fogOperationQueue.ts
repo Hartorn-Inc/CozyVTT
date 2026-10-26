@@ -3,8 +3,10 @@
 //
 // Reveal/hide cell lists are chunked. Emits stay inside the server's
 // 10/1000ms silent limiter: a minimum gap between messages plus a sliding
-// window (10 per 1000ms with a safety margin) so jitter or a second tab
-// cannot drop a hide tail. A later rectangle is appended; it does not
+// window that reserves headroom under the shared per-user ceiling and uses
+// a safety margin so jitter on this tab cannot drop a hide tail. Note: the
+// 50ms margin is local to this page and does not cover a second DM tab while
+// the limiter key stays the user id. A later rectangle is appended; it does not
 // cancel earlier chunks. reveal_all / hide_all wait for window room, then
 // go out as the only emit in that slot; leftover unsent cell ops from
 // *before* the all-op are dropped then, not before. Cell ops queued
@@ -44,6 +46,10 @@ export interface FogOperationSocket {
     event: 'fog:operation',
     data: { mapId: string; operation: FogWireOperation }
   ): unknown;
+  emit?(
+    event: 'fog:request_state',
+    data: { mapId: string }
+  ): unknown;
 }
 
 export interface FogOperationQueue {
@@ -63,6 +69,13 @@ export interface FogOperationQueue {
    * remains unsent and the snapshot already matched the overlay (server caught up).
    */
   ackEcho(snapshotMatchedOverlay: boolean): void;
+  /** Retire in-flight operations when a newer grid arrives from the server. */
+  retireInFlight(): void;
+  /**
+   * On a drop, clear in-flight operations without replaying them and request
+   * a fresh fog state from the server.
+   */
+  handleDrop(mapId: string): void;
 }
 
 export function createFogOperationQueue(options: {
@@ -233,6 +246,14 @@ export function createFogOperationQueue(options: {
     },
     ackEcho(snapshotMatchedOverlay) {
       if (snapshotMatchedOverlay && !hasUnsent()) inFlight.length = 0;
+    },
+    retireInFlight() {
+      inFlight.length = 0;
+    },
+    handleDrop(mapId: string) {
+      inFlight.length = 0;
+      const socket = options.getSocket();
+      socket?.emit?.('fog:request_state', { mapId });
     },
   };
 }

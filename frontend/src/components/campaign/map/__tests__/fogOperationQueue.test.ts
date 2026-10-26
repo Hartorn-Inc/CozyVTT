@@ -16,10 +16,14 @@ function op(cells: number[], mapId = 'map-1'): FogCellOperation {
 
 function fakeSocket() {
   const emitted: Array<{ mapId: string; operation: { op: string; cells?: number[] } }> = [];
+  const stateRequests: Array<{ mapId: string }> = [];
   const socket: FogOperationSocket = {
-    emit(_event, data) { emitted.push(data); },
+    emit(event: string, data: any) {
+      if (event === 'fog:operation') emitted.push(data);
+      if (event === 'fog:request_state') stateRequests.push(data);
+    },
   };
-  return { socket, emitted };
+  return { socket, emitted, stateRequests };
 }
 
 function queueHarness(getSocket: () => FogOperationSocket | null | undefined) {
@@ -108,18 +112,18 @@ describe('createFogOperationQueue', () => {
     expect(scheduled[0]?.delay).toBe(100);
   });
 
-  it('11th emit waits until the sliding window has room', () => {
+  it('emits up to the headroom limit under the shared ceiling, then waits until window has room', () => {
     const s = fakeSocket();
     const { q, advance } = queueHarness(() => s.socket);
-    q.enqueue(Array.from({ length: 11 }, (_, i) => op([i])));
+    q.enqueue(Array.from({ length: 6 }, (_, i) => op([i])));
     expect(s.emitted).toHaveLength(1);
-    for (let i = 0; i < 9; i++) advance(100);
-    expect(s.emitted).toHaveLength(10);
+    for (let i = 0; i < 4; i++) advance(100);
+    expect(s.emitted).toHaveLength(5);
     advance(100);
-    expect(s.emitted).toHaveLength(10);
-    advance(50);
-    expect(s.emitted).toHaveLength(11);
-    expect(s.emitted[10]?.operation.cells).toEqual([10]);
+    expect(s.emitted).toHaveLength(5);
+    advance(550);
+    expect(s.emitted).toHaveLength(6);
+    expect(s.emitted[5]?.operation.cells).toEqual([5]);
   });
 
   it('null socket between two chunks does not drop the second', () => {
@@ -145,15 +149,15 @@ describe('enqueueAll', () => {
     const { q, advance } = queueHarness(() => s.socket);
     q.enqueue(Array.from({ length: 10 }, (_, i) => op([i])));
     for (let i = 0; i < 9; i++) advance(100);
-    expect(s.emitted).toHaveLength(10);
+    expect(s.emitted).toHaveLength(5);
 
     q.enqueueAll('map-1', 'reveal_all');
-    expect(s.emitted).toHaveLength(10);
+    expect(s.emitted).toHaveLength(5);
     expect(s.emitted.some((e) => e.operation.op === 'reveal_all')).toBe(false);
 
-    advance(150);
-    expect(s.emitted).toHaveLength(11);
-    expect(s.emitted[10]).toEqual({ mapId: 'map-1', operation: { op: 'reveal_all' } });
+    advance(650);
+    expect(s.emitted).toHaveLength(6);
+    expect(s.emitted[5]).toEqual({ mapId: 'map-1', operation: { op: 'reveal_all' } });
     expect(q.pending()).toEqual([]);
   });
 
@@ -161,14 +165,14 @@ describe('enqueueAll', () => {
     const s = fakeSocket();
     const { q, advance } = queueHarness(() => s.socket);
     q.enqueue(Array.from({ length: 10 }, (_, i) => op([i])));
-    for (let i = 0; i < 9; i++) advance(100);
+    for (let i = 0; i < 4; i++) advance(100);
     q.enqueue([op([99])]);
     q.enqueueAll('map-1', 'hide_all');
-    expect(s.emitted).toHaveLength(10);
+    expect(s.emitted).toHaveLength(5);
     expect(q.pending().map((p) => p.cells)).toEqual([[99]]);
 
-    advance(150);
-    expect(s.emitted[10]).toEqual({ mapId: 'map-1', operation: { op: 'hide_all' } });
+    advance(650);
+    expect(s.emitted[5]).toEqual({ mapId: 'map-1', operation: { op: 'hide_all' } });
     expect(s.emitted.some((e) => e.operation.cells?.[0] === 99)).toBe(false);
     expect(q.pending()).toEqual([]);
   });
@@ -197,26 +201,26 @@ describe('enqueueAll', () => {
     const s = fakeSocket();
     const { q, advance } = queueHarness(() => s.socket);
     q.enqueue(Array.from({ length: 10 }, (_, i) => op([i])));
-    for (let i = 0; i < 9; i++) advance(100);
+    for (let i = 0; i < 4; i++) advance(100);
     q.enqueue([op([99])]);
     q.enqueueAll('map-1', 'hide_all');
     q.enqueue([op([42], 'map-1')]);
-    expect(s.emitted).toHaveLength(10);
+    expect(s.emitted).toHaveLength(5);
     expect(q.overlayOps().map((o) => o.op)).toEqual([
-      ...Array.from({ length: 10 }, () => 'reveal'),
+      ...Array.from({ length: 5 }, () => 'reveal'),
       'hide_all',
       'reveal',
     ]);
     const overlay = q.overlayOps();
     expect(overlay[overlay.length - 1]).toEqual(op([42]));
 
-    advance(150);
-    expect(s.emitted[10]).toEqual({ mapId: 'map-1', operation: { op: 'hide_all' } });
+    advance(650);
+    expect(s.emitted[5]).toEqual({ mapId: 'map-1', operation: { op: 'hide_all' } });
     expect(s.emitted.some((e) => e.operation.cells?.[0] === 99)).toBe(false);
     expect(q.pending().map((p) => p.cells)).toEqual([[42]]);
 
     advance(100);
-    expect(s.emitted[11]).toEqual({ mapId: 'map-1', operation: { op: 'reveal', cells: [42] } });
+    expect(s.emitted[6]).toEqual({ mapId: 'map-1', operation: { op: 'reveal', cells: [42] } });
     expect(q.pending()).toEqual([]);
   });
 });
@@ -267,5 +271,25 @@ describe('overlayOps / ackEcho', () => {
 
     const foreign = fog([true, true, false]);
     expect(overlayFogOperations(foreign, q.overlayOps()).revealed).toEqual([true, true, false]);
+  });
+
+  it('retires in-flight operations when a newer grid arrives', () => {
+    const s = fakeSocket();
+    const { q } = queueHarness(() => s.socket);
+    q.enqueue([op([1])]);
+    expect(q.overlayOps()).toHaveLength(1);
+    q.retireInFlight();
+    expect(q.overlayOps()).toHaveLength(0);
+  });
+
+  it('handleDrop requests fresh state and retires in-flight without replaying them', () => {
+    const s = fakeSocket();
+    const { q } = queueHarness(() => s.socket);
+    q.enqueue([op([1])]);
+    expect(q.overlayOps()).toHaveLength(1);
+
+    q.handleDrop('map-1');
+    expect(s.stateRequests).toEqual([{ mapId: 'map-1' }]);
+    expect(q.overlayOps()).toHaveLength(0);
   });
 });

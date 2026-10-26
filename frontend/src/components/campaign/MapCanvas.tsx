@@ -1340,7 +1340,12 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
       // not clear reveal_all and snap the grid back.
       const queue = fogOpQueueRef.current;
       const next = overlayFogOperations(data.fogState, queue?.overlayOps() ?? []);
-      queue?.ackEcho(fogRevealedEquals(data.fogState, next));
+      const matched = fogRevealedEquals(data.fogState, next);
+      queue?.ackEcho(matched);
+      if (!matched && (queue?.pending().length ?? 0) === 0) {
+        // A newer grid arrived without matching in-flight ops: retire in-flight so dropped chunks do not persist
+        queue?.retireInFlight();
+      }
       setFogState((prev) => {
         if (prev) {
           next.revealed.forEach((revealed, i) => {
