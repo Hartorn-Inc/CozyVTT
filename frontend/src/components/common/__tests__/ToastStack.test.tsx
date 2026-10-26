@@ -151,4 +151,24 @@ describe('Toast Stack System', () => {
     const ToastModule = await import('@/components/Toast');
     expect('useToast' in ToastModule).toBe(false);
   });
+
+  it('constrains toast container and cards to available viewport width on narrow screens', () => {
+    render(<LiveTableHarness />);
+
+    act(() => {
+      screen.getByRole('button', { name: 'Trigger Map Collision' }).click();
+    });
+
+    const container = screen.getByLabelText('Notifications');
+    expect(container.className).toContain('max-w-[calc(100vw-2rem)]');
+    expect(container.className).toContain('items-end');
+
+    const card = screen.getByRole('alert');
+    expect(card.className).toContain('w-full');
+    expect(card.className).toContain('sm:w-auto');
+    expect(card.className).toContain('min-w-0');
+    expect(card.className).toContain('sm:min-w-[280px]');
+    expect(card.className).toContain('max-w-[calc(100vw-2rem)]');
+    expect(card.className).toContain('sm:max-w-sm');
+  });
 });

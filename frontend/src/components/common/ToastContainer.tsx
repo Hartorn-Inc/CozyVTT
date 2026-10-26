@@ -32,13 +32,13 @@ function ToastCard({ toast, onDismiss }: { toast: ToastItem; onDismiss: (id: str
       animate={{ opacity: 1, x: 0, scale: 1 }}
       exit={isTest ? undefined : { opacity: 0, x: 60, scale: 0.9 }}
       transition={{ duration: isTest ? 0 : 0.2 }}
-      className="pointer-events-auto"
+      className="pointer-events-auto max-w-full"
     >
       <div
         role="alert"
         aria-live="assertive"
         aria-atomic="true"
-        className={`glass-panel border-2 ${styles} shadow-lg rounded-lg p-4 flex items-start gap-3 min-w-[280px] max-w-sm`}
+        className={`glass-panel border-2 ${styles} shadow-lg rounded-lg p-4 flex items-start gap-3 w-full sm:w-auto min-w-0 sm:min-w-[280px] max-w-[calc(100vw-2rem)] sm:max-w-sm`}
       >
         <div className="flex-shrink-0 mt-0.5" aria-hidden="true">
           {icon}
@@ -105,7 +105,7 @@ export default function ToastContainer() {
   return (
     <div
       aria-label="Notifications"
-      className="fixed top-4 right-4 z-[9998] flex flex-col gap-2 pointer-events-none"
+      className="fixed top-4 right-4 z-[9998] flex flex-col gap-2 pointer-events-none max-w-[calc(100vw-2rem)] items-end"
     >
       {isTest ? content : <AnimatePresence mode="sync">{content}</AnimatePresence>}
     </div>
