@@ -107,7 +107,6 @@ import DmWallControls, { type WallToolMode } from '@/components/campaign/DmWallC
 import DmLightControls, { type LightToolMode, type LightPlacementDefaults } from '@/components/campaign/DmLightControls';
 import DmToolPanelContainer from '@/components/campaign/DmToolPanelContainer';
 import { useWallHistory } from '@/hooks/useWallHistory';
-import Toast, { useToast as useLocalToast } from '@/components/Toast';
 import { useToast } from '@/contexts/ToastContext';
 import Button from '@/components/ui/Button';
 import '@/styles/spirit-effects.css';
@@ -322,8 +321,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
   const wallBrushActiveRef = useRef(false);
   const wallBrushPointsRef = useRef<Array<{ x: number; y: number }>>([]);
   const [nearEndpoint, setNearEndpoint] = useState(false);
-  const { toast, showToast, hideToast } = useLocalToast();
-  const { showToast: showTableToast } = useToast();
+  const { showToast } = useToast();
   /** DM "Preview player view" toggle — when true, DM sees lighting as players do. */
   const [dmPreviewPlayerView, setDmPreviewPlayerView] = useState(false);
   const [previewSelection, setPreviewSelection] = useState<PreviewSelection | null>(null);
@@ -2761,7 +2759,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
         },
       });
       if (dropResult === 'revert') {
-        showTableToast('Failed to move the token', 'error');
+        showToast('Failed to move the token', 'error');
       }
       return;
     }
@@ -4723,22 +4721,6 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
         </div>
       )}
 
-      {/* Toast notifications (locked door, a square already occupied).
-
-          Rendered bare, exactly as every other caller does. It used to sit in a
-          positioning wrapper, which broke it three ways at once: the wrapper's
-          `-translate-x-1/2` is a transform, and a transform makes it the
-          containing block for `position: fixed` descendants — so the toast
-          anchored to a zero-width div at the bottom of the map instead of the
-          viewport, `max-w-md` measured against that sliver and wrapped the text
-          into an unreadable column, and `pointer-events-none` stopped the close
-          button working. Toast already positions itself; it needs no help. */}
-      <Toast
-        show={toast.show}
-        message={toast.message}
-        type={toast.type}
-        onClose={hideToast}
-      />
     </div>
   );
 }

@@ -97,37 +97,3 @@ export default function Toast({
     </AnimatePresence>
   );
 }
-
-// ============================================
-// Toast Hook for Easy Usage
-// ============================================
-
-import { useState, useCallback } from 'react';
-
-export interface ToastState {
-  show: boolean;
-  message: string;
-  type: ToastType;
-}
-
-export function useToast() {
-  const [toast, setToast] = useState<ToastState>({
-    show: false,
-    message: '',
-    type: 'info',
-  });
-
-  const showToast = useCallback((message: string, type: ToastType = 'info') => {
-    setToast({ show: true, message, type });
-  }, []);
-
-  const hideToast = useCallback(() => {
-    setToast((prev) => ({ ...prev, show: false }));
-  }, []);
-
-  return {
-    toast,
-    showToast,
-    hideToast,
-  };
-}
