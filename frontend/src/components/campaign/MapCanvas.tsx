@@ -1339,12 +1339,14 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
       // that overlay (the server has caught up); a late partial chunk must
       // not clear reveal_all and snap the grid back.
       const queue = fogOpQueueRef.current;
-      const next = overlayFogOperations(data.fogState, queue?.overlayOps() ?? []);
+      let next = overlayFogOperations(data.fogState, queue?.overlayOps() ?? []);
       const matched = fogRevealedEquals(data.fogState, next);
       queue?.ackEcho(matched);
       if (!matched && (queue?.pending().length ?? 0) === 0) {
-        // A newer grid arrived without matching in-flight ops: retire in-flight so dropped chunks do not persist
-        queue?.retireInFlight();
+        // A newer grid arrived without matching in-flight ops: retire in-flight,
+        // request fresh authoritative state, and do not replay dropped in-flight ops.
+        queue?.handleDrop(currentMap.id);
+        next = data.fogState;
       }
       setFogState((prev) => {
         if (prev) {
