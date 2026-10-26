@@ -4432,7 +4432,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
                     try {
                       await setTokenFlag(campaign.id, currentMap.id, token, 'visible', !token.visible, socket);
                     } catch (err) {
-                      showTableToast(apiErrorMessage(err) || 'Failed to change whether players can see the token', 'error');
+                      showToast(apiErrorMessage(err) || 'Failed to change whether players can see the token', 'error');
                     }
                   }}
                 >
@@ -4451,7 +4451,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
                     try {
                       await setTokenFlag(campaign.id, currentMap.id, token, 'obscured', !token.obscured, socket);
                     } catch (err) {
-                      showTableToast(apiErrorMessage(err) || 'Failed to change whether the token\'s identity is hidden', 'error');
+                      showToast(apiErrorMessage(err) || 'Failed to change whether the token\'s identity is hidden', 'error');
                     }
                   }}
                 >
@@ -4475,7 +4475,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
                         useGameStore.getState().patchToken(token.id, { layer: TokenLayer.SPIRIT });
                         socket?.emitMapChange(currentMap.id);
                       } catch (err) {
-                        showTableToast(apiErrorMessage(err) || 'Failed to move token to spirit realm', 'error');
+                        showToast(apiErrorMessage(err) || 'Failed to move token to spirit realm', 'error');
                       } finally {
                         setIsMovingTokenLayer(false);
                       }
@@ -4497,7 +4497,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
                         useGameStore.getState().patchToken(token.id, { layer: TokenLayer.TOKEN });
                         socket?.emitMapChange(currentMap.id);
                       } catch (err) {
-                        showTableToast(apiErrorMessage(err) || 'Failed to return token to material plane', 'error');
+                        showToast(apiErrorMessage(err) || 'Failed to return token to material plane', 'error');
                       } finally {
                         setIsMovingTokenLayer(false);
                       }
