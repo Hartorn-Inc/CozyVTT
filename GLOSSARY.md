@@ -173,3 +173,25 @@ _Avoid_: Advisory review, Codex review, Luna review, Grok review
 **Reviewer pass**:
 One readonly roster role from `.cursor/agents/*.md` run against a pull request or design gate, returning structured JSON findings (`must_fix`, `informational`, `no_action`).
 _Avoid_: Codex pass, Luna pass, review (unqualified)
+
+## Backlog and Documentation Governance
+
+**Triage Matrix**:
+A structured table classifying documented backlog items and technical debts into concrete actions: drop/delete, group, extract to GitHub Issue, or retain.
+_Avoid_: Backlog list, todo list (for this audit tool)
+
+**Extracted Feature Issue**:
+A GitHub issue created to track a feature proposal, enhancement, or bug fix migrated from static documentation, carrying the label `scope:extracted-feature` and referencing its original source context.
+_Avoid_: Story, ticket (unqualified), task (for this GitHub item)
+
+**Referenced TODO**:
+A source code comment adhering to the strict format `// TODO(#<issue_id>): <description>`, binding in-code debt directly to an active GitHub issue and eliminating unreferenced, floating TODOs.
+_Avoid_: Raw TODO, FIXME (unreferenced), code note
+
+**Markdown link integrity**:
+The property where every internal relative hyperlink and header anchor (`#slug`) across repository Markdown files resolves to an existing file and heading without network requests.
+_Avoid_: Link check (for the property itself)
+
+**Dead backlog documentation**:
+Static markdown documents (such as `docs/FUTURE_FEATURES.md`) storing unmanaged feature proposals or outdated bug lists outside the primary issue tracker.
+_Avoid_: Archive, backlog file, future roadmap (for static documents)
