@@ -1,115 +1,121 @@
-# Spécification Technique & Fonctionnelle : Nettoyage des Futures Features, Docs et Commentaires TODO
+# Spécification Technique et Fonctionnelle : Nettoyage documentaire, démantèlement du backlog statique et normalisation des TODOs
 
-## 1. Contexte et Objectifs
+## 1. Contexte et Problématique
 
-Le projet CozyVTT dispose de documentation informative (`docs/FUTURE_FEATURES.md`, guides, ADRs) ainsi que de commentaires disséminés dans le code source applicatif (`backend/src/`, `frontend/src/`). Conformément à l'ADR 0003, la gestion de projet et le backlog d'équipe doivent résider exclusivement dans les GitHub Issues.
+Le dépôt CozyVTT comportait historiquement un fichier `docs/FUTURE_FEATURES.md` servant de réceptacle mixte pour des rapports de bugs, des idées de conception non formalisées, des éléments classés « Won't Do » et des fonctionnalités futures envisagées pour des versions antérieures (v1.5.4). Ce fichier et d'autres références dans le `README.md` créent une divergence avec la gouvernance définie par l'ADR 0003 (*« GitHub surface is Issues only »*), selon laquelle le backlog et les anomalies actives doivent vivre exclusivement dans les Issues GitHub, tandis que l'historique des changements est tracé dans `CHANGELOG.md`.
 
-L'objectif de cette opération est de :
-1. Auditer de manière exhaustive les propositions, listes d'idées, bogues connus et dettes techniques documentés dans `docs/` et dans le code source.
-2. Éliminer définitivement les éléments obsolètes, abandonnés ou déjà réalisés (sans dossier d'archive, l'historique Git assurant la conservation).
-3. Extraire les éléments pertinents sous forme de spécifications prêtes à être converties en GitHub Issues identifiées par le label `scope:extracted-feature`.
-4. Normaliser les commentaires de tâche du code source selon la convention `// TODO(#<issue_id>): <description>` ou les supprimer s'ils sont caducs, sans impacter la logique fonctionnelle.
-5. Valider l'intégrité référentielle de la documentation markdown restante via un outillage automatisé de vérification de liens internes.
+En parallèle, le code source applicatif (`backend/src/` et `frontend/src/`) contient des commentaires `TODO` et `FIXME` flottants, sans référence d'issue de suivi, ce qui empêche une visibilité claire sur la dette technique réelle et son ordonnancement.
 
----
-
-## 2. Périmètre d'Audit et Règles de Triage
-
-### 2.1 Périmètre
-
-- **Documentation Markdown** :
-  - Fichier principal : `docs/FUTURE_FEATURES.md`.
-  - Documents associés : `docs/*.md` (`USER_GUIDE.md`, `DM_GUIDE.md`, `DEVELOPMENT.md`, etc.), `backend/docs/*.md`.
-  - Fichiers exclus de la suppression : ADRs validés (`docs/adr/`), `GLOSSARY.md`, spécifications approuvées (`docs/specs/`).
-- **Code Source Applicatif** :
-  - `backend/src/**/*.{ts,js,json}`.
-  - `frontend/src/**/*.{ts,tsx,js,jsx,css}`.
-  - Exclusions strictes : `node_modules/`, `dist/`, `coverage/`, `.git/`, builds statiques.
-
-### 2.2 Règles de Décision (Triage Matrix)
-
-Chaque item recensé reçoit l'un des trois statuts :
-
-| Statut | Description | Action appliquée |
-| :--- | :--- | :--- |
-| `DELETE` | Fonctionnalité abandonnée ("Won't Do"), idée obsolète, ou fonctionnalité déjà livrée et fonctionnelle dans le code. | Suppression immédiate du document ou du commentaire dans le code. |
-| `EXTRACT` | Fonctionnalité, optimisation ou bogue confirmé pertinent à intégrer au backlog officiel CozyVTT. | Création d'une fiche d'extraction avec contexte et métadonnées GitHub Issue (`scope:extracted-feature`). |
-| `RETAIN` | Documentation technique active, avertissement de conception ou commentaire `TODO(#<issue_id>)` déjà convenablement indexé. | Conservation intacte avec vérification de non-régression. |
+Cette spécification définit le cadre méthodologique, l'outillage automatisé et les garde-fous nécessaires pour :
+1. Auditer, trier et migrer le contenu de `docs/FUTURE_FEATURES.md` vers un catalogue d'issues GitHub prêtes à l'emploi (`docs/reports/extracted-issues-backlog.md`).
+2. Supprimer définitivement `docs/FUTURE_FEATURES.md` et mettre à jour tous les documents référents sans créer de dossier d'archive.
+3. Auditer et normaliser les commentaires `TODO`/`FIXME` du code source sous le format strict `// TODO(#<issue_id>): <description>` sans aucune altération de la logique fonctionnelle.
+4. Mettre en place des scripts Python de vérification d'intégrité (liens Markdown et détection de TODOs orphelins) intégrés dans les tests de garde du dépôt.
 
 ---
 
-## 3. Matrice d'Inventaire et Fiches d'Extraction
+## 2. Objectifs et Non-Objectifs
 
-### 3.1 Structure du Registre d'Inventaire (`docs/reports/backlog-audit-inventory.md`)
+### 2.1 Objectifs
+- **Conformité ADR-0003** : Éliminer la surface de backlog statique en supprimant `docs/FUTURE_FEATURES.md` et en consignant les éléments retenus dans un format standardisé d'Issues GitHub.
+- **Zéro lien brisé** : Garantir par script automatisé que l'ensemble des liens Markdown internes (chemins de fichiers et ancres `#slug`) du dépôt sont valides.
+- **Traçabilité de la dette de code** : Éliminer les TODOs obsolètes du code et normaliser les TODOs actifs avec une référence d'issue GitHub valide.
+- **Pérennité CI** : Intégrer les vérifications de liens et de TODOs orphelins dans la suite de tests automatisés (`scripts/tests/test_doc_checks.py`).
+- **Neutralité d'exécution** : Conserver 100% de la logique applicative et de la couverture de tests Jest existante.
 
-Le script d'analyse génère un rapport markdown sous la forme :
-
-```markdown
-# Rapport d'Audit du Backlog et des Commentaires TODO
-
-| ID | Type | Source (Fichier:Ligne) | Extrait / Titre | Action Proposée | Justification |
-|---|---|---|---|---|---|
-| AUD-001 | DOC | docs/FUTURE_FEATURES.md:25 | D&D 5e: naming the spellcasting ability... | EXTRACT | Bug confirmé à tracker en issue |
-| AUD-002 | CODE | backend/src/services/map.ts:84 | // TODO: cache grid computations | EXTRACT | Dette technique pertinente |
-| AUD-003 | DOC | docs/FUTURE_FEATURES.md:310 | Won't do: Flash player support | DELETE | Abandonné |
-```
-
-### 3.2 Format Standardisé d'une Issue GitHub Extraite
-
-Chaque entrée à extraire génère une entrée au format structuré conforme à ADR 0003 :
-
-```markdown
-### [Extracted] <Titre clair et concis>
-
-- **Labels** : `scope:extracted-feature`, `type:<feature|bug|debt>`
-- **Origine** : `<chemin/vers/fichier>:<ligne>`
-- **Commit de référence** : `<commit_sha_or_branch>`
-
-#### Description et Contexte d'Origine
-<Texte extrait du document ou du commentaire de code>
-
-#### Comportement Attendu / Spécifications
-<Clarification des attentes et critères d'acceptation>
-```
+### 2.2 Non-Objectifs
+- Créer un sous-dossier `docs/archive/` (proscrit pour éviter une documentation morte).
+- Résoudre ou implémenter les fonctionnalités ou correctifs extraits lors de ce chantier (ceux-ci feront l'objet de tickets dédiés post-migration).
+- Modifier les fichiers tiers ou générés (`node_modules`, `dist`, `coverage`, `.git`).
+- Valider les liens externes (`http://`, `https://`, `mailto:`) nécessitant un accès réseau lors des vérifications de liens.
 
 ---
 
-## 4. Normalisation des Commentaires de Code
+## 3. Matrice de Triage et Règles de Classification
 
-1. **Syntaxe cible** :
-   - Valide : `// TODO(#123): Expliciter la gestion des déconnexions WebSocket`
-   - Valide : `/* TODO(#123): Refactoriser le calcul de champ de vision */`
-   - Interdit : `// TODO: à faire plus tard`, `// FIXME`, `/* HACK */` sans issue rattachée.
-2. **Règles d'intégrité du code** :
-   - Aucune modification de code exécutable, d'import, de type ou d'expression logique.
-   - Ne jamais introduire de marqueurs de tests exclus (`test.skip`, `it.only`, etc.) couverts par `backend/src/__tests__/testMarkers.test.ts`.
-   - Préservation stricte de la compilation TypeScript (`tsc --noEmit`) sur backend et frontend.
+Chaque entrée issue de `docs/FUTURE_FEATURES.md` est soumise à une règle de triage déterministe :
 
----
-
-## 5. Outillage de Validation et Intégrité Référentielle
-
-Deux scripts autonomes et testés unitairement sont introduits dans `scripts/` :
-
-1. `scripts/audit-backlog-todos.py` :
-   - Scanne `docs/FUTURE_FEATURES.md`, `docs/*.md`, `backend/src/`, `frontend/src/`.
-   - Détecte les regex `(?:TODO|FIXME|XXX)(?:\([^)]+\))?:?\s*(.*)`.
-   - Détecte les puces de backlog dans `docs/FUTURE_FEATURES.md`.
-   - Génère la matrice markdown et le fichier de propositions d'issues.
-   - Peut être exécuté en mode `--check` pour échouer en présence de `TODO` non référencés par un ID d'issue (`#\d+`).
-
-2. `scripts/check-markdown-links.py` :
-   - Scanne l'ensemble des fichiers markdown du dépôt.
-   - Analyse les liens locaux relatifs `[texte](chemin/relatif.md)` et ancres `[texte](#mon-ancre)`.
-   - Valide l'existence du fichier cible et de l'ancre markdown correspondante.
-   - Retourne un code d'erreur `1` en cas de lien cassé.
+| Catégorie Source | Action Retenue | Justification | Traitement |
+| :--- | :--- | :--- | :--- |
+| **Won't Do** | **Supprimer** | Décision d'abandon déjà actée ou non alignée avec la vision CozyVTT. | Suppression pure et simple, aucune issue créée. |
+| **Bug résolu / Déjà implémenté** | **Supprimer** | Comportement déjà corrigé dans les versions courantes (1.5.2+). | Suppression sans création d'issue. |
+| **Anomalies mineures UI / Retours ciblés** | **Regrouper & Extraire** | Petits bugs d'affichage ou réglages UI de même domaine (ex. Fiche de perso, Fog/Tokens). | Consolidés dans une issue thématique unique avec le label `scope:extracted-feature`. |
+| **Évolution majeure / Chantier technique** | **Extraire unitaire** | Chantiers d'envergure (ex. multi-piste audio, migration Tailwind, mathjs). | Fiche d'issue dédiée avec description complète, contexte d'origine et label `scope:extracted-feature`. |
+| **Dette de code résolue** | **Supprimer** | Commentaire `// TODO` dans le code dont l'implémentation est achevée. | Suppression du commentaire dans le fichier source. |
+| **Dette de code persistante** | **Normaliser** | Tâche encore pertinente dans le code applicatif. | Réécriture : `// TODO(#<ref>): <description>`. |
 
 ---
 
-## 6. Séquencement des Travaux (Plan d'Exécution TDD)
+## 4. Spécification des Outils d'Audit et de Vérification
 
-1. **Ticket 1** : Implémentation du script d'audit et d'inventaire (`scripts/audit-backlog-todos.py`) avec tests unitaires pytest associés.
-2. **Ticket 2** : Implémentation du script de vérification d'intégrité des liens Markdown (`scripts/check-markdown-links.py`) avec tests unitaires pytest.
-3. **Ticket 3** : Exécution de l'audit documentaire : triage de `docs/FUTURE_FEATURES.md`, suppression des éléments obsolètes/livrés, et génération du catalogue des issues extraites (`docs/reports/extracted-issues-backlog.md`).
-4. **Ticket 4** : Traitement et normalisation des commentaires `TODO`/`FIXME` dans le code source (`backend/src/`, `frontend/src/`) en liant les éléments retenus ou en purgeant le superflu.
-5. **Ticket 5** : Intégration du contrôle d'intégrité dans la suite de tests doc (`scripts/tests/test_doc_checks.py`), vérification globale des liens et validation finale.
+### 4.1 Script d'Audit et de Contrôle des TODO : `scripts/audit-backlog-todos.py`
+
+- **Rôle** : Parcourt les documents Markdown ciblés et l'arborescence de code TypeScript/JavaScript (`backend/src/` et `frontend/src/`).
+- **Options CLI** :
+  - `--output <path>` : Génère une matrice d'audit Markdown structurée (Colonnes : `ID`, `Type`, `Fichier`, `Ligne`, `Extrait`, `Statut / Action`).
+  - `--check-unreferenced` : Mode garde-fou CI. Vérifie que tous les commentaires `TODO`/`FIXME` dans `backend/src/` et `frontend/src/` respectent le motif `TODO\(#[0-9a-zA-Z_-]+\)`. Si un commentaire sans référence est trouvé, le script écrit la liste des violations sur `sys.stderr` et termine avec un code de sortie `1`.
+  - `--help` : Affiche l'aide.
+- **Règles de filtrage des répertoires** : Ignore obligatoirement `node_modules`, `dist`, `coverage`, `.git`, `.cursor`, `build`.
+- **Motifs recherchés** : `(?i)(?:TODO|FIXME|XXX)`.
+- **Motif valide en mode strict** : `TODO\(#[A-Za-z0-9_-]+\):?\s+`.
+
+### 4.2 Script de Vérification des Liens Markdown : `scripts/check-markdown-links.py`
+
+- **Rôle** : Parcourt tous les fichiers `.md` du dépôt CozyVTT et valide la cohérence des liens relatifs internes et des ancres de titres.
+- **Algorithme** :
+  1. Analyse syntaxique des liens Markdown du type `[texte](cible)` (en excluant les blocs de code markdown ``` et `inline code`).
+  2. Si la cible commence par `http://`, `https://` ou `mailto:`, le lien est ignoré.
+  3. Si la cible est une ancre locale `#ancre`, vérifie que l'ancre existe dans le document courant.
+  4. Si la cible contient un chemin relatif `fichier.md` ou `fichier.md#ancre` :
+     - Résout le chemin absolu sur le système de fichiers par rapport au dossier du fichier Markdown source.
+     - Vérifie l'existence effective du fichier ciblé.
+     - Si une ancre `#ancre` est présente, charge le fichier cible, en extrait tous les titres Markdown (`#`, `##`, etc.), génère les slugs correspondants (minuscules, suppression des caractères spéciaux, remplacement des espaces par `-`) et valide la présence de l'ancre.
+- **Code de sortie** : `0` si tous les liens internes sont résolus, `1` si au moins un lien ou une ancre est manquant, avec affichage détaillé (Fichier source, Numéro de ligne, Cible erronée, Raison de l'erreur).
+
+### 4.3 Intégration CI : `scripts/tests/test_doc_checks.py`
+
+- **Rôle** : Fichier de tests pytest dans `scripts/tests/` appelant :
+  - Le test unitaire des fonctions de `audit-backlog-todos.py`.
+  - Le test unitaire des fonctions de `check-markdown-links.py`.
+  - L'exécution de `scripts/check-markdown-links.py` sur l'ensemble du dépôt pour bloquer tout commit introduisant un lien brisé.
+  - L'exécution de `scripts/audit-backlog-todos.py --check-unreferenced` pour bloquer tout commit introduisant un TODO non référencé.
+
+---
+
+## 5. Spécification du Catalogue d'Issues Extraites (`docs/reports/extracted-issues-backlog.md`)
+
+Le document `docs/reports/extracted-issues-backlog.md` regroupe l'ensemble des issues issues de `docs/FUTURE_FEATURES.md` et des TODOs du code, formaté sous forme de fiches d'issues GitHub complètes :
+- **Titre** : `[Extracted] <Titre explicite>`
+- **Labels** : `scope:extracted-feature`, `type:bug` ou `type:feature`
+- **Fichier d'origine** : Chemin et section source dans `docs/FUTURE_FEATURES.md` ou fichier de code
+- **Description & Contexte** : Explication détaillée du besoin ou de l'anomalie
+- **Critères d'acceptation** : Liste à cocher vérifiable
+
+---
+
+## 6. Nettoyage de la Documentation et du Code
+
+### 6.1 Documentation
+- **Suppression** : `git rm docs/FUTURE_FEATURES.md`
+- **Mise à jour de `README.md`** : Retrait des liens pointant vers `docs/FUTURE_FEATURES.md` (remplacement par la référence aux GitHub Issues selon ADR-0003).
+- **Vérification** : Validation par `python3 scripts/check-markdown-links.py`.
+
+### 6.2 Code Applicatif (`backend/src/` et `frontend/src/`)
+- Audit complet des occurrences de `TODO` et `FIXME`.
+- Suppression des commentaires pour les tâches obsolètes ou déjà résolues.
+- Remplacement des commentaires maintenus par la syntaxe `// TODO(#<id_ou_ref>): <description>`.
+- Validation par `python3 scripts/audit-backlog-todos.py --check-unreferenced`.
+- Vérification de non-régression via `npm run test` et `npm run build` côté backend et frontend.
+- Respect strict de `backend/src/__tests__/testMarkers.test.ts` (aucun marqueur de test résiduel).
+
+---
+
+## 7. Matrice de Traçabilité des Exigences
+
+| Réf Exigence | Description | Ticket Associé | Vérification CI / Test |
+| :--- | :--- | :--- | :--- |
+| **REQ-DOC-01** | Script d'inventaire et d'audit des TODOs avec support `--check-unreferenced` | Ticket 1 | `pytest scripts/tests/test_audit_backlog_todos.py` |
+| **REQ-DOC-02** | Script de vérification locale d'intégrité des liens Markdown et ancres | Ticket 2 | `pytest scripts/tests/test_check_markdown_links.py` |
+| **REQ-DOC-03** | Triage exhaustif de FUTURE_FEATURES.md, suppression du fichier et catalogue d'issues extraites | Ticket 3 | `scripts/check-markdown-links.py` et validation humaine |
+| **REQ-DOC-04** | Nettoyage et normalisation des TODOs dans le code source applicatif | Ticket 4 | `python3 scripts/audit-backlog-todos.py --check-unreferenced` + `npm test` |
+| **REQ-DOC-05** | Intégration des contrôles dans les tests de garde CI | Ticket 5 | `pytest scripts/tests/test_doc_checks.py` |
