@@ -173,3 +173,15 @@ _Avoid_: Advisory review, Codex review, Luna review, Grok review
 **Reviewer pass**:
 One readonly roster role from `.cursor/agents/*.md` run against a pull request or design gate, returning structured JSON findings (`must_fix`, `informational`, `no_action`).
 _Avoid_: Codex pass, Luna pass, review (unqualified)
+
+**Triage matrix**:
+The structured markdown table used during audit phases to inventory, classify, and decide the destination (Delete, Extract to GitHub Issue, or Retain) of pending backlog ideas, obsolete documentation, and code comments.
+_Avoid_: Backlog sheet, cleanup list
+
+**Extracted feature issue**:
+A GitHub Issue created from a discarded or unbundled item in markdown documentation or source code comments, labeled with `scope:extracted-feature` and referencing the provenance commit and originating file.
+_Avoid_: Migrated task, orphan ticket
+
+**Referenced TODO comment**:
+A source code comment following the pattern `// TODO(#<issue_id>): <description>` linking deferred maintenance directly to an active GitHub Issue, replacing raw untracked `// TODO` or `/* FIXME */` tags.
+_Avoid_: Loose TODO, untracked FIXME, inline ticket
