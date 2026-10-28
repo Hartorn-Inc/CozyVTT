@@ -263,7 +263,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
         : {}),
       // Ensure nested objects exist.
       //
-      // TODO(typing): `{}` is not a valid container — none of these has its keys,
+      // TODO(#1): `{}` is not a valid container — none of these has its keys,
       // and the effects below read `.score` / `.proficient` off each entry. A
       // sheet stored without one of these blocks therefore reads `undefined`
       // where a number is expected. Pre-existing; the casts keep the behaviour
@@ -694,7 +694,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   useEffect(() => {
     if (!formData.spellcasting) return;
 
-    // TODO(sheets): while no spellcasting ability is named, this effect keeps
+    // TODO(#1): while no spellcasting ability is named, this effect keeps
     // the stored DC at 8 + proficiency and the attack at proficiency. Naming
     // the ability afterwards makes the backfill read that stored total as
     // hand-typed, so it records minus the ability's modifier as the other bonus
@@ -1379,7 +1379,7 @@ min={1}
       <div className="bg-stone-50 border border-stone-200 rounded-lg p-4">
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-lg font-semibold text-stone-800">Your Own Skills</h3>
-          {/* TODO(sheets): the schema keeps at most 30 of these and this button
+          {/* TODO(#1): the schema keeps at most 30 of these and this button
               has no limit, so a 31st skill makes a sheet that cannot be saved.
               Turn the button off at the limit, as the lists below do. */}
           <button
@@ -2034,7 +2034,7 @@ min={0}
                   <label className="block text-xs font-semibold text-stone-600">
                     Other Damage Rolls
                   </label>
-                  {/* TODO(sheets): the schema keeps at most 10 of these per
+                  {/* TODO(#1): the schema keeps at most 10 of these per
                       attack and this button has no limit, so an 11th makes a
                       sheet that cannot be saved. Turn it off at the limit. */}
                   <button

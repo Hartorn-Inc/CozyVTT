@@ -375,7 +375,7 @@ export default function ProfilePage() {
 
   const saveProfile = async () => {
     const trimmedName = displayName.trim();
-    // TODO(accounts): the server accepts names of 1 to 50 characters
+    // TODO(#6): the server accepts names of 1 to 50 characters
     // (displayNameSchema), and Invite Player finds one-letter names; use its limits.
     if (trimmedName.length < 2) {
       setProfileError('Display name must be at least 2 characters');

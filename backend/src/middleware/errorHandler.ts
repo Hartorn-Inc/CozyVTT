@@ -50,7 +50,7 @@ export function errorHandler(
   const tooLarge = rawStatus === 413 || parserType === 'entity.too.large';
   const notJson = parserType === 'entity.parse.failed';
   const loginSessionStoreUnavailable = isLoginSessionStoreUnavailable(err);
-  // TODO(accounts): body-parser's own 415s (`charset.unsupported`,
+  // TODO(#6): body-parser's own 415s (`charset.unsupported`,
   // `encoding.unsupported`) fall through to the 500 below. Answer them 415 as
   // the caller's mistake, like the two cases above.
 

@@ -325,7 +325,7 @@ router.put('/settings', async (req, res) => {
     } satisfies Record<string, string | null | undefined>;
     for (const [field, value] of Object.entries(branding)) {
       if (value === undefined) continue;
-      // TODO(accounts): isSameOriginPath accepts a protocol-relative address
+      // TODO(#6): isSameOriginPath accepts a protocol-relative address
       // such as //other.example/logo.png, which names another server; the
       // page's img-src 'self' blocks it, so it shows broken. Accept only a path
       // on this host: refuse a leading // and a backslash too.
@@ -563,7 +563,7 @@ router.post('/users/:id/resend-invite', async (req, res) => {
     // Admin Panel offers it. Anyone else has a password of their own, and a
     // reset link (POST /api/users/:id/send-reset-link) lasts an hour, not 7 days.
     if (user.lastLoginAt !== null) {
-      // TODO(accounts): the button this names reads "Send Reset Link" in the
+      // TODO(#6): the button this names reads "Send Reset Link" in the
       // Admin Panel; the message should spell it the same way.
       return res.status(409).json({
         error: 'Conflict',
@@ -1022,7 +1022,7 @@ async function writeBackupZip(dbUrl: string, withUploads: boolean): Promise<{ fi
     archive.file(sqlPath, { name: 'database.sql' });
     if (withUploads) {
       // Under an "uploads/" prefix, skipping the backups subdir older installs had there
-      // TODO(backups): the folder's own entry is named "backups", with no
+      // TODO(#7): the folder's own entry is named "backups", with no
       // slash, so the filter keeps it and every backup holds an empty
       // uploads/backups/ folder. Leave out entry.name === 'backups' too.
       archive.directory(UPLOADS_DIR, 'uploads', (entry) => {
@@ -1451,7 +1451,7 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
       await execFileAsync('node_modules/.bin/prisma', ['migrate', 'deploy']);
     } catch (execError: unknown) {
       logger.error('Migrations after restore failed', { stderr: errorStderr(execError), code: errorCode(execError) });
-      // TODO(restore): this return skips step 9, so a restore whose migrations
+      // TODO(#7): this return skips step 9, so a restore whose migrations
       // failed leaves no entry in the admin log although the database was
       // replaced. It should write the same best-effort entry before answering.
       return res.status(500).json({

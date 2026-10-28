@@ -163,7 +163,7 @@ export default function AssetUploadModal({
     const allowedTypes: Record<AssetType, string[]> = {
       [AssetType.MAP]: ['image/jpeg', 'image/png', 'image/webp'],
       [AssetType.TOKEN]: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-      // TODO(assets): audio/mp4 (M4A) passes here but the server refuses it
+      // TODO(#3): audio/mp4 (M4A) passes here but the server refuses it
       // (ALLOWED_MIME_TYPES in backend/src/utils/fileUtils.ts); use the server's list.
       [AssetType.AUDIO]: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4'],
       [AssetType.AVATAR]: ['image/jpeg', 'image/png', 'image/webp'],
@@ -176,7 +176,7 @@ export default function AssetUploadModal({
     }
 
     const allowed = allowedTypes[type];
-    // TODO(assets): Firefox reports a Vorbis .ogg as application/ogg and a .wav
+    // TODO(#3): Firefox reports a Vorbis .ogg as application/ogg and a .wav
     // as audio/x-wav, so this refuses both there while the server, which reads
     // the file's content, would take them. Check the extension too, or leave
     // the type to the server.

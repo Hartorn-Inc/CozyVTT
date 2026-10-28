@@ -62,7 +62,7 @@ export function useFocusTrap(isOpen: boolean, onClose?: () => void) {
     previousFocusRef.current = document.activeElement as HTMLElement;
 
     // Focus the first focusable element after the DOM has settled
-    // TODO(ui): this moves focus even when it is already inside the container,
+    // TODO(#6): this moves focus even when it is already inside the container,
     // so a field with autoFocus (the Create User email in AdminPage) loses it
     // to the dialog's first control, usually its Close button. Leave focus
     // where it is when the container already contains document.activeElement.

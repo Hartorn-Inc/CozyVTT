@@ -160,7 +160,7 @@ export function readJSONFile(file: File): Promise<unknown> {
  */
 export async function downloadMultipleCharactersZIP(characters: Character[]): Promise<void> {
   // For now, download each character individually
-  // TODO: Implement ZIP archive download using JSZip library
+  // TODO(#12): Implement ZIP archive download using JSZip library
   for (const character of characters) {
     downloadCharacterJSON(character);
     // Add small delay to prevent browser from blocking multiple downloads

@@ -1232,11 +1232,7 @@ router.put('/:id/set-current', campaignDM, async (req: AuthenticatedRequest, res
 // TOKEN MANIPULATION ENDPOINTS
 // ============================================
 
-// TODO(tokens): only the move route below tells open pages of its change.
-// Creating, updating or deleting a token here broadcasts nothing but the
-// initiative order; the web app follows each call with a map-change emit of
-// its own, so a change made by any other client stays unseen until the next
-// broadcast or a reload. Broadcast from these routes, as the move route does.
+// TODO(#2): broadcast live WebSocket map changes for token create, update, and delete REST routes
 
 /**
  * POST /api/campaigns/:campaignId/maps/:id/tokens

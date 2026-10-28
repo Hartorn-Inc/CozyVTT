@@ -112,7 +112,7 @@ export default function CharacterTemplateEditorModal({
     try {
       setTemplate(await api.updateCharacterTemplate(template.id, { data }));
     } catch (err) {
-      // TODO(ui): a refused sheet is reported here as "Template data does not
+      // TODO(#1): a refused sheet is reported here as "Template data does not
       // match game system schema", with no box named, so a player whose
       // template sheet is over a limit cannot tell what to shorten. Say it as
       // the character editors do, with refusedSaveMessage from
@@ -124,7 +124,7 @@ export default function CharacterTemplateEditorModal({
       );
       throw err;
     }
-    // TODO(ui): the sheet's token picker uploads the picture as the user's own
+    // TODO(#1): the sheet's token picker uploads the picture as the user's own
     // asset, and a template's picture must be a global one, so the server
     // refuses it; sending it would fail every save until the editor was
     // cancelled. The picker should be hidden here, or offer global assets.

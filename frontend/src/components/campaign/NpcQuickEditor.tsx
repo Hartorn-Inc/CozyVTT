@@ -1023,7 +1023,7 @@ export default function NpcQuickEditor({ token, campaignId, mapId, onClose, onTo
                 onChange={(e) => handleControllerChange(e.target.value === 'none' ? null : e.target.value)}
                 className="input-cozy w-full text-sm"
               >
-                {/* TODO(ui): only players are listed, so a token still
+                {/* TODO(#2): only players are listed, so a token still
                    naming a spectator or a former member has no matching
                    entry, the box shows the first option, and the hint below
                    still says "This player can move the token on the map."
