@@ -56,8 +56,8 @@ Chaque entrée issue de `docs/FUTURE_FEATURES.md` est soumise à une règle de t
   - `--check-unreferenced` : Mode garde-fou CI. Vérifie que tous les commentaires `TODO`/`FIXME` dans `backend/src/` et `frontend/src/` respectent le motif `TODO\(#[0-9a-zA-Z_-]+\)`. Si un commentaire sans référence est trouvé, le script écrit la liste des violations sur `sys.stderr` et termine avec un code de sortie `1`.
   - `--help` : Affiche l'aide.
 - **Règles de filtrage des répertoires** : Ignore obligatoirement `node_modules`, `dist`, `coverage`, `.git`, `.cursor`, `build`.
-- **Motifs recherchés** : `(?i)(?:TODO|FIXME|XXX)`.
-- **Motif valide en mode strict** : `TODO\(#[A-Za-z0-9_-]+\):?\s+`.
+- **Motifs recherchés** : `(?i)\b(?:TODO|FIXME|XXX)\b`.
+- **Motif valide en mode strict** : `\bTODO\(#[A-Za-z0-9_-]+\):?\s+`.
 
 ### 4.2 Script de Vérification des Liens Markdown : `scripts/check-markdown-links.py`
 
