@@ -86,7 +86,8 @@ def sources():
             if '__tests__' in normalised or normalised in seen:
                 continue
             seen.add(normalised)
-            yield path, io.open(path, encoding='utf-8').read()
+            with io.open(path, encoding='utf-8') as f:
+                yield path, f.read()
 
 
 def describe(text, index):

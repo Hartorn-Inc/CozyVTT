@@ -115,7 +115,7 @@ Le document `docs/reports/extracted-issues-backlog.md` regroupe l'ensemble des i
 | Réf Exigence | Description | Ticket Associé | Vérification CI / Test |
 | :--- | :--- | :--- | :--- |
 | **REQ-DOC-01** | Script d'inventaire et d'audit des TODOs avec support `--check-unreferenced` | Ticket 1 | `pytest scripts/tests/test_audit_backlog_todos.py` |
-| **REQ-DOC-02** | Script de vérification locale d'intégrité des liens Markdown et ancres | Ticket 2 | `pytest scripts/tests/test_check_markdown_links.py` |
+| **REQ-DOC-02** | Script de vérification locale d'intégrité des liens Markdown et ancres | Ticket 2 | `pytest scripts/tests/test_check_markdown_links.py` (Validé) |
 | **REQ-DOC-03** | Triage exhaustif de FUTURE_FEATURES.md, suppression du fichier et catalogue d'issues extraites | Ticket 3 | `scripts/check-markdown-links.py` et validation humaine |
 | **REQ-DOC-04** | Nettoyage et normalisation des TODOs dans le code source applicatif | Ticket 4 | `python3 scripts/audit-backlog-todos.py --check-unreferenced` + `npm test` |
 | **REQ-DOC-05** | Intégration des contrôles dans les tests de garde CI | Ticket 5 | `pytest scripts/tests/test_doc_checks.py` |
