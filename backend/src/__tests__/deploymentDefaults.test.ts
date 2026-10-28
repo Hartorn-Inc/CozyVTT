@@ -430,7 +430,7 @@ describe('the containers', () => {
   it('no longer records the non-superuser database role for later', () => {
     expect(read('SECURITY.md')).not.toMatch(/recorded for later/i);
     expect(read('SECURITY.md')).toMatch(/schema owner/i);
-    expect(read('docs/FUTURE_FEATURES.md')).not.toMatch(/A database role that is not a superuser/);
+    expect(fs.existsSync(path.join(root, 'docs/FUTURE_FEATURES.md'))).toBe(false);
   });
 
   it('are described in the README as they run: only the backend is said to drop to an unprivileged user', () => {
