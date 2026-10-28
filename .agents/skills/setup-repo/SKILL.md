@@ -5,7 +5,7 @@ description: Bootstrap or reconfigure an EPURE consumer repository with --dry-ru
 
 # `setup-repo` — Consumer Repository Bootstrap & Dynamic Roster Setup
 
-Use this skill locally (via Cursor, Claude Code, Pi, or Codex) to inspect the target repository's stack and domains, simulate (`--dry-run`), and apply the EPURE consumer repository setup without duplicating resources on subsequent runs ([ADR-0010](../../../docs/adr/0010-bootstrap-et-configuration-des-depots-consommateurs.md), [ADR-0023](../../../docs/adr/0023-sandbox-proxy-llm-et-stack-typescript.md), [ADR-0025](../../../docs/adr/0025-depot-public-epure-rulesets-et-tags-immuables.md), [ADR-0027](../../../docs/adr/0027-rulesets-roster-review-multi-agents-et-squash-ia.md)).
+Use this skill locally (via Cursor, Claude Code, Pi, or Codex) to inspect the target repository's stack and domains, simulate (`--dry-run`), and apply the EPURE consumer repository setup without duplicating resources on subsequent runs (ADR-0010, ADR-0023, ADR-0025, ADR-0027).
 
 ## Workflow
 

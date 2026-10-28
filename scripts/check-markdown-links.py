@@ -31,20 +31,27 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-IGNORED_DIRS = frozenset({'node_modules', 'dist', 'coverage', '.git', '.cursor', 'build'})
+IGNORED_DIRS = frozenset({'node_modules', 'dist', 'coverage', '.git', '.cursor', '.agents', 'build'})
 DOC_EXTENSIONS = frozenset({'.md', '.markdown'})
 
 EXTERNAL_SCHEMES = ('http://', 'https://', 'mailto:', 'tel:', 'ftp://', '//')
 
 
-def is_ignored_path(path):
+def is_ignored_path(path, root_dir=None):
     """Vérifie si un chemin traverse un des répertoires exclus."""
+    if root_dir is not None:
+        try:
+            rel = os.path.relpath(path, root_dir)
+            parts = set(os.path.normpath(rel).split(os.sep))
+            return bool(parts & IGNORED_DIRS)
+        except ValueError:
+            pass
     normalized = os.path.normpath(path)
     parts = set(normalized.split(os.sep))
     return bool(parts & IGNORED_DIRS)
 
 
-def mask_code_blocks(content):
+def mask_code_blocks(content, mask_inline=True):
     """
     Masque les blocs de code et commentaires en conservant la numérotation des lignes.
     Remplace le contenu des blocs par des espaces tout en préservant les sauts de ligne.
@@ -54,13 +61,14 @@ def mask_code_blocks(content):
         return ''.join('\n' if c == '\n' else ' ' for c in text)
 
     # Fenced code blocks
-    content = re.sub(r'(?ms)^([ \t]*)(`{3,}|~{3,})[^\n]*\n.*?\n\1\2[ \t]*$', mask_fenced, content)
+    content = re.sub(r'(?ms)^([ \t]*)(`{3,}|~{3,})[^\n]*\n.*?\n\1\2[ \t]*', mask_fenced, content)
 
     # HTML comments <!-- ... -->
     content = re.sub(r'(?s)<!--.*?-->', mask_fenced, content)
 
     # Inline code `...` (mono ou multi-lignes sans saut de paragraphe)
-    content = re.sub(r'`[^`\n]+`', lambda m: ' ' * len(m.group(0)), content)
+    if mask_inline:
+        content = re.sub(r'`[^`\n]+`', lambda m: ' ' * len(m.group(0)), content)
 
     return content
 
@@ -98,7 +106,7 @@ def extract_headings_and_anchors(content):
     Prend en compte la gestion des doublons (slug, slug-1, slug-2, etc.)
     ainsi que les éventuelles balises <a id="..."> ou <a name="...">.
     """
-    masked = mask_code_blocks(content)
+    masked = mask_code_blocks(content, mask_inline=False)
     slugs = set()
     slug_counts = {}
 
@@ -118,8 +126,17 @@ def extract_headings_and_anchors(content):
                 slug_counts[base_slug] += 1
                 slugs.add(f"{base_slug}-{slug_counts[base_slug]}")
 
+            # Gestion des ancres GitHub commençant par un tiret (ex: #-become-a-collaborator pour '### 🤝 Become a Collaborator')
+            clean_raw = re.sub(r'<[^>]+>', '', raw_title)
+            clean_raw = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', clean_raw)
+            clean_raw = re.sub(r'[`*_~]', '', clean_raw).lower()
+            clean_raw = re.sub(r'[^\w\s\-]', '', clean_raw)
+            leading_hyphen_slug = re.sub(r'\s', '-', clean_raw.rstrip())
+            if leading_hyphen_slug.startswith('-') and leading_hyphen_slug.lstrip('-') == base_slug:
+                slugs.add(leading_hyphen_slug)
+
     # 2. Balises HTML explicites <a id="..." ou name="...">
-    for m in re.finditer(r'<[a-zA-Z][^>]*\b(?:id|name)=["\']([^"\']+)["\']', content):
+    for m in re.finditer(r'<[a-zA-Z][^>]*\b(?:id|name)=["\"]([^"\"]+)["\"]', content):
         slugs.add(m.group(1))
 
     return slugs
@@ -185,16 +202,16 @@ def find_markdown_files(root_dir, specific_files=None):
         matched = []
         for f in specific_files:
             full = os.path.join(root_dir, f) if not os.path.isabs(f) else f
-            if os.path.isfile(full) and not is_ignored_path(full):
+            if os.path.isfile(full) and not is_ignored_path(full, root_dir):
                 matched.append(full)
         return sorted(matched)
 
     matched = []
     for dirpath, dirnames, filenames in os.walk(root_dir):
         dirnames[:] = [d for d in dirnames if d not in IGNORED_DIRS]
-        if is_ignored_path(dirpath):
+        if is_ignored_path(dirpath, root_dir):
             continue
-        for fname in filenames:
+        for fname in sorted(filenames):
             ext = os.path.splitext(fname)[1].lower()
             if ext in DOC_EXTENSIONS:
                 matched.append(os.path.join(dirpath, fname))
@@ -246,7 +263,10 @@ def validate_markdown_links(root_dir, specific_files=None):
                 continue
 
             # Cas 2 : Chemin relatif (avec ou sans ancre)
-            target_abs = os.path.normpath(os.path.join(source_abs_dir, link.clean_target))
+            if link.clean_target.startswith('/'):
+                target_abs = os.path.normpath(os.path.join(root_dir, link.clean_target.lstrip('/')))
+            else:
+                target_abs = os.path.normpath(os.path.join(source_abs_dir, link.clean_target))
             target_rel = os.path.relpath(target_abs, root_dir).replace(os.sep, '/')
 
             if not os.path.exists(target_abs):

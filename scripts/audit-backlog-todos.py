@@ -37,7 +37,7 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-IGNORED_DIRS = frozenset({'node_modules', 'dist', 'coverage', '.git', '.cursor', 'build'})
+IGNORED_DIRS = frozenset({'node_modules', 'dist', 'coverage', '.git', '.cursor', '.agents', 'build'})
 CODE_EXTENSIONS = frozenset({'.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'})
 DOC_EXTENSIONS = frozenset({'.md', '.markdown'})
 
