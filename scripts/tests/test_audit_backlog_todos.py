@@ -326,7 +326,7 @@ class TestInventoryReportGeneration(unittest.TestCase):
 
         with open(out_report, 'r', encoding='utf-8') as f:
             content = f.read()
-        self.assertIn('a \|\| b \| c', content)
+        self.assertIn(r'a \|\| b \| c', content)
 
     def test_creates_output_parent_directories_if_missing(self):
         self._write_file('backend/src/a.ts', '// TODO(#1): test\n')

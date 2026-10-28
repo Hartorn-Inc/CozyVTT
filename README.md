@@ -88,7 +88,7 @@ If you find a security issue, please report it privately per [SECURITY.md](SECUR
 - **8 font families** — open-source typefaces including medieval, elegant, modern, handwritten, and scholarly options, served by your own instance: visitors' browsers never fetch them from another site, and they work on a network with no internet access
 - **Live preview** — theme and font changes preview instantly before saving
 - **Default theme** — admin selects the theme shown on the login page and applied to brand-new users
-- **Custom branding** — the instance logo, mascot, and favicon can be replaced (swap the images in `frontend/public/` before building; an admin upload UI is [planned](docs/FUTURE_FEATURES.md))
+- **Custom branding** — the instance logo, mascot, and favicon can be replaced (swap the images in `frontend/public/` before building; an admin upload UI is tracked in GitHub Issues)
 
 ### Security
 - **Argon2id password hashing** (64 MB memory cost, timeCost 3)
@@ -284,7 +284,6 @@ Set these in `.env` and apply them with `docker compose up -d`; no rebuild is ne
 | [Game Systems](docs/GAME_SYSTEMS.md) | How to add new game system support |
 | [API Reference](docs/API_REFERENCE.md) | REST API and WebSocket event reference |
 | [WebSocket Events](backend/docs/WEBSOCKET_DOCUMENTATION.md) | Detailed Socket.io event schema |
-| [Future Features](docs/FUTURE_FEATURES.md) | Backlog of planned work |
 | [Security Policy](SECURITY.md) | How to report vulnerabilities |
 | [Changelog](CHANGELOG.md) | Release history |
 | [Third-Party Licenses](THIRD_PARTY_LICENSES.md) | Licences of the fonts, icons, libraries and game content CozyVTT uses |
