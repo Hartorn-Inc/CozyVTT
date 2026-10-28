@@ -116,7 +116,7 @@ export default function SetupWizardPage() {
     if (!adminData.displayName) {
       errors.displayName = 'Display name is required';
     } else if (adminData.displayName.length < 2) {
-      // TODO(accounts): the server accepts names of 1 to 50 characters
+      // TODO(#6): the server accepts names of 1 to 50 characters
       // (displayNameSchema), and Invite Player finds one-letter names; use its limits.
       errors.displayName = 'Display name must be at least 2 characters';
     }

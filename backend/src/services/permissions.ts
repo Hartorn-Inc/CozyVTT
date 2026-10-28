@@ -40,7 +40,7 @@ export function canEditCampaign(campaignRole: CampaignRole, platformRole: Platfo
   return isDM(campaignRole) || isAdmin(platformRole);
 }
 
-// TODO(sheets): nothing calls canEditCharacter, and it disagrees with
+// TODO(#1): nothing calls canEditCharacter, and it disagrees with
 // PUT /api/characters/:id, which decides this itself: it lets any admin edit,
 // it takes the campaign id from its caller instead of the character, and it
 // does not refuse a spectator who owns the character. Delete it, or make it

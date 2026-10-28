@@ -126,7 +126,7 @@ export default function CampaignSettingsModal({
       const seq = beginSettingsWrite();
       const updated = await campaignService.updateCampaign(campaign.id, {
         name: trimmedName,
-        // TODO(ui): an emptied box sends undefined, which leaves the field out
+        // TODO(#3): an emptied box sends undefined, which leaves the field out
         // of the request, so the server keeps the old description while this
         // panel says the settings were saved. Send null for an empty box; the
         // server accepts it and clears the description.
@@ -278,7 +278,7 @@ export default function CampaignSettingsModal({
                 {/* ── Tabs ── */}
                 <div className="flex gap-1 mt-4">
                   {(
-                    /* TODO(ui): a DM who is neither the owner nor an admin,
+                    /* TODO(#3): a DM who is neither the owner nor an admin,
                        such as one the game was handed to, still gets the
                        Danger Zone tab, and the server refuses its Delete
                        Campaign. Offer the tab only to the owner or an admin. */
@@ -324,7 +324,7 @@ export default function CampaignSettingsModal({
                       >
                         Campaign Name <span className="text-danger-ink">*</span>
                       </label>
-                      {/* TODO(ui): these boxes stop at 100 and 1000 characters,
+                      {/* TODO(#3): these boxes stop at 100 and 1000 characters,
                          while the server accepts a name of 200 and a
                          description of 5000. Use the server's limits,
                          declared in one place. */}

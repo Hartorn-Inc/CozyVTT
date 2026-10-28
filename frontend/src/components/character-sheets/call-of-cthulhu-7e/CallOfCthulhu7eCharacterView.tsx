@@ -487,7 +487,7 @@ export const CallOfCthulhu7eCharacterView: React.FC<CallOfCthulhu7eCharacterView
           the official sheet and are among the most consequential things it
           records — the rating caps maximum Sanity. Neither had anywhere to be
           shown or set in the app until now. */}
-      {/* TODO(ui): when Cthulhu Mythos is 0 and the spell list is empty this
+      {/* TODO(#1): when Cthulhu Mythos is 0 and the spell list is empty this
          condition is the number 0, which React renders as a stray "0" on the
          page. Compare both with > 0 so it is a boolean. */}
       {(data.spellsAndMythos?.cthulhuMythos || data.spellsAndMythos?.spells?.length) && (

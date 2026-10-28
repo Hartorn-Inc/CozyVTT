@@ -252,7 +252,7 @@ export default function TokenManager({ isOpen, onClose }: TokenManagerProps) {
       setSightRadius(0);
       setPlaceHidden(tokenType === TokenType.OBJECT);
     } catch {
-      // TODO(ui): a refusal is reported only as this fixed sentence, without
+      // TODO(#2): a refusal is reported only as this fixed sentence, without
       // the reason the server gave. Show apiErrorMessage(err) first, as the
       // move to another map below does.
       setError('Failed to add token to map');
@@ -834,7 +834,7 @@ export default function TokenManager({ isOpen, onClose }: TokenManagerProps) {
                                     Hidden
                                   </span>
                                 )}
-                                {/* TODO(ui): players holds only members whose role is
+                                {/* TODO(#2): players holds only members whose role is
                                    PLAYER, so a token still naming someone who became a
                                    spectator or left the campaign shows a "Player" chip.
                                    Show the chip only when the controller is found, or
@@ -875,7 +875,7 @@ export default function TokenManager({ isOpen, onClose }: TokenManagerProps) {
                                 )}
                               </button>
 
-                              {/* TODO(tokens): this is offered for objects too, while
+                              {/* TODO(#2): this is offered for objects too, while
                                  the map's right-click menu keeps objects on the
                                  material plane. Render it only when
                                  dmTokenControls(token.type).crossPlanes holds, as the
