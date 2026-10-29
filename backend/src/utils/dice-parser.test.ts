@@ -603,6 +603,112 @@ describe('Dice Parser', () => {
         expect(roll.total).toBe(keptSum);
       }
     });
+
+    test('custom RNG injection evaluates kh (keep highest) deterministically', () => {
+      const rollsSequence = [3, 1, 6, 2];
+      let idx = 0;
+      const mockRng = (sides: number) => {
+        expect(sides).toBe(6);
+        return rollsSequence[idx++];
+      };
+
+      const result = rollDice('4d6kh3', mockRng);
+      expect(result.rolls).toHaveLength(1);
+      expect(result.rolls[0].results).toEqual([3, 1, 6, 2]);
+      expect(result.rolls[0].kept).toEqual([6, 3, 2]);
+      expect(result.rolls[0].modifier).toBe('kh');
+      expect(result.rolls[0].modifierCount).toBe(3);
+      expect(result.total).toBe(11);
+      expect(result.formula).toBe('11');
+    });
+
+    test('custom RNG injection evaluates kl (keep lowest) deterministically', () => {
+      const rollsSequence = [5, 2, 6, 1];
+      let idx = 0;
+      const mockRng = (sides: number) => {
+        expect(sides).toBe(20);
+        return rollsSequence[idx++];
+      };
+
+      const result = rollDice('4d20kl2', mockRng);
+      expect(result.rolls[0].results).toEqual([5, 2, 6, 1]);
+      expect(result.rolls[0].kept).toEqual([1, 2]);
+      expect(result.rolls[0].modifier).toBe('kl');
+      expect(result.rolls[0].modifierCount).toBe(2);
+      expect(result.total).toBe(3);
+    });
+
+    test('custom RNG injection evaluates dh (drop highest) deterministically', () => {
+      const rollsSequence = [4, 6, 2, 5];
+      let idx = 0;
+      const mockRng = (sides: number) => {
+        expect(sides).toBe(6);
+        return rollsSequence[idx++];
+      };
+
+      const result = rollDice('4d6dh1', mockRng);
+      expect(result.rolls[0].results).toEqual([4, 6, 2, 5]);
+      expect(result.rolls[0].kept).toEqual([5, 4, 2]);
+      expect(result.rolls[0].modifier).toBe('dh');
+      expect(result.rolls[0].modifierCount).toBe(1);
+      expect(result.total).toBe(11);
+    });
+
+    test('custom RNG injection evaluates dl (drop lowest) deterministically', () => {
+      const rollsSequence = [3, 1, 6, 2];
+      let idx = 0;
+      const mockRng = (sides: number) => {
+        expect(sides).toBe(6);
+        return rollsSequence[idx++];
+      };
+
+      const result = rollDice('4d6dl1', mockRng);
+      expect(result.rolls[0].results).toEqual([3, 1, 6, 2]);
+      expect(result.rolls[0].kept).toEqual([2, 3, 6]);
+      expect(result.rolls[0].modifier).toBe('dl');
+      expect(result.rolls[0].modifierCount).toBe(1);
+      expect(result.total).toBe(11);
+    });
+
+    test('complex formulas evaluate precedence and associativity deterministically', () => {
+      const mockSequence = [4, 5, 3]; // 2d6 -> 4, 5; 1d4 -> 3
+      let idx = 0;
+      const mockRng = () => mockSequence[idx++];
+
+      const result = rollDice('(2d6 + 1d4) * 2 - 3', mockRng);
+      // 2d6 = 9, 1d4 = 3 => (9 + 3) * 2 - 3 = 12 * 2 - 3 = 24 - 3 = 21
+      expect(result.total).toBe(21);
+      expect(result.rolls).toHaveLength(3);
+      expect(result.rolls[0].total).toBe(9);
+      expect(result.rolls[1].total).toBe(3);
+      expect(result.rolls[2].value).toBe(3);
+    });
+
+    test('fractional division floors down with integer semantics', () => {
+      const mockRng = () => 5;
+      const result = rollDice('1d6 / 2', mockRng);
+      // 5 / 2 = 2.5 => Math.floor(2.5) = 2
+      expect(result.total).toBe(2);
+
+      const mockRngNeg = () => 2;
+      const negResult = rollDice('(1d6 - 5) / 2', mockRngNeg);
+      // (2 - 5) / 2 = -3 / 2 = -1.5 => Math.floor(-1.5) = -2
+      expect(negResult.total).toBe(-2);
+    });
+
+    test('dynamic division by zero throws DiceParserError during evaluation', () => {
+      const mockRng = () => 4;
+      expect(() => rollDice('10 / (1d6 - 4)', mockRng)).toThrow(DiceParserError);
+      expect(() => rollDice('10 / (1d6 - 4)', mockRng)).toThrow('Division by zero');
+    });
+
+    test('parseDiceExpression validates expressions purely without calling Math.random', () => {
+      const spy = jest.spyOn(Math, 'random');
+      expect(parseDiceExpression('4d6kh3 + 2d20kl1 + 5')).toBe(true);
+      expect(parseDiceExpression('1d100 * 2')).toBe(true);
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    });
   });
 });
 
