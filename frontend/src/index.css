@@ -1,6 +1,5 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+@config "../tailwind.config.js";
 
 @layer base {
   :root {
@@ -114,7 +113,7 @@
 
   /* Card */
   .card-cozy {
-    @apply glass-panel p-6 hover:shadow-xl transition-shadow duration-300;
+    @apply bg-white/10 backdrop-blur-cozy border border-white/20 rounded-cozy shadow-lg p-6 hover:shadow-xl transition-shadow duration-300;
   }
 
   /* ── Status messages ──
