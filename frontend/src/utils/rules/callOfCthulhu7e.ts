@@ -46,10 +46,6 @@ export function cocHalfAndFifth(regular: number): { half: number; fifth: number 
 
 /** Damage bonus and build, from STR plus SIZ (the rulebook's Table I). */
 export function cocDamageBonusAndBuild(str: number, siz: number): { damageBonus: string; build: number } {
-  // TODO(#152): above 524 the table goes on, adding 1D6 and 1 build for each
-  // further 80 points; this stops at +5D6 and build 6. No investigator reaches
-  // it (each characteristic stops at 99), but a creature entered on the sheet
-  // could. Extend the steps past 524.
   const total = str + siz;
   if (total <= 64) return { damageBonus: '-2', build: -2 };
   if (total <= 84) return { damageBonus: '-1', build: -1 };
@@ -59,7 +55,9 @@ export function cocDamageBonusAndBuild(str: number, siz: number): { damageBonus:
   if (total <= 284) return { damageBonus: '+2d6', build: 3 };
   if (total <= 364) return { damageBonus: '+3d6', build: 4 };
   if (total <= 444) return { damageBonus: '+4d6', build: 5 };
-  return { damageBonus: '+5d6', build: 6 };
+  if (total <= 524) return { damageBonus: '+5d6', build: 6 };
+  const extra = Math.ceil((total - 524) / 80);
+  return { damageBonus: `+${5 + extra}d6`, build: 6 + extra };
 }
 
 /**

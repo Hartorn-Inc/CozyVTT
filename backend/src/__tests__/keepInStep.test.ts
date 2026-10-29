@@ -485,6 +485,12 @@ describe('the character sheet limits', () => {
   });
 });
 
+describe('Call of Cthulhu 7e rules helpers parity', () => {
+  it('are byte-for-byte identical in frontend and backend', () => {
+    expect(read('frontend/src/utils/rules/callOfCthulhu7e.ts')).toBe(read('backend/src/utils/rules/callOfCthulhu7e.ts'));
+  });
+});
+
 describe('the socket flood ceilings in the WebSocket guide', () => {
   const guide = read('backend/docs/WEBSOCKET_DOCUMENTATION.md');
   const per: Record<number, string> = { 1000: 'a second', 10000: 'every ten seconds', 60000: 'a minute' };
