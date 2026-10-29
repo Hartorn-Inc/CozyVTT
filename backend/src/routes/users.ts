@@ -631,11 +631,9 @@ router.post('/:id/reset-password', requireAuth, requireAdmin, async (req: Reques
     // /api/auth/change-password); a stolen session must not read a new
     // temporary password for its own account here instead.
     if (id === req.session.userId) {
-      // TODO(#157): the Profile page's button reads "Change Password"; the
-      // message should spell it the same way.
       return res.status(400).json({
         error: 'Bad Request',
-        message: 'You cannot reset your own password from here. Use Change password on your profile, which asks for your current password.',
+        message: 'You cannot reset your own password from here. Use Change Password on your profile, which asks for your current password.',
       });
     }
 
