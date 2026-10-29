@@ -143,13 +143,8 @@ const loreSkillSchema = z.object({
 /**
  * Armor class
  */
-const armorClassSchema = z.object({
-  // TODO(#152): this minimum of 10, and the ones on the class DC total and the
-  // spell DC below, refuse a sheet whose derived value is under 10, which a
-  // negative modifier with an untrained rank produces (Dexterity -1 gives AC
-  // 9). The editor derives these, so such a sheet cannot be saved at all. Drop
-  // the minimums, or floor them at a value the formulas cannot go below.
-  total: z.number().int().min(10),
+export const armorClassSchema = z.object({
+  total: z.number().int().min(0),
   proficiencyRank: proficiencyRankSchema,
   capDex: z.number().int().nullable(),
   itemBonus: itemBonusSchema,
@@ -159,8 +154,8 @@ const armorClassSchema = z.object({
 /**
  * Class DC
  */
-const classDCSchema = z.object({
-  total: z.number().int().min(10),
+export const classDCSchema = z.object({
+  total: z.number().int().min(0),
   keyAttribute: shortText.min(1),
   proficiencyRank: proficiencyRankSchema,
 });
@@ -374,10 +369,19 @@ const spellAttackBonusSchema = z.object({
 /**
  * Spell DC
  */
-const spellDCSchema = z.object({
+export const spellDCSchema = z.object({
   proficiencyRank: proficiencyRankSchema,
   itemBonus: itemBonusSchema,
-  dc: z.number().int().min(10),
+  dc: z.number().int().min(0),
+});
+
+/**
+ * Spellcasting entry compatibility schema for DC total validation
+ */
+export const spellcastingEntrySchema = z.object({
+  dc: z.object({
+    total: z.number().int().min(0),
+  }),
 });
 
 /**
@@ -408,7 +412,7 @@ const innateSpellSchema = z.object({
  * Spellcasting
  * Most fields optional for progressive spellcasting setup
  */
-const spellcastingSchema = z.object({
+export const spellcastingSchema = z.object({
   tradition: shortText.min(1).optional(),
   type: shortText.min(1).optional(),
   keyAttribute: shortText.min(1).optional(),
