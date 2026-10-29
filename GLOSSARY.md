@@ -195,3 +195,17 @@ _Avoid_: Link check (for the property itself)
 **Dead backlog documentation**:
 Static markdown documents (such as `docs/FUTURE_FEATURES.md`) storing unmanaged feature proposals or outdated bug lists outside the primary issue tracker.
 _Avoid_: Archive, backlog file, future roadmap (for static documents)
+
+## Binary Content Verification
+
+**Magic Bytes**:
+The initial byte sequence of a binary file used by file format sniffers to deterministically identify the real media format, independent of the filename extension or HTTP `Content-Type` header.
+_Avoid_: File signature (unqualified), file header (when referring specifically to sniffer magic numbers)
+
+**Binary Fixture Helper**:
+A centralized test helper module (`backend/src/__tests__/helpers/binaryFixtures.ts`) providing minimal valid in-memory byte buffers for supported and unsupported media formats, ensuring tests run against the production `file-type` detector without external disk fixtures or stubs.
+_Avoid_: Mock file, fake buffer, test stub
+
+**Audio Fallback Sniffer**:
+The application-level frame sniffer invoked when the primary `file-type` detector returns undefined on raw, headerless audio streams (such as MPEG audio frames without ID3 tags).
+_Avoid_: Custom audio parser, fallback codec
