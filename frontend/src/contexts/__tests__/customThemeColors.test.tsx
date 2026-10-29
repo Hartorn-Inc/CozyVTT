@@ -57,8 +57,8 @@ describe('a Custom theme stored as hex colours', () => {
 
     render(<ThemeProvider><Grab /></ThemeProvider>);
 
-    await waitFor(() => expect(painted('--color-bg-base')).toBe('250 246 236'));
-    expect(painted('--color-accent')).toBe('212 165 90');
+    await waitFor(() => expect(painted('--color-bg-base-rgb')).toBe('250 246 236'));
+    expect(painted('--color-accent-rgb')).toBe('212 165 90');
     expect(allPainted().filter(([, value]) => value.includes('NaN') || value.includes('#'))).toEqual([]);
   });
 
@@ -69,7 +69,7 @@ describe('a Custom theme stored as hex colours', () => {
 
     act(() => applyUserPreferences({ themeId: 'custom', customThemeColors: CUSTOM }));
 
-    expect(painted('--color-bg-base')).toBe('250 246 236');
+    expect(painted('--color-bg-base-rgb')).toBe('250 246 236');
     expect(allPainted().filter(([, value]) => value.includes('NaN') || value.includes('#'))).toEqual([]);
   });
 
@@ -80,7 +80,7 @@ describe('a Custom theme stored as hex colours', () => {
 
     render(<ThemeProvider><Grab /></ThemeProvider>);
 
-    await waitFor(() => expect(painted('--color-bg-base')).not.toBe(''));
+    await waitFor(() => expect(painted('--color-bg-base-rgb')).not.toBe(''));
     expect(allPainted().filter(([, value]) => value.includes('NaN') || value.includes('red'))).toEqual([]);
   });
 });

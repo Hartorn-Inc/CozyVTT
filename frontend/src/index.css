@@ -1,53 +1,144 @@
-@import "tailwindcss";
-@config "../tailwind.config.js";
+@import 'tailwindcss';
+
+@theme {
+  /* ── Semantic theme colors (driven by base RGB channel custom properties) ── */
+  --color-brand: rgb(var(--color-brand-rgb));
+  --color-brand-dark: rgb(var(--color-brand-dark-rgb));
+  --color-accent: rgb(var(--color-accent-rgb));
+  --color-accent-hover: rgb(var(--color-accent-hover-rgb));
+  --color-accent-text: rgb(var(--color-accent-text-rgb));
+  --color-canvas: rgb(var(--color-bg-base-rgb));
+  --color-surface: rgb(var(--color-bg-surface-rgb));
+  --color-surface-light: rgb(var(--color-bg-surface-light-rgb));
+  --color-surface-dark: rgb(var(--color-bg-surface-dark-rgb));
+  --color-ink: rgb(var(--color-ink-rgb));
+  --color-ink-secondary: rgb(var(--color-ink-secondary-rgb));
+  --color-ink-muted: rgb(var(--color-ink-muted-rgb));
+  --color-paper: rgb(var(--color-paper-rgb));
+  --color-danger: rgb(var(--color-danger-rgb));
+  --color-spirit: rgb(var(--color-spirit-rgb));
+
+  /* ── Readable text variants ── */
+  --color-brand-ink: rgb(var(--color-brand-ink-rgb));
+  --color-accent-ink: rgb(var(--color-accent-ink-rgb));
+  --color-spirit-ink: rgb(var(--color-spirit-ink-rgb));
+  --color-danger-ink: rgb(var(--color-danger-ink-rgb));
+
+  /* ── Semantic states ── */
+  --color-success: rgb(var(--color-success-rgb));
+  --color-success-ink: rgb(var(--color-success-ink-rgb));
+  --color-warning: rgb(var(--color-warning-rgb));
+  --color-warning-ink: rgb(var(--color-warning-ink-rgb));
+  --color-info: rgb(var(--color-info-rgb));
+  --color-info-ink: rgb(var(--color-info-ink-rgb));
+
+  /* ── Historical aliases (resolve to the same CSS variables) ── */
+  --color-moss-green: rgb(var(--color-brand-rgb));
+  --color-forest-shadow: rgb(var(--color-brand-dark-rgb));
+  --color-warm-amber: rgb(var(--color-accent-rgb));
+  --color-sunset-orange: rgb(var(--color-accent-hover-rgb));
+  --color-soft-cream: rgb(var(--color-bg-base-rgb));
+  --color-parchment: rgb(var(--color-bg-surface-rgb));
+  --color-parchment-light: rgb(var(--color-bg-surface-light-rgb));
+  --color-parchment-dark: rgb(var(--color-bg-surface-dark-rgb));
+  --color-charcoal: rgb(var(--color-ink-rgb));
+  --color-warm-gray: rgb(var(--color-ink-secondary-rgb));
+  --color-stone-gray: rgb(var(--color-ink-muted-rgb));
+  --color-paper-white: rgb(var(--color-paper-rgb));
+  --color-spirit-red: rgb(var(--color-danger-rgb));
+  --color-spirit-purple: rgb(var(--color-spirit-rgb));
+
+  /* ── Call of Cthulhu 7e - Vintage 1920s Palette (static, not themed) ── */
+  --color-sepia-100: #F5EBD9;
+  --color-sepia-200: #E8D5B7;
+  --color-sepia-300: #D4B896;
+  --color-sepia-400: #C19A6B;
+  --color-sepia-500: #A67C52;
+  --color-sepia-600: #8B6939;
+  --color-sepia-700: #6B5230;
+  --color-sepia-800: #4A3C28;
+  --color-sepia-900: #2E2419;
+
+  /* ── Custom font families ── */
+  --font-heading: 'Quicksand', 'Comfortaa', sans-serif;
+  --font-body: 'Inter', 'Open Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+
+  /* ── Border radii ── */
+  --radius-cozy: 12px;
+  --radius-cozy-lg: 20px;
+
+  /* ── Backdrop blur ── */
+  --blur-cozy: 10px;
+
+  /* ── Custom animations ── */
+  --animate-fade-in: fadeIn 0.3s ease-in-out;
+  --animate-slide-in: slideIn 0.4s ease-out;
+  --animate-pulse-soft: pulseSoft 2s ease-in-out infinite;
+}
+
+/* ── Keyframe animations ── */
+@keyframes fadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes slideIn {
+  0% { transform: translateY(-10px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
 
 @layer base {
   :root {
     /* ── Theme Color Channels (R G B) ──
-       Stored as space-separated channels so Tailwind opacity modifiers work:
-       e.g. text-brand/50 → color: rgb(var(--color-brand) / 0.5)            */
+       Stored as space-separated channels without colliding with Tailwind theme properties. */
 
     /* Primary brand */
-    --color-brand: 74 93 78;
-    --color-brand-dark: 44 62 47;
+    --color-brand-rgb: 74 93 78;
+    --color-brand-dark-rgb: 44 62 47;
 
     /* Accent / CTA */
-    --color-accent: 212 165 116;
-    --color-accent-hover: 232 158 91;
-    --color-accent-text: 44 62 47;
+    --color-accent-rgb: 212 165 116;
+    --color-accent-hover-rgb: 232 158 91;
+    --color-accent-text-rgb: 44 62 47;
 
     /* Backgrounds */
-    --color-bg-base: 255 249 230;
-    --color-bg-surface: 244 236 216;
-    --color-bg-surface-light: 251 247 238;
-    --color-bg-surface-dark: 224 212 184;
+    --color-bg-base-rgb: 255 249 230;
+    --color-bg-surface-rgb: 244 236 216;
+    --color-bg-surface-light-rgb: 251 247 238;
+    --color-bg-surface-dark-rgb: 224 212 184;
 
     /* Text */
-    --color-ink: 31 41 55;
-    --color-ink-secondary: 107 96 90;
-    --color-ink-muted: 107 114 128;
+    --color-ink-rgb: 31 41 55;
+    --color-ink-secondary-rgb: 107 96 90;
+    --color-ink-muted-rgb: 107 114 128;
 
     /* Utility */
-    --color-paper: 254 254 254;
-    --color-danger: 192 57 43;
+    --color-paper-rgb: 254 254 254;
+    --color-danger-rgb: 192 57 43;
 
     /* Game-specific (not theme-dependent) */
-    --color-spirit: 147 112 219;
+    --color-spirit-rgb: 147 112 219;
 
     /* ── Readable text variants and state colors ──
        Overwritten per theme by applyThemeColors() → deriveReadableTokens();
        these defaults match the Cozy Default palette so the app renders
        correctly during the first paint, before a theme is applied. */
-    --color-brand-ink: 74 93 78;
-    --color-accent-ink: 138 90 43;
-    --color-spirit-ink: 106 71 178;
-    --color-danger-ink: 176 46 33;
-    --color-success: 34 139 68;
-    --color-success-ink: 30 122 60;
-    --color-warning: 191 129 20;
-    --color-warning-ink: 148 100 15;
-    --color-info: 37 99 190;
-    --color-info-ink: 37 99 190;
+    --color-brand-ink-rgb: 74 93 78;
+    --color-accent-ink-rgb: 138 90 43;
+    --color-spirit-ink-rgb: 106 71 178;
+    --color-danger-ink-rgb: 176 46 33;
+    --color-success-rgb: 34 139 68;
+    --color-success-ink-rgb: 30 122 60;
+    --color-warning-rgb: 191 129 20;
+    --color-warning-ink-rgb: 148 100 15;
+    --color-info-rgb: 37 99 190;
+    --color-info-ink-rgb: 37 99 190;
 
     /* ── Font Families ── */
     --font-heading: 'Quicksand', 'Comfortaa', sans-serif;
@@ -200,7 +291,7 @@
 }
 
 [data-separator]:focus-visible {
-  outline: 2px solid rgb(var(--color-brand));
+  outline: 2px solid rgb(var(--color-brand-rgb));
   outline-offset: 2px;
 }
 
