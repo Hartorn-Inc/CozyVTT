@@ -17,6 +17,7 @@ import { authenticated } from '../middleware/compose';
 import { prisma } from '../config/database';
 import { GameSystem, gameSystemSheetFrozenError, isGameSystemSheetFrozen } from '../game-systems';
 import { readEnumQuery } from '../utils/queryEnum';
+import { escapeLikePattern } from '../utils/likePattern';
 import { validateCharacterData, validateFlexibleSheet, sheetIssues } from '../validators/game-systems';
 import { migrateLegacySheetFields } from '../utils/sheetFieldMigrations';
 import {
@@ -197,8 +198,7 @@ router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) 
     const where: Record<string, unknown> = {};
 
     if (search && typeof search === 'string') {
-      // TODO(#152): `search` reaches PostgreSQL as an unescaped LIKE pattern, so a % or _ in it matches any text; pass it through escapeLikePattern (utils/likePattern) so it matches only itself.
-      where.name = { contains: search, mode: 'insensitive' };
+      where.name = { contains: escapeLikePattern(search), mode: 'insensitive' };
     }
     if (gameSystem !== undefined) {
       where.gameSystem = gameSystem === 'flexible' ? null : gameSystem;

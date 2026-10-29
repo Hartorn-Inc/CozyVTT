@@ -4,7 +4,7 @@ import { authenticated } from '../middleware/compose';
 import { prisma } from '../config/database';
 import type { CampaignRole, Prisma } from '@prisma/client';
 import { normalizeAssetUrl } from '../utils/asset-urls';
-import { canReferenceAsset } from '../services/permissions';
+import { canReferenceAsset, canEditCharacter } from '../services/permissions';
 import { GameSystem, gameSystemSheetFrozenError, isGameSystemSheetFrozen } from '../game-systems';
 import { validateCharacterData, sheetNameFor } from '../validators/game-systems';
 import { CreateCharacterSchema, UpdateCharacterSchema } from '../validators/characters';
@@ -802,34 +802,23 @@ router.put('/:id', authenticated, async (req: AuthenticatedRequest, res: Respons
       });
     }
 
-    // Check authorization: the owner, or the DM of the character's campaign.
-    // A spectator in that campaign may not edit even their own character: a
-    // token bound to it follows the sheet on every screen (its bar, its
-    // downed fade, its picture), and spectators change nothing at the table.
-    const membership = character.campaignId
-      ? await prisma.campaignMembership.findUnique({
-          where: { userId_campaignId: { userId, campaignId: character.campaignId } },
-        })
-      : null;
-    if (membership?.role === 'SPECTATOR') {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Spectators cannot edit a character in this campaign',
-      });
-    }
-    const isAuthorized =
-      character.userId === userId ||
-      (membership?.role === 'DM' && character.campaignId !== null && (await ownerStillIn(character.userId, character.campaignId)));
-    // The Keeper (the DM of the character's campaign) alone reads and writes
-    // the Keeper's Notes.
-    const keeper = membership?.role === 'DM';
-
-    if (!isAuthorized) {
+    // Delegate authorization check to canEditCharacter canonical authority (ADR-0014, ADR-0021)
+    const permResult = await canEditCharacter(userId, character);
+    if (!permResult.allowed) {
+      if (permResult.reason === 'SPECTATOR') {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Spectators cannot edit a character in this campaign',
+        });
+      }
       return res.status(403).json({
         error: 'Forbidden',
         message: 'You do not have permission to edit this character',
       });
     }
+    // The Keeper (the DM of the character's campaign) alone reads and writes
+    // the Keeper's Notes.
+    const keeper = permResult.isDM === true;
 
     // Prevent changing gameSystem after creation. Checked after the permission
     // check, so the answer tells a stranger nothing about the character.
