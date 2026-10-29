@@ -8,6 +8,7 @@
 
 import type { FogState } from '@/types/walls';
 import type { Viewport } from './types';
+import { buildFogRaster, compositeFogRaster } from '../fogRaster';
 
 export interface FogDrawState {
   isDM: boolean;
@@ -23,6 +24,10 @@ export interface FogDrawState {
   exemptCells?: ReadonlySet<number>;
   /** Per-cell reveal-fade opacity (1 = just revealed → 0 = faded in). */
   revealOpacity: ReadonlyMap<number, number>;
+  /** Cached 1px-per-cell offscreen raster canvas representing base fog state. */
+  raster?: HTMLCanvasElement | null;
+  /** Reusable offscreen scratch canvas for dynamic compositing. */
+  scratchCanvas?: HTMLCanvasElement | null;
 }
 
 export function drawFog(
@@ -33,23 +38,25 @@ export function drawFog(
   // DM fog (semi-transparent, from full fogState)
   if (state.isDM && state.fogState) {
     const { fogCols, fogRows, cellPx, revealed } = state.fogState;
+    if (fogCols <= 0 || fogRows <= 0) return;
+    const mapWidthPx = fogCols * cellPx;
+    const mapHeightPx = fogRows * cellPx;
+    const baseRaster = state.raster ?? buildFogRaster(fogCols, fogRows, true, revealed);
+    const finalRaster = compositeFogRaster(
+      baseRaster,
+      fogCols,
+      fogRows,
+      true,
+      undefined,
+      state.revealOpacity,
+      state.scratchCanvas
+    );
+
     ctx.save();
-    ctx.fillStyle = 'rgba(15, 12, 25, 0.55)'; // deep dark purple, semi-transparent for DM
-    for (let row = 0; row < fogRows; row++) {
-      for (let col = 0; col < fogCols; col++) {
-        const idx = row * fogCols + col;
-        if (!revealed[idx]) {
-          const fadeOpacity = state.revealOpacity.get(idx);
-          if (fadeOpacity !== undefined) {
-            ctx.fillStyle = `rgba(15, 12, 25, ${0.55 * fadeOpacity})`;
-            ctx.fillRect(col * cellPx, row * cellPx, cellPx, cellPx);
-            ctx.fillStyle = 'rgba(15, 12, 25, 0.55)';
-          } else {
-            ctx.fillRect(col * cellPx, row * cellPx, cellPx, cellPx);
-          }
-        }
-      }
-    }
+    const prevSmoothing = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(finalRaster, 0, 0, mapWidthPx, mapHeightPx);
+    ctx.imageSmoothingEnabled = prevSmoothing;
     ctx.restore();
   }
 
@@ -58,19 +65,25 @@ export function drawFog(
     const cellPx = viewport.gridSize;
     const fogCols = viewport.mapWidth;
     const fogRows = viewport.mapHeight;
+    if (fogCols <= 0 || fogRows <= 0) return;
+    const mapWidthPx = fogCols * cellPx;
+    const mapHeightPx = fogRows * cellPx;
+    const baseRaster = state.raster ?? buildFogRaster(fogCols, fogRows, false, state.revealedCells);
+    const finalRaster = compositeFogRaster(
+      baseRaster,
+      fogCols,
+      fogRows,
+      false,
+      state.exemptCells,
+      state.revealOpacity,
+      state.scratchCanvas
+    );
+
     ctx.save();
-    for (let row = 0; row < fogRows; row++) {
-      for (let col = 0; col < fogCols; col++) {
-        const idx = row * fogCols + col;
-        if (!state.revealedCells.has(idx) && !state.exemptCells?.has(idx)) {
-          const fadeOpacity = state.revealOpacity.get(idx);
-          ctx.fillStyle = fadeOpacity !== undefined
-            ? `rgba(15, 12, 25, ${fadeOpacity})`
-            : 'rgba(15, 12, 25, 1)';
-          ctx.fillRect(col * cellPx, row * cellPx, cellPx, cellPx);
-        }
-      }
-    }
+    const prevSmoothing = ctx.imageSmoothingEnabled;
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(finalRaster, 0, 0, mapWidthPx, mapHeightPx);
+    ctx.imageSmoothingEnabled = prevSmoothing;
     ctx.restore();
   }
 }

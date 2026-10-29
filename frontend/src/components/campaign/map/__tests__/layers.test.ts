@@ -53,6 +53,7 @@ function makeMockCtx(): MockCtx {
     lineCap: 'butt',
     lineJoin: 'miter',
     filter: 'none',
+    imageSmoothingEnabled: true,
     save: record('save'),
     restore: record('restore'),
     beginPath: record('beginPath'),
