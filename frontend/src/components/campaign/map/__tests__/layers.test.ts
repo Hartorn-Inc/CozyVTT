@@ -30,6 +30,7 @@ interface RecordedCall {
   args: unknown[];
   /** The fillStyle in force when a fillRect was recorded. */
   fillStyle?: string;
+  imageSmoothingEnabled?: boolean;
 }
 
 type MockCtx = CanvasRenderingContext2D & { calls: RecordedCall[] };
@@ -53,6 +54,7 @@ function makeMockCtx(): MockCtx {
     lineCap: 'butt',
     lineJoin: 'miter',
     filter: 'none',
+    imageSmoothingEnabled: true,
     save: record('save'),
     restore: record('restore'),
     beginPath: record('beginPath'),
@@ -68,7 +70,9 @@ function makeMockCtx(): MockCtx {
     fillRect(this: { fillStyle: unknown }, ...args: unknown[]) { calls.push({ method: 'fillRect', args, fillStyle: String(this.fillStyle) }); },
     strokeRect: record('strokeRect'),
     clearRect: record('clearRect'),
-    drawImage: record('drawImage'),
+    drawImage(this: { imageSmoothingEnabled: boolean }, ...args: unknown[]) {
+      calls.push({ method: 'drawImage', args, imageSmoothingEnabled: this.imageSmoothingEnabled });
+    },
     fillText: record('fillText'),
     setLineDash: record('setLineDash'),
     setTransform: record('setTransform'),
@@ -162,7 +166,7 @@ describe('drawGrid', () => {
 });
 
 describe('drawFog', () => {
-  it('player fog fills only unrevealed cells', () => {
+  it('player fog fills unrevealed cells via raster drawImage with zero fillRect calls', () => {
     const ctx = makeMockCtx();
     drawFog(ctx, {
       isDM: false,
@@ -170,7 +174,10 @@ describe('drawFog', () => {
       revealedCells: new Set([0, 4]), // 2 of 9 cells revealed
       revealOpacity: new Map(),
     }, viewport3x3);
-    expect(count(ctx, 'fillRect')).toBe(7);
+    expect(count(ctx, 'drawImage')).toBe(1);
+    expect(count(ctx, 'fillRect')).toBe(0);
+    const draw = ctx.calls.find((c) => c.method === 'drawImage');
+    expect(draw?.args).toEqual([expect.any(HTMLCanvasElement), 0, 0, 150, 150]);
   });
 
   it('skips player fog entirely until fog data arrives (revealedCells null)', () => {
@@ -179,15 +186,24 @@ describe('drawFog', () => {
     expect(ctx.calls).toHaveLength(0);
   });
 
-  it('paints a player\'s unrevealed cells fully opaque, so nothing under them shows through', () => {
+  it('skips DM fog entirely when fogState is null', () => {
     const ctx = makeMockCtx();
-    drawFog(ctx, { isDM: false, fogState: null, revealedCells: new Set([4]), revealOpacity: new Map() }, viewport3x3);
-    const fills = ctx.calls.filter((c) => c.method === 'fillRect');
-    expect(fills).toHaveLength(8);
-    for (const f of fills) expect(f.fillStyle).toBe('rgba(15, 12, 25, 1)');
+    drawFog(ctx, { isDM: true, fogState: null, revealedCells: null, revealOpacity: new Map() }, viewport3x3);
+    expect(ctx.calls).toHaveLength(0);
   });
 
-  it('keeps the DM\'s fog translucent, so the DM can still work under it', () => {
+  it('disables smoothing during raster drawImage and restores context lifecycle', () => {
+    const ctx = makeMockCtx();
+    drawFog(ctx, { isDM: false, fogState: null, revealedCells: new Set([4]), revealOpacity: new Map() }, viewport3x3);
+    expect(count(ctx, 'drawImage')).toBe(1);
+    expect(count(ctx, 'fillRect')).toBe(0);
+    expect(methods(ctx)).toEqual(['save', 'drawImage', 'restore']);
+    const draw = ctx.calls.find((c) => c.method === 'drawImage');
+    expect(draw?.imageSmoothingEnabled).toBe(false);
+    expect(ctx.imageSmoothingEnabled).toBe(true);
+  });
+
+  it('DM fog composites via raster drawImage with scaling dimensions from fogCols and cellPx', () => {
     const ctx = makeMockCtx();
     drawFog(ctx, {
       isDM: true,
@@ -195,10 +211,13 @@ describe('drawFog', () => {
       revealedCells: null,
       revealOpacity: new Map(),
     }, viewport3x3);
-    for (const f of ctx.calls.filter((c) => c.method === 'fillRect')) expect(f.fillStyle).toBe('rgba(15, 12, 25, 0.55)');
+    expect(count(ctx, 'drawImage')).toBe(1);
+    expect(count(ctx, 'fillRect')).toBe(0);
+    const draw = ctx.calls.find((c) => c.method === 'drawImage');
+    expect(draw?.args).toEqual([expect.any(HTMLCanvasElement), 0, 0, 150, 150]);
   });
 
-  it('leaves the cells a player\'s own tokens stand on clear, even when unrevealed', () => {
+  it('leaves the cells a player\'s own tokens stand on clear, delegating to raster compositing', () => {
     const ctx = makeMockCtx();
     drawFog(ctx, {
       isDM: false,
@@ -207,7 +226,10 @@ describe('drawFog', () => {
       exemptCells: new Set([4, 8]),
       revealOpacity: new Map(),
     }, viewport3x3);
-    expect(count(ctx, 'fillRect')).toBe(6);
+    expect(count(ctx, 'drawImage')).toBe(1);
+    expect(count(ctx, 'fillRect')).toBe(0);
+    const draw = ctx.calls.find((c) => c.method === 'drawImage');
+    expect(draw?.args).toEqual([expect.any(HTMLCanvasElement), 0, 0, 150, 150]);
   });
 
   it('player fog never reads the full fog grid, only the revealed set', () => {
@@ -229,7 +251,11 @@ describe('drawFog', () => {
       revealedCells: null,
       revealOpacity: new Map(),
     }, viewport3x3);
-    expect(count(ctx, 'fillRect')).toBe(7);
+    expect(count(ctx, 'drawImage')).toBe(1);
+    expect(count(ctx, 'fillRect')).toBe(0);
+    const draw = ctx.calls.find((c) => c.method === 'drawImage');
+    expect(draw?.args).toEqual([expect.any(HTMLCanvasElement), 0, 0, 150, 150]);
+    expect(methods(ctx)).toEqual(['save', 'drawImage', 'restore']);
   });
 });
 
