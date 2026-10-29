@@ -26,6 +26,8 @@ import type {
   DnD5eSpellSlots,
   DnD5eAppearance,
   DnD5ePersonality,
+  DnD5eDeathSaves,
+  DnD5eHitPoints,
   SheetChrome,
 } from '../../../types/game-systems';
 import { apiErrorMessage } from '@/utils/errors';
@@ -152,22 +154,134 @@ function withoutOrphanFeatures(sheet: DnD5eFormData): DnD5eFormData {
   return settled;
 }
 
+const DEFAULT_ABILITY_SCORE = 10;
+
+const SKILL_ABILITIES: Record<keyof DnD5eSkills, keyof DnD5eStats> = {
+  acrobatics: 'dexterity',
+  animalHandling: 'wisdom',
+  arcana: 'intelligence',
+  athletics: 'strength',
+  deception: 'charisma',
+  history: 'intelligence',
+  insight: 'wisdom',
+  intimidation: 'charisma',
+  investigation: 'intelligence',
+  medicine: 'wisdom',
+  nature: 'intelligence',
+  perception: 'wisdom',
+  performance: 'charisma',
+  persuasion: 'charisma',
+  religion: 'intelligence',
+  sleightOfHand: 'dexterity',
+  stealth: 'dexterity',
+  survival: 'wisdom',
+};
+
 /**
- * Skills or saving throws with the other bonus a sheet saved before it existed
- * implies, so their totals do not change when the editor works them out.
- *
- * Run once, on the sheet as it was stored. Doing it in an effect would read a
- * total the editor had just worked out from a changed score as one typed by
- * hand, and record the change as a bonus.
+ * Structural defaults for the six ability scores.
+ * Guarantees every ability exists with score (default 10) and its calculated modifier.
  */
-function withRecordedOtherBonuses<T extends object>(entries: T, backfill: (key: string) => number | null): T {
-  const next = { ...entries } as Record<string, unknown>;
-  for (const key of Object.keys(next)) {
-    const entry = next[key];
-    const other = backfill(key);
-    if (other !== null && entry && typeof entry === 'object') next[key] = { ...entry, otherBonus: other };
+function createDefaultStats(rawStats?: unknown): DnD5eStats {
+  const source = typeof rawStats === 'object' && rawStats !== null ? (rawStats as Record<string, unknown>) : {};
+  const stats: Partial<DnD5eStats> = {};
+  for (const ability of DND5E_ABILITY_NAMES) {
+    const raw = typeof source[ability] === 'object' && source[ability] !== null
+      ? (source[ability] as Record<string, unknown>)
+      : {};
+    const score = typeof raw.score === 'number' && Number.isFinite(raw.score) ? raw.score : DEFAULT_ABILITY_SCORE;
+    const modifier = typeof raw.modifier === 'number' && Number.isFinite(raw.modifier)
+      ? raw.modifier
+      : calculateModifier(score);
+    stats[ability] = { score, modifier };
   }
-  return next as T;
+  return stats as DnD5eStats;
+}
+
+/**
+ * Structural defaults for saving throws across all six abilities.
+ * Backfills any legacy difference as otherBonus strictly once upon initial hydration.
+ */
+function createDefaultSavingThrows(
+  rawSavingThrows: unknown,
+  rawSheet: DnD5eFormData,
+  stats: DnD5eStats,
+  proficiencyBonus: number
+): DnD5eSavingThrows {
+  const source = typeof rawSavingThrows === 'object' && rawSavingThrows !== null
+    ? (rawSavingThrows as Record<string, unknown>)
+    : {};
+  const savingThrows: Partial<DnD5eSavingThrows> = {};
+  for (const ability of DND5E_ABILITY_NAMES) {
+    const raw = typeof source[ability] === 'object' && source[ability] !== null
+      ? (source[ability] as Record<string, unknown>)
+      : {};
+    const proficient = raw.proficient === true;
+    const backfill = dnd5eBackfilledSaveOtherBonus(rawSheet, ability);
+    const other = typeof raw.otherBonus === 'number' && Number.isFinite(raw.otherBonus)
+      ? bonusWithinRange(raw.otherBonus)
+      : (backfill !== null ? withinBonusRange(backfill) : undefined);
+    const abilityMod = stats[ability]?.modifier ?? 0;
+    const derived = abilityMod + (proficient ? proficiencyBonus : 0) + (other ?? 0);
+    const bonus = typeof raw.bonus === 'number' && Number.isFinite(raw.bonus) ? raw.bonus : derived;
+    savingThrows[ability] = {
+      proficient,
+      bonus,
+      ...(other !== undefined ? { otherBonus: other } : {}),
+    };
+  }
+  return savingThrows as DnD5eSavingThrows;
+}
+
+/**
+ * Structural defaults for all 18 skills.
+ * Backfills any legacy difference as otherBonus strictly once upon initial hydration.
+ */
+function createDefaultSkills(
+  rawSkills: unknown,
+  rawSheet: DnD5eFormData,
+  stats: DnD5eStats,
+  proficiencyBonus: number
+): DnD5eSkills {
+  const source = typeof rawSkills === 'object' && rawSkills !== null
+    ? (rawSkills as Record<string, unknown>)
+    : {};
+  const skills: Partial<DnD5eSkills> = {};
+  for (const skill of Object.keys(SKILL_ABILITIES) as (keyof DnD5eSkills)[]) {
+    const raw = typeof source[skill] === 'object' && source[skill] !== null
+      ? (source[skill] as Record<string, unknown>)
+      : {};
+    const proficient = raw.proficient === true;
+    const expertise = raw.expertise === true;
+    const backfill = dnd5eBackfilledSkillOtherBonus(rawSheet, skill);
+    const other = typeof raw.otherBonus === 'number' && Number.isFinite(raw.otherBonus)
+      ? bonusWithinRange(raw.otherBonus)
+      : (backfill !== null ? withinBonusRange(backfill) : undefined);
+    const ability = SKILL_ABILITIES[skill];
+    const abilityMod = stats[ability]?.modifier ?? 0;
+    const derived = abilityMod + (expertise ? proficiencyBonus * 2 : proficient ? proficiencyBonus : 0) + (other ?? 0);
+    const bonus = typeof raw.bonus === 'number' && Number.isFinite(raw.bonus) ? raw.bonus : derived;
+    skills[skill] = {
+      proficient,
+      expertise,
+      bonus,
+      ...(other !== undefined ? { otherBonus: other } : {}),
+    };
+  }
+  return skills as DnD5eSkills;
+}
+
+/**
+ * Structural defaults for death saves.
+ */
+function createDefaultDeathSaves(rawDeathSaves?: unknown): DnD5eDeathSaves {
+  const source = typeof rawDeathSaves === 'object' && rawDeathSaves !== null
+    ? (rawDeathSaves as Record<string, unknown>) : {};
+  const count = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) ? Math.min(3, Math.max(0, Math.trunc(value))) : 0;
+  return {
+    successes: count(source.successes),
+    failures: count(source.failures),
+  };
 }
 
 /**
@@ -252,8 +366,77 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   // anything was saved.
   const [formData, setFormData] = useState<DnD5eFormData>(() => {
     const own = JSON.parse(JSON.stringify(data ?? {})) as DnD5eFormData;
+    const profBonus = typeof own.proficiencyBonus === 'number' && Number.isFinite(own.proficiencyBonus)
+      ? own.proficiencyBonus
+      : 2;
+    const stats = createDefaultStats(own.stats);
+    const savingThrows = createDefaultSavingThrows(own.savingThrows, own, stats, profBonus);
+    const skills = createDefaultSkills(own.skills, own, stats, profBonus);
+    const hp: DnD5eHitPoints = {
+      maximum: typeof own.hp?.maximum === 'number' && Number.isFinite(own.hp.maximum) ? own.hp.maximum : 0,
+      current: typeof own.hp?.current === 'number' && Number.isFinite(own.hp.current) ? own.hp.current : 0,
+      temporary: typeof own.hp?.temporary === 'number' && Number.isFinite(own.hp.temporary) ? own.hp.temporary : 0,
+    };
+    const deathSaves = createDefaultDeathSaves(own.deathSaves);
+
+    // Spellcasting backfill runs strictly once during hydration, reading the
+    // sheet as loaded so interactive ability changes later do not inject negative offsets.
+    const rawSpellcasting = own.spellcasting;
+    const sheetWithStats = { ...own, stats, proficiencyBonus: profBonus };
+    const dcBackfillRead = rawSpellcasting ? dnd5eBackfilledSpellSaveDCBonus(sheetWithStats) : null;
+    const attackBackfillRead = rawSpellcasting ? dnd5eBackfilledSpellAttackBonus(sheetWithStats) : null;
+    const spellSaveDCOtherBonus = rawSpellcasting?.spellSaveDCOtherBonus != null
+      ? bonusWithinRange(rawSpellcasting.spellSaveDCOtherBonus)
+      : (dcBackfillRead !== null ? withinBonusRange(dcBackfillRead) : undefined);
+    const spellAttackOtherBonus = rawSpellcasting?.spellAttackOtherBonus != null
+      ? bonusWithinRange(rawSpellcasting.spellAttackOtherBonus)
+      : (attackBackfillRead !== null ? withinBonusRange(attackBackfillRead) : undefined);
+
+    const spellcasting: DnD5eSpellcasting = rawSpellcasting
+      ? {
+          class: rawSpellcasting.class || '',
+          ability: rawSpellcasting.ability || '',
+          spellSaveDC: typeof rawSpellcasting.spellSaveDC === 'number' && Number.isFinite(rawSpellcasting.spellSaveDC)
+            ? rawSpellcasting.spellSaveDC
+            : 0,
+          spellAttackBonus: typeof rawSpellcasting.spellAttackBonus === 'number' && Number.isFinite(rawSpellcasting.spellAttackBonus)
+            ? rawSpellcasting.spellAttackBonus
+            : 0,
+          cantrips: rawSpellcasting.cantrips || [],
+          slots: withAllSlotLevels(rawSpellcasting.slots),
+          spells: rawSpellcasting.spells || [],
+          ...(spellSaveDCOtherBonus !== undefined ? { spellSaveDCOtherBonus } : {}),
+          ...(spellAttackOtherBonus !== undefined ? { spellAttackOtherBonus } : {}),
+        }
+      : {
+          class: '',
+          ability: '',
+          spellSaveDC: 0,
+          spellAttackBonus: 0,
+          cantrips: [],
+          slots: withAllSlotLevels(undefined),
+          spells: [],
+        };
+
+    const appearance: DnD5eAppearance = {
+      age: typeof own.appearance?.age === 'number' && Number.isFinite(own.appearance.age) ? own.appearance.age : 0,
+      height: typeof own.appearance?.height === 'string' ? own.appearance.height : '',
+      weight: typeof own.appearance?.weight === 'string' ? own.appearance.weight : '',
+      eyes: typeof own.appearance?.eyes === 'string' ? own.appearance.eyes : '',
+      skin: typeof own.appearance?.skin === 'string' ? own.appearance.skin : '',
+      hair: typeof own.appearance?.hair === 'string' ? own.appearance.hair : '',
+    };
+
+    const personality: DnD5ePersonality = {
+      traits: typeof own.personality?.traits === 'string' ? own.personality.traits : '',
+      ideals: typeof own.personality?.ideals === 'string' ? own.personality.ideals : '',
+      bonds: typeof own.personality?.bonds === 'string' ? own.personality.bonds : '',
+      flaws: typeof own.personality?.flaws === 'string' ? own.personality.flaws : '',
+    };
+
     return {
       ...withoutOrphanLanguages(withoutOrphanFeatures(own)),
+      proficiencyBonus: profBonus,
       // Held to the range the server stores, so a sheet stored with more can
       // still be saved. Left out when absent, which is what makes the effects
       // below read an older sheet's totals back into them.
@@ -261,47 +444,12 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
       ...(own.passivePerceptionBonus != null
         ? { passivePerceptionBonus: bonusWithinRange(own.passivePerceptionBonus) }
         : {}),
-      // Ensure nested objects exist.
-      //
-      // TODO(#152): `{}` is not a valid container — none of these has its keys,
-      // and the effects below read `.score` / `.proficient` off each entry. A
-      // sheet stored without one of these blocks therefore reads `undefined`
-      // where a number is expected. Pre-existing; the casts keep the behaviour
-      // exactly as it was rather than changing what a malformed sheet does.
-      stats: (own.stats || {}) as DnD5eStats,
-      // A stored total that differs from what the scores give keeps the
-      // difference as its other bonus, so the total survives the effects below.
-      savingThrows: withRecordedOtherBonuses(
-        (own.savingThrows || {}) as DnD5eSavingThrows,
-        (ability) => dnd5eBackfilledSaveOtherBonus(own, ability)
-      ),
-      skills: withRecordedOtherBonuses(
-        (own.skills || {}) as DnD5eSkills,
-        (skill) => dnd5eBackfilledSkillOtherBonus(own, skill)
-      ),
-      hp: own.hp || { maximum: 0, current: 0, temporary: 0 },
-      deathSaves: own.deathSaves || { successes: 0, failures: 0 },
-      // Same TODO(typing) as the containers above: this default omits `class`,
-      // which the type requires. Cast rather than corrected.
-      spellcasting: (own.spellcasting
-        ? {
-            ...own.spellcasting,
-            slots: withAllSlotLevels(own.spellcasting.slots),
-            ...(own.spellcasting.spellSaveDCOtherBonus != null
-              ? { spellSaveDCOtherBonus: bonusWithinRange(own.spellcasting.spellSaveDCOtherBonus) }
-              : {}),
-            ...(own.spellcasting.spellAttackOtherBonus != null
-              ? { spellAttackOtherBonus: bonusWithinRange(own.spellcasting.spellAttackOtherBonus) }
-              : {}),
-          }
-        : {
-            ability: '',
-            spellSaveDC: 0,
-            spellAttackBonus: 0,
-            cantrips: [],
-            slots: withAllSlotLevels(undefined),
-            spells: [],
-          }) as DnD5eSpellcasting,
+      stats,
+      savingThrows,
+      skills,
+      hp,
+      deathSaves,
+      spellcasting,
       currency: own.currency || { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 },
       inventory: own.inventory || [],
       attacks: own.attacks || [],
@@ -316,9 +464,8 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
       // featuresAndTraits is not defaulted here: the spread above has already
       // settled it, folding in the template-era `features` field. Re-reading
       // `data` would throw that away.
-      // Same TODO(typing) as the containers above.
-      appearance: (own.appearance || {}) as DnD5eAppearance,
-      personality: (own.personality || {}) as DnD5ePersonality,
+      appearance,
+      personality,
       alliesAndOrganizations: own.alliesAndOrganizations || { name: '', description: '' },
     };
   });
@@ -501,26 +648,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   ]);
 
   // Skill-to-ability mapping
-  const skillAbilities: Record<keyof DnD5eSkills, keyof DnD5eStats> = {
-    acrobatics: 'dexterity',
-    animalHandling: 'wisdom',
-    arcana: 'intelligence',
-    athletics: 'strength',
-    deception: 'charisma',
-    history: 'intelligence',
-    insight: 'wisdom',
-    intimidation: 'charisma',
-    investigation: 'intelligence',
-    medicine: 'wisdom',
-    nature: 'intelligence',
-    perception: 'wisdom',
-    performance: 'charisma',
-    persuasion: 'charisma',
-    religion: 'intelligence',
-    sleightOfHand: 'dexterity',
-    stealth: 'dexterity',
-    survival: 'wisdom',
-  };
+  const skillAbilities = SKILL_ABILITIES;
 
   // Initialize skills if they don't exist
   useEffect(() => {
