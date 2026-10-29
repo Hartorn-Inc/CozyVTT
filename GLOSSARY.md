@@ -128,6 +128,10 @@ _Avoid_: Orphaned asset (for this leftover)
 A piece on a campaign map (player, NPC, or object) with position, image, and optional stats. It can exist without a bound character.
 _Avoid_: Sprite, pawn, miniature
 
+**Token controller**:
+The member explicitly assigned control of a token, giving them permission to move and interact with it on the map canvas.
+_Avoid_: Token owner, player (for the controller assignment)
+
 **Current map**:
 The map the campaign is showing at the table.
 _Avoid_: Active map, live map, shown map
