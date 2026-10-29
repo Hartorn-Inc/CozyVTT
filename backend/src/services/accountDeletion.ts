@@ -171,12 +171,6 @@ export async function removePersonalFiles(personal: PersonalAsset[]): Promise<vo
     const doomed: string[] = [];
     for (const asset of personal) {
       if (asset.type !== 'AVATAR') {
-        // TODO(#157): a personal file kept here because a campaign uses it
-        // can no longer be read by that campaign's members, since a null
-        // uploader grants nothing in assetUsedInUserCampaign, so their maps and
-        // tokens show it as missing. Either move such a file into the campaign
-        // that uses it, or let the use rule accept a file with no uploader.
-        // Both change who may read it, so it waits for a decision.
         if (await isAssetInUse(asset.id)) continue;
         if ((await prisma.campaignDocument.count({ where: { assetId: asset.id } })) > 0) continue;
       }
