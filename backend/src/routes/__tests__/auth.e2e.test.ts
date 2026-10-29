@@ -132,6 +132,22 @@ describe('POST /api/auth/register', () => {
 
     expect(res.status).toBe(400);
   });
+
+  it.each([
+    'jo<x>@example.com',
+    '<user>@example.com',
+    'user>@example.com',
+  ])('returns 400 when registering with email containing angle brackets (%s)', async (email) => {
+    const res = await request(app)
+      .post('/api/auth/register')
+      .send({ email, password: TEST_PASSWORD, displayName: 'Bracket User' });
+
+    expect(res.status).toBe(400);
+    expect(res.body).toEqual({
+      error: 'Registration Failed',
+      message: 'Invalid email format',
+    });
+  });
 });
 
 // ============================================

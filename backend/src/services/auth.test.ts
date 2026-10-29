@@ -7,7 +7,7 @@
  * registerUser and authenticateUser are covered by the auth e2e integration tests.
  */
 
-import { hashPassword, verifyPassword, sanitizeUser } from './auth';
+import { hashPassword, verifyPassword, sanitizeUser, prepareRegistration, RegistrationError } from './auth';
 import { User, PlatformRole } from '@prisma/client';
 
 // ============================================
@@ -83,6 +83,36 @@ describe('stored password hashes', () => {
 // ============================================
 // sanitizeUser
 // ============================================
+
+describe('prepareRegistration', () => {
+  const validRegistration = {
+    email: 'user@example.com',
+    password: 'ValidPassword123!',
+    displayName: 'TestUser',
+  };
+
+  it('prepares a valid registration with normalized email', async () => {
+    const prepared = await prepareRegistration({
+      ...validRegistration,
+      email: '  User@Example.COM  ',
+    });
+    expect(prepared.email).toBe('user@example.com');
+    expect(prepared.displayName).toBe('TestUser');
+    expect(typeof prepared.passwordHash).toBe('string');
+  });
+
+  it.each([
+    'jo<x>@example.com',
+    '<user>@example.com',
+    'user<test@example.com',
+    'user>test@example.com',
+  ])('rejects email containing angle brackets (%s)', async (email) => {
+    await expect(prepareRegistration({ ...validRegistration, email }))
+      .rejects.toThrow(RegistrationError);
+    await expect(prepareRegistration({ ...validRegistration, email }))
+      .rejects.toThrow('Invalid email format');
+  });
+});
 
 describe('sanitizeUser', () => {
   const mockUser: User = {
