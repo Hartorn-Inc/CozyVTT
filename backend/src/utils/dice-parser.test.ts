@@ -3,7 +3,15 @@
  * Tests for the dice expression parser
  */
 
-import { rollDice, parseDiceExpression, evaluateArithmetic, DiceParserError } from './dice-parser';
+import {
+  rollDice,
+  parseDiceExpression,
+  evaluateArithmetic,
+  DiceParserError,
+  parseDiceAST,
+  BinaryOpNode,
+  DiceNode,
+} from './dice-parser';
 
 describe('Dice Parser', () => {
   describe('Basic Rolls', () => {
@@ -471,6 +479,10 @@ describe('Dice Parser', () => {
       expect(() => rollDice('10/2/0')).toThrow('Division by zero');
       expect(() => rollDice('2+1d6/0')).toThrow(DiceParserError);
       expect(() => rollDice('2+1d6/0')).toThrow('Division by zero');
+      expect(() => rollDice('1d6/0 + 2')).toThrow(DiceParserError);
+      expect(() => rollDice('1d6/0 + 2')).toThrow('Division by zero');
+      expect(() => rollDice('(1d6/0) * 2')).toThrow(DiceParserError);
+      expect(() => rollDice('(1d6/0) * 2')).toThrow('Division by zero');
       expect(() => rollDice('1d6/-0')).toThrow(DiceParserError);
       expect(() => rollDice('1d6/-0')).toThrow('Division by zero');
       expect(() => rollDice('10/+0')).toThrow(DiceParserError);
@@ -595,6 +607,116 @@ describe('Dice Parser', () => {
         expect(roll.total).toBe(keptSum);
       }
     });
+
+    test('custom RNG injection evaluates kh (keep highest) deterministically', () => {
+      const rollsSequence = [3, 1, 6, 2];
+      let idx = 0;
+      const mockRng = (sides: number) => {
+        expect(sides).toBe(6);
+        return rollsSequence[idx++];
+      };
+
+      const result = rollDice('4d6kh3', mockRng);
+      expect(result.rolls).toHaveLength(1);
+      expect(result.rolls[0].results).toEqual([3, 1, 6, 2]);
+      expect(result.rolls[0].kept).toEqual([6, 3, 2]);
+      expect(result.rolls[0].modifier).toBe('kh');
+      expect(result.rolls[0].modifierCount).toBe(3);
+      expect(result.total).toBe(11);
+      expect(result.formula).toBe('11');
+    });
+
+    test('custom RNG injection evaluates kl (keep lowest) deterministically', () => {
+      const rollsSequence = [5, 2, 6, 1];
+      let idx = 0;
+      const mockRng = (sides: number) => {
+        expect(sides).toBe(20);
+        return rollsSequence[idx++];
+      };
+
+      const result = rollDice('4d20kl2', mockRng);
+      expect(result.rolls[0].results).toEqual([5, 2, 6, 1]);
+      expect(result.rolls[0].kept).toEqual([1, 2]);
+      expect(result.rolls[0].modifier).toBe('kl');
+      expect(result.rolls[0].modifierCount).toBe(2);
+      expect(result.total).toBe(3);
+    });
+
+    test('custom RNG injection evaluates dh (drop highest) deterministically', () => {
+      const rollsSequence = [4, 6, 2, 5];
+      let idx = 0;
+      const mockRng = (sides: number) => {
+        expect(sides).toBe(6);
+        return rollsSequence[idx++];
+      };
+
+      const result = rollDice('4d6dh1', mockRng);
+      expect(result.rolls[0].results).toEqual([4, 6, 2, 5]);
+      expect(result.rolls[0].kept).toEqual([5, 4, 2]);
+      expect(result.rolls[0].modifier).toBe('dh');
+      expect(result.rolls[0].modifierCount).toBe(1);
+      expect(result.total).toBe(11);
+    });
+
+    test('custom RNG injection evaluates dl (drop lowest) deterministically', () => {
+      const rollsSequence = [3, 1, 6, 2];
+      let idx = 0;
+      const mockRng = (sides: number) => {
+        expect(sides).toBe(6);
+        return rollsSequence[idx++];
+      };
+
+      const result = rollDice('4d6dl1', mockRng);
+      expect(result.rolls[0].results).toEqual([3, 1, 6, 2]);
+      expect(result.rolls[0].kept).toEqual([2, 3, 6]);
+      expect(result.rolls[0].modifier).toBe('dl');
+      expect(result.rolls[0].modifierCount).toBe(1);
+      expect(result.total).toBe(11);
+    });
+
+    test('complex formulas evaluate precedence and associativity deterministically', () => {
+      const mockSequence = [4, 5, 3]; // 2d6 -> 4, 5; 1d4 -> 3
+      let idx = 0;
+      const mockRng = () => mockSequence[idx++];
+
+      const result = rollDice('(2d6 + 1d4) * 2 - 3', mockRng);
+      // 2d6 = 9, 1d4 = 3 => (9 + 3) * 2 - 3 = 12 * 2 - 3 = 24 - 3 = 21
+      expect(result.total).toBe(21);
+      expect(result.rolls).toHaveLength(4);
+      expect(result.rolls[0].total).toBe(9);
+      expect(result.rolls[1].total).toBe(3);
+      expect(result.rolls[2].value).toBe(2);
+      expect(result.rolls[3].value).toBe(3);
+    });
+
+    test('fractional division floors down with integer semantics', () => {
+      const mockRng = () => 5;
+      const result = rollDice('1d6 / 2', mockRng);
+      // 5 / 2 = 2.5 => Math.floor(2.5) = 2
+      expect(result.total).toBe(2);
+
+      const mockRngNeg = () => 2;
+      const negResult = rollDice('(1d6 - 5) / 2', mockRngNeg);
+      // (2 - 5) / 2 = -3 / 2 = -1.5 => Math.floor(-1.5) = -2
+      expect(negResult.total).toBe(-2);
+    });
+
+    test('dynamic division by zero throws DiceParserError during evaluation', () => {
+      const mockRng = () => 4;
+      expect(() => rollDice('10 / (1d6 - 4)', mockRng)).toThrow(DiceParserError);
+      expect(() => rollDice('10 / (1d6 - 4)', mockRng)).toThrow('Division by zero');
+    });
+
+    test('parseDiceExpression validates expressions purely without calling Math.random', () => {
+      const spy = jest.spyOn(Math, 'random');
+      try {
+        expect(parseDiceExpression('4d6kh3 + 2d20kl1 + 5')).toBe(true);
+        expect(parseDiceExpression('1d100 * 2')).toBe(true);
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });
 
@@ -628,7 +750,7 @@ describe('parseDiceExpression agrees with rollDice', () => {
     '6/-2', '6/--2', '6/-+2', '2d1*-3', '5+-2', '5-+2', '5--2', '5++2',
     '+5', '-5', '++5', '--5', '+-5', '-+-5', '---5', '1d1 - -1', '10 + - + 3',
     // Division by zero
-    '1d6/0', '10/0', '0/0', '4d6/0', '1d20/0', '2d20kh1/0', '10/2/0', '2+1d6/0', '1d6/-0', '10/+0',
+    '1d6/0', '10/0', '0/0', '4d6/0', '1d20/0', '2d20kh1/0', '10/2/0', '2+1d6/0', '1d6/0 + 2', '(1d6/0) * 2', '1d6/-0', '10/+0',
     // Malformed in various ways
     '2d6+', '+2d6', '2d6++3', 'dddd', 'invalid', '', '   ', 'd', '2d', 'd6',
     '2d6+-', '()', '2d6*', '/2d6', '1d6/', '/0', '1d6//0', '1d6/*2', '+', '-', '*2', '/2',
@@ -647,5 +769,457 @@ describe('parseDiceExpression agrees with rollDice', () => {
     })();
 
     expect(validatorAccepts).toBe(rollerAccepts);
+  });
+});
+
+describe('parseDiceAST', () => {
+  describe('Node generation & structures', () => {
+    test('single die roll - 1d20', () => {
+      const ast = parseDiceAST('1d20');
+      expect(ast.expression).toBe('1d20');
+      expect(ast.totalDiceCount).toBe(1);
+      expect(ast.dice).toHaveLength(1);
+      expect(ast.root.type).toBe('dice');
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(1);
+      expect(root.sides).toBe(20);
+      expect(root.notation).toBe('1d20');
+    });
+
+    test('multiple dice - 2d6', () => {
+      const ast = parseDiceAST('2d6');
+      expect(ast.totalDiceCount).toBe(2);
+      expect(ast.root.type).toBe('dice');
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(2);
+      expect(root.sides).toBe(6);
+    });
+
+    test('constant integer modifier', () => {
+      const ast = parseDiceAST('5');
+      expect(ast.totalDiceCount).toBe(0);
+      expect(ast.dice).toHaveLength(0);
+      expect(ast.root).toEqual({ type: 'modifier', value: 5 });
+    });
+
+    test('zero modifier', () => {
+      const ast = parseDiceAST('0');
+      expect(ast.root).toEqual({ type: 'modifier', value: 0 });
+    });
+
+    test('unary negative modifier', () => {
+      const ast = parseDiceAST('-5');
+      expect(ast.root).toEqual({ type: 'modifier', value: -5 });
+    });
+
+    test('unary positive modifier', () => {
+      const ast = parseDiceAST('+5');
+      expect(ast.root).toEqual({ type: 'modifier', value: 5 });
+    });
+  });
+
+  describe('Shorthands and normalizations', () => {
+    test('implicit die count - d20 -> 1d20', () => {
+      const ast = parseDiceAST('d20');
+      expect(ast.totalDiceCount).toBe(1);
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(1);
+      expect(root.sides).toBe(20);
+    });
+
+    test('implicit die count - d6 -> 1d6', () => {
+      const ast = parseDiceAST('d6');
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(1);
+      expect(root.sides).toBe(6);
+    });
+
+    test('case-insensitivity - 1D20, 2D6', () => {
+      const ast1 = parseDiceAST('1D20');
+      expect((ast1.root as DiceNode).count).toBe(1);
+      expect((ast1.root as DiceNode).sides).toBe(20);
+
+      const ast2 = parseDiceAST('2D6');
+      expect((ast2.root as DiceNode).count).toBe(2);
+      expect((ast2.root as DiceNode).sides).toBe(6);
+    });
+
+    test('adv shorthand -> 2d20kh1', () => {
+      const ast = parseDiceAST('adv');
+      expect(ast.totalDiceCount).toBe(2);
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(2);
+      expect(root.sides).toBe(20);
+      expect(root.modifier).toBe('kh');
+      expect(root.modifierCount).toBe(1);
+      expect(root.notation).toBe('2d20kh1');
+    });
+
+    test('dis shorthand -> 2d20kl1', () => {
+      const ast = parseDiceAST('dis');
+      expect(ast.totalDiceCount).toBe(2);
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(2);
+      expect(root.sides).toBe(20);
+      expect(root.modifier).toBe('kl');
+      expect(root.modifierCount).toBe(1);
+      expect(root.notation).toBe('2d20kl1');
+    });
+
+    test('case-insensitive shorthands - ADV, Dis', () => {
+      const ast1 = parseDiceAST('ADV');
+      expect((ast1.root as DiceNode).modifier).toBe('kh');
+      const ast2 = parseDiceAST('Dis');
+      expect((ast2.root as DiceNode).modifier).toBe('kl');
+    });
+
+    test('percentage dice - d% -> 1d100', () => {
+      const ast = parseDiceAST('d%');
+      expect(ast.totalDiceCount).toBe(1);
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(1);
+      expect(root.sides).toBe(100);
+    });
+
+    test('percentage dice with count - 2d% -> 2d100', () => {
+      const ast = parseDiceAST('2d%');
+      expect(ast.totalDiceCount).toBe(2);
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(2);
+      expect(root.sides).toBe(100);
+    });
+
+    test('case-insensitive percentage dice - 3D% -> 3d100', () => {
+      const ast = parseDiceAST('3D%');
+      expect((ast.root as DiceNode).count).toBe(3);
+      expect((ast.root as DiceNode).sides).toBe(100);
+    });
+  });
+
+  describe('Selection modifiers (kh, kl, dh, dl)', () => {
+    test('4d6kh3 - keep highest 3', () => {
+      const ast = parseDiceAST('4d6kh3');
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(4);
+      expect(root.sides).toBe(6);
+      expect(root.modifier).toBe('kh');
+      expect(root.modifierCount).toBe(3);
+    });
+
+    test('4d6kh4 - keep all dice is allowed', () => {
+      const ast = parseDiceAST('4d6kh4');
+      expect((ast.root as DiceNode).modifierCount).toBe(4);
+    });
+
+    test('2d20kl1 - keep lowest 1', () => {
+      const ast = parseDiceAST('2d20kl1');
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(2);
+      expect(root.sides).toBe(20);
+      expect(root.modifier).toBe('kl');
+      expect(root.modifierCount).toBe(1);
+    });
+
+    test('4d6dh1 - drop highest 1', () => {
+      const ast = parseDiceAST('4d6dh1');
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(4);
+      expect(root.sides).toBe(6);
+      expect(root.modifier).toBe('dh');
+      expect(root.modifierCount).toBe(1);
+    });
+
+    test('4d6dl1 - drop lowest 1', () => {
+      const ast = parseDiceAST('4d6dl1');
+      const root = ast.root as DiceNode;
+      expect(root.count).toBe(4);
+      expect(root.sides).toBe(6);
+      expect(root.modifier).toBe('dl');
+      expect(root.modifierCount).toBe(1);
+    });
+
+    test('case-insensitive selection modifier - 4d6KH3, 4d6DL1, 4d6DH2', () => {
+      expect((parseDiceAST('4d6KH3').root as DiceNode).modifier).toBe('kh');
+      expect((parseDiceAST('4d6DL1').root as DiceNode).modifier).toBe('dl');
+      expect((parseDiceAST('4d6DH2').root as DiceNode).modifier).toBe('dh');
+    });
+  });
+
+  describe('Operator precedence and associativity', () => {
+    test('binary addition - 1d20+5', () => {
+      const ast = parseDiceAST('1d20+5');
+      expect(ast.root.type).toBe('binaryOp');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('+');
+      expect(root.op).toBe('+');
+      expect(root.left).toMatchObject({ type: 'dice', count: 1, sides: 20 });
+      expect(root.right).toMatchObject({ type: 'modifier', value: 5 });
+    });
+
+    test('precedence of * over + : 2 + 3 * 4', () => {
+      const ast = parseDiceAST('2 + 3 * 4');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('+');
+      expect(root.left).toEqual({ type: 'modifier', value: 2 });
+      expect(root.right.type).toBe('binaryOp');
+      const right = root.right as BinaryOpNode;
+      expect(right.operator).toBe('*');
+      expect(right.left).toEqual({ type: 'modifier', value: 3 });
+      expect(right.right).toEqual({ type: 'modifier', value: 4 });
+    });
+
+    test('precedence of * over + : 2 * 3 + 4', () => {
+      const ast = parseDiceAST('2 * 3 + 4');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('+');
+      expect(root.left.type).toBe('binaryOp');
+      const left = root.left as BinaryOpNode;
+      expect(left.operator).toBe('*');
+      expect(left.left).toEqual({ type: 'modifier', value: 2 });
+      expect(left.right).toEqual({ type: 'modifier', value: 3 });
+      expect(root.right).toEqual({ type: 'modifier', value: 4 });
+    });
+
+    test('left-associativity of - : 10 - 3 - 2', () => {
+      const ast = parseDiceAST('10 - 3 - 2');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('-');
+      expect(root.left.type).toBe('binaryOp');
+      const left = root.left as BinaryOpNode;
+      expect(left.operator).toBe('-');
+      expect(left.left).toEqual({ type: 'modifier', value: 10 });
+      expect(left.right).toEqual({ type: 'modifier', value: 3 });
+      expect(root.right).toEqual({ type: 'modifier', value: 2 });
+    });
+
+    test('left-associativity of / : 12 / 3 / 2', () => {
+      const ast = parseDiceAST('12 / 3 / 2');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('/');
+      expect(root.left.type).toBe('binaryOp');
+      const left = root.left as BinaryOpNode;
+      expect(left.operator).toBe('/');
+      expect(left.left).toEqual({ type: 'modifier', value: 12 });
+      expect(left.right).toEqual({ type: 'modifier', value: 3 });
+      expect(root.right).toEqual({ type: 'modifier', value: 2 });
+    });
+  });
+
+  describe('Parenthesis grouping', () => {
+    test('overriding precedence with parens - (2 + 3) * 4', () => {
+      const ast = parseDiceAST('(2 + 3) * 4');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('*');
+      expect(root.left.type).toBe('binaryOp');
+      const left = root.left as BinaryOpNode;
+      expect(left.operator).toBe('+');
+      expect(left.left).toEqual({ type: 'modifier', value: 2 });
+      expect(left.right).toEqual({ type: 'modifier', value: 3 });
+      expect(root.right).toEqual({ type: 'modifier', value: 4 });
+    });
+
+    test('complex nested parens - ((1d20 + 5) * 2)', () => {
+      const ast = parseDiceAST('((1d20 + 5) * 2)');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('*');
+      expect(root.left.type).toBe('binaryOp');
+      const left = root.left as BinaryOpNode;
+      expect(left.operator).toBe('+');
+      expect(left.left).toMatchObject({ type: 'dice', count: 1, sides: 20 });
+      expect(left.right).toEqual({ type: 'modifier', value: 5 });
+      expect(root.right).toEqual({ type: 'modifier', value: 2 });
+    });
+
+    test('single node in parens - (1d20)', () => {
+      const ast = parseDiceAST('(1d20)');
+      expect(ast.root).toMatchObject({ type: 'dice', count: 1, sides: 20 });
+    });
+  });
+
+  describe('Chained unary signs and modifiers', () => {
+    test('1d20 + -5', () => {
+      const ast = parseDiceAST('1d20 + -5');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('+');
+      expect(root.right).toEqual({ type: 'modifier', value: -5 });
+    });
+
+    test('1d1 - -1', () => {
+      const ast = parseDiceAST('1d1 - -1');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('-');
+      expect(root.right).toEqual({ type: 'modifier', value: -1 });
+    });
+
+    test('chained unary signs - 10 + - + 3', () => {
+      const ast = parseDiceAST('10 + - + 3');
+      const root = ast.root as BinaryOpNode;
+      expect(root.operator).toBe('+');
+      expect(root.right).toEqual({ type: 'modifier', value: -3 });
+    });
+
+    test('double minus unary - --5', () => {
+      const ast = parseDiceAST('--5');
+      expect(ast.root).toEqual({ type: 'modifier', value: 5 });
+    });
+
+    test('triple minus unary - ---5', () => {
+      const ast = parseDiceAST('---5');
+      expect(ast.root).toEqual({ type: 'modifier', value: -5 });
+    });
+  });
+
+  describe('Cumulative dice counting', () => {
+    test('multi-part dice - 2d6+1d4+3', () => {
+      const ast = parseDiceAST('2d6+1d4+3');
+      expect(ast.totalDiceCount).toBe(3);
+      expect(ast.dice).toHaveLength(2);
+      expect(ast.dice[0]).toMatchObject({ count: 2, sides: 6 });
+      expect(ast.dice[1]).toMatchObject({ count: 1, sides: 4 });
+    });
+
+    test('maximum permitted dice count - 50d6 + 50d6', () => {
+      const ast = parseDiceAST('50d6 + 50d6');
+      expect(ast.totalDiceCount).toBe(100);
+    });
+  });
+
+  describe('Static invariant enforcement (errors)', () => {
+    test('rejects empty string', () => {
+      expect(() => parseDiceAST('')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('')).toThrow('Empty expression');
+    });
+
+    test('rejects whitespace only', () => {
+      expect(() => parseDiceAST('   ')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('\t\n')).toThrow('Empty expression');
+    });
+
+    test('rejects expression over 200 characters', () => {
+      const longExpression = '1d20+'.repeat(50) + '1';
+      expect(() => parseDiceAST(longExpression)).toThrow(DiceParserError);
+      expect(() => parseDiceAST(longExpression)).toThrow('Expression too long');
+    });
+
+    test('rejects single die exceeding 100 count', () => {
+      expect(() => parseDiceAST('101d20')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('101d20')).toThrow('Too many dice');
+    });
+
+    test('rejects cumulative dice exceeding 100', () => {
+      expect(() => parseDiceAST('50d6 + 51d6')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('50d6 + 51d6')).toThrow('Too many dice');
+    });
+
+    test('rejects die sides below 1', () => {
+      expect(() => parseDiceAST('1d0')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d0')).toThrow('Invalid die size');
+      expect(() => parseDiceAST('d0')).toThrow('Invalid die size');
+    });
+
+    test('rejects die sides above 1000', () => {
+      expect(() => parseDiceAST('1d1001')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d1001')).toThrow('Die size too large');
+    });
+
+    test('rejects modifiers outside [-9999, 9999]', () => {
+      expect(() => parseDiceAST('1d20 + 10000')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d20 + 10000')).toThrow('Modifier too large');
+      expect(() => parseDiceAST('1d20 - 10000')).toThrow('Modifier too large');
+      expect(() => parseDiceAST('10000')).toThrow('Modifier too large');
+    });
+
+    test('accepts modifier at boundaries: 9999 and -9999', () => {
+      expect(parseDiceAST('1d20 + 9999').totalDiceCount).toBe(1);
+      expect(parseDiceAST('1d20 - 9999').totalDiceCount).toBe(1);
+      expect(parseDiceAST('9999').totalDiceCount).toBe(0);
+      expect(parseDiceAST('-9999').totalDiceCount).toBe(0);
+    });
+
+    test('rejects kh selection with count < 1', () => {
+      expect(() => parseDiceAST('4d6kh0')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('4d6kh0')).toThrow('Invalid keep count');
+    });
+
+    test('rejects kh selection with count > count', () => {
+      expect(() => parseDiceAST('4d6kh5')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('4d6kh5')).toThrow('Invalid keep count');
+    });
+
+    test('rejects kl selection bounds', () => {
+      expect(() => parseDiceAST('4d6kl0')).toThrow('Invalid keep count');
+      expect(() => parseDiceAST('4d6kl5')).toThrow('Invalid keep count');
+    });
+
+    test('rejects dh selection with count < 1', () => {
+      expect(() => parseDiceAST('4d6dh0')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('4d6dh0')).toThrow('Invalid drop count');
+    });
+
+    test('rejects dh selection with count >= count', () => {
+      expect(() => parseDiceAST('4d6dh4')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('4d6dh4')).toThrow('Invalid drop count');
+      expect(() => parseDiceAST('4d6dh5')).toThrow('Invalid drop count');
+    });
+
+    test('rejects dl selection bounds', () => {
+      expect(() => parseDiceAST('4d6dl0')).toThrow('Invalid drop count');
+      expect(() => parseDiceAST('4d6dl4')).toThrow('Invalid drop count');
+      expect(() => parseDiceAST('4d6dl5')).toThrow('Invalid drop count');
+    });
+
+    test('rejects drop on single die (1d6dl1, 1d6dh1)', () => {
+      expect(() => parseDiceAST('1d6dl1')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d6dh1')).toThrow(DiceParserError);
+    });
+
+    test('rejects empty or whitespace parentheses', () => {
+      expect(() => parseDiceAST('()')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('(   )')).toThrow(DiceParserError);
+    });
+
+    test('rejects unclosed or unbalanced parentheses', () => {
+      expect(() => parseDiceAST('(1d20+5')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d20+5)')).toThrow(DiceParserError);
+    });
+
+    test('rejects incomplete expressions / trailing operators', () => {
+      expect(() => parseDiceAST('1d20+')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d20-')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d20*')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d20/')).toThrow(DiceParserError);
+    });
+
+    test('rejects unary operators on dice (+2d6, -2d6)', () => {
+      expect(() => parseDiceAST('+2d6')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('-2d6')).toThrow(DiceParserError);
+    });
+
+    test('rejects double operators (**)', () => {
+      expect(() => parseDiceAST('1d20**5')).toThrow(DiceParserError);
+    });
+
+    test('rejects invalid tokens and syntax', () => {
+      expect(() => parseDiceAST('2x6')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('2d')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('d')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('2d6kh')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('4d6dl')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('hello world')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('1d20 5')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('%')).toThrow(DiceParserError);
+    });
+  });
+
+  describe('Zero RNG guarantee', () => {
+    test('does not call Math.random during parseDiceAST', () => {
+      const spy = jest.spyOn(Math, 'random');
+      try {
+        parseDiceAST('10d1000 + 4d6kh3 + adv + dis + d%');
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
+    });
   });
 });
