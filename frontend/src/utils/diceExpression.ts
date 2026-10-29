@@ -263,9 +263,13 @@ export function isValidDiceExpression(expr: string): boolean {
       const leftVal = checkStaticDivisionByZero(node.left);
       const rightVal = checkStaticDivisionByZero(node.right);
 
+      if ((leftVal !== null && Number.isNaN(leftVal)) || (rightVal !== null && Number.isNaN(rightVal))) {
+        return NaN;
+      }
+
       if (node.op === '/') {
         if (rightVal === 0) return NaN;
-        if (leftVal !== null && rightVal !== null && !Number.isNaN(leftVal) && !Number.isNaN(rightVal)) {
+        if (leftVal !== null && rightVal !== null) {
           const res = leftVal / rightVal;
           if (!Number.isFinite(res)) return NaN;
           return res;
@@ -273,7 +277,7 @@ export function isValidDiceExpression(expr: string): boolean {
         return null;
       }
 
-      if (leftVal !== null && rightVal !== null && !Number.isNaN(leftVal) && !Number.isNaN(rightVal)) {
+      if (leftVal !== null && rightVal !== null) {
         let res: number;
         if (node.op === '+') res = leftVal + rightVal;
         else if (node.op === '-') res = leftVal - rightVal;
