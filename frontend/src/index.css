@@ -1,5 +1,97 @@
-@import "tailwindcss";
-@config "../tailwind.config.js";
+@import 'tailwindcss';
+
+@theme {
+  /* ── Semantic theme colors (driven by CSS variables) ── */
+  --color-brand: rgb(var(--color-brand) / <alpha-value>);
+  --color-brand-dark: rgb(var(--color-brand-dark) / <alpha-value>);
+  --color-accent: rgb(var(--color-accent) / <alpha-value>);
+  --color-accent-hover: rgb(var(--color-accent-hover) / <alpha-value>);
+  --color-accent-text: rgb(var(--color-accent-text) / <alpha-value>);
+  --color-canvas: rgb(var(--color-bg-base) / <alpha-value>);
+  --color-surface: rgb(var(--color-bg-surface) / <alpha-value>);
+  --color-surface-light: rgb(var(--color-bg-surface-light) / <alpha-value>);
+  --color-surface-dark: rgb(var(--color-bg-surface-dark) / <alpha-value>);
+  --color-ink: rgb(var(--color-ink) / <alpha-value>);
+  --color-ink-secondary: rgb(var(--color-ink-secondary) / <alpha-value>);
+  --color-ink-muted: rgb(var(--color-ink-muted) / <alpha-value>);
+  --color-paper: rgb(var(--color-paper) / <alpha-value>);
+  --color-danger: rgb(var(--color-danger) / <alpha-value>);
+  --color-spirit: rgb(var(--color-spirit) / <alpha-value>);
+
+  /* ── Readable text variants ── */
+  --color-brand-ink: rgb(var(--color-brand-ink) / <alpha-value>);
+  --color-accent-ink: rgb(var(--color-accent-ink) / <alpha-value>);
+  --color-spirit-ink: rgb(var(--color-spirit-ink) / <alpha-value>);
+  --color-danger-ink: rgb(var(--color-danger-ink) / <alpha-value>);
+
+  /* ── Semantic states ── */
+  --color-success: rgb(var(--color-success) / <alpha-value>);
+  --color-success-ink: rgb(var(--color-success-ink) / <alpha-value>);
+  --color-warning: rgb(var(--color-warning) / <alpha-value>);
+  --color-warning-ink: rgb(var(--color-warning-ink) / <alpha-value>);
+  --color-info: rgb(var(--color-info) / <alpha-value>);
+  --color-info-ink: rgb(var(--color-info-ink) / <alpha-value>);
+
+  /* ── Historical aliases (resolve to the same CSS variables) ── */
+  --color-moss-green: rgb(var(--color-brand) / <alpha-value>);
+  --color-forest-shadow: rgb(var(--color-brand-dark) / <alpha-value>);
+  --color-warm-amber: rgb(var(--color-accent) / <alpha-value>);
+  --color-sunset-orange: rgb(var(--color-accent-hover) / <alpha-value>);
+  --color-soft-cream: rgb(var(--color-bg-base) / <alpha-value>);
+  --color-parchment: rgb(var(--color-bg-surface) / <alpha-value>);
+  --color-parchment-light: rgb(var(--color-bg-surface-light) / <alpha-value>);
+  --color-parchment-dark: rgb(var(--color-bg-surface-dark) / <alpha-value>);
+  --color-charcoal: rgb(var(--color-ink) / <alpha-value>);
+  --color-warm-gray: rgb(var(--color-ink-secondary) / <alpha-value>);
+  --color-stone-gray: rgb(var(--color-ink-muted) / <alpha-value>);
+  --color-paper-white: rgb(var(--color-paper) / <alpha-value>);
+  --color-spirit-red: rgb(var(--color-danger) / <alpha-value>);
+  --color-spirit-purple: rgb(var(--color-spirit) / <alpha-value>);
+
+  /* ── Call of Cthulhu 7e - Vintage 1920s Palette (static, not themed) ── */
+  --color-sepia-100: #F5EBD9;
+  --color-sepia-200: #E8D5B7;
+  --color-sepia-300: #D4B896;
+  --color-sepia-400: #C19A6B;
+  --color-sepia-500: #A67C52;
+  --color-sepia-600: #8B6939;
+  --color-sepia-700: #6B5230;
+  --color-sepia-800: #4A3C28;
+  --color-sepia-900: #2E2419;
+
+  /* ── Custom font families ── */
+  --font-heading: var(--font-heading);
+  --font-body: var(--font-body);
+  --font-mono: var(--font-mono);
+
+  /* ── Border radii ── */
+  --radius-cozy: 12px;
+  --radius-cozy-lg: 20px;
+
+  /* ── Backdrop blur ── */
+  --blur-cozy: 10px;
+
+  /* ── Custom animations ── */
+  --animate-fade-in: fadeIn 0.3s ease-in-out;
+  --animate-slide-in: slideIn 0.4s ease-out;
+  --animate-pulse-soft: pulseSoft 2s ease-in-out infinite;
+}
+
+/* ── Keyframe animations ── */
+@keyframes fadeIn {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+@keyframes slideIn {
+  0% { transform: translateY(-10px); opacity: 0; }
+  100% { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes pulseSoft {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
 
 @layer base {
   :root {

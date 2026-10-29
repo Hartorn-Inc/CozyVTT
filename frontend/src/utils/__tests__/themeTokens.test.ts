@@ -5,7 +5,7 @@
  * theme: an error box built from them stays pale pink on a dark theme, and grey
  * text keeps its light-mode shade on a dark panel. Every themed surface must use
  * the semantic tokens instead — see the alert and badge classes in index.css,
- * and the token list in tailwind.config.js.
+ * and the token list in index.css.
  *
  * Two areas are deliberately exempt because they are fixed-surface designs
  * rather than themed UI, and are listed explicitly so the exemption stays
