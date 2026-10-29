@@ -160,6 +160,22 @@ _Avoid_: Spirit plane (for this view)
 The DM's combat turn order for a campaign. Distinct from the dice history of those rolls.
 _Avoid_: Encounter, combat log (for this object)
 
+**Dice expression**:
+A text string specifying dice notation (such as `2d6`, `4d6kh3`, `1d20`) and arithmetic modifiers evaluated together to produce a roll result.
+_Avoid_: Dice macro (when referring to expression syntax), roll formula
+
+**Dice roll**:
+The outcome and breakdown of an individual set of rolled dice within an expression, tracking rolls, kept values, and subtotals. Distinct from a static modifier.
+_Avoid_: Roll result (for an individual dice group)
+
+**Dice modifier**:
+A constant numeric offset combined with dice rolls in a dice expression through addition, subtraction, multiplication, or division.
+_Avoid_: Flat bonus, bonus (unqualified), stat offset
+
+**Dice arithmetic evaluator**:
+The internal, zero-dependency calculation engine embedded in CozyVTT that computes basic arithmetic operations (`+`, `-`, `*`, `/`), unary signs, and operator precedence for dice totals without external math packages.
+_Avoid_: Math engine, mathjs evaluator
+
 ## Contribution
 
 **EPURE orchestration**:
