@@ -59,6 +59,7 @@ import { cachedTokenImage, placeholderColor } from './map/layers/drawTokens';
 import { fogRectFromDrag, fogCellsInRect, revealedSetFromFogState } from './map/fogSelection';
 import { chunkFogCells, FOG_MESSAGE_MAX_CELLS, FOG_OPERATION_CHUNK_GAP_MS } from './map/chunkFogCells';
 import { createFogOperationQueue } from './map/fogOperationQueue';
+import { buildFogRaster } from './map/fogRaster';
 import { fogRevealedEquals, overlayFogOperations } from './map/overlayFogOperations';
 import { exploredCellsFromCoverage, diffNew } from './map/exploration';
 import { rectFromDrag, segmentsInRect } from './map/mapSelection';
@@ -377,6 +378,19 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
     return cells;
   }, [currentMap, viewerRevealed, tokens, viewerOwn]);
 
+  const playerFogRaster = useMemo(
+    () => (currentMap ? buildFogRaster(currentMap.width, currentMap.height, false, viewerRevealed) : null),
+    [viewerRevealed, currentMap?.width, currentMap?.height]
+  );
+
+  const dmFogRaster = useMemo(
+    () =>
+      effectiveFogState
+        ? buildFogRaster(effectiveFogState.fogCols, effectiveFogState.fogRows, true, effectiveFogState.revealed)
+        : null,
+    [effectiveFogState?.revealed, effectiveFogState?.fogCols, effectiveFogState?.fogRows]
+  );
+
   // Light source state
   const [lightSources, setLightSources] = useState<LightSource[]>([]);
   const lightSourcesRef = useRef<LightSource[]>([]);
@@ -412,6 +426,10 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
   // Explored memory pass: two screen-sized scratch canvases, allocated on first use.
   const memoryMaskOffscreenRef = useRef<HTMLCanvasElement | null>(null);
   const memoryOffscreenRef = useRef<HTMLCanvasElement | null>(null);
+  const fogScratchRef = useRef<HTMLCanvasElement | null>(null);
+  if (!fogScratchRef.current && typeof document !== 'undefined') {
+    fogScratchRef.current = document.createElement('canvas');
+  }
 
   // Raw map-pixel position from last mousemove — ghost line uses this when snap is off.
   // screenToGrid() quantises to integer grid coords, so hoverCoords can't be used for free-draw.
@@ -1835,6 +1853,8 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
         fogState: effectiveFogState,
         revealedCells: null,
         revealOpacity: revealOpacityRef.current,
+        raster: dmFogRaster,
+        scratchCanvas: fogScratchRef.current,
       }, viewport);
     }
 
@@ -1851,7 +1871,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
     }
 
     ctx.restore();
-  }, [currentMap, imageLoaded, mapImage, mapControls.panOffset, mapControls.zoom, userRole, campaign?.spiritLayerEnabled, playerSpiritVisible, dmViewBothPlanes, showGrid, gridColor, effectiveFogState, previewing, previewedPlane, spiritLayerImage, spiritLayerOpacity]);
+  }, [currentMap, imageLoaded, mapImage, mapControls.panOffset, mapControls.zoom, userRole, campaign?.spiritLayerEnabled, playerSpiritVisible, dmViewBothPlanes, showGrid, gridColor, effectiveFogState, dmFogRaster, previewing, previewedPlane, spiritLayerImage, spiritLayerOpacity]);
 
   /**
    * Draw the TOKENS layer (middle canvas): every token + the drag ghost.
@@ -2119,6 +2139,8 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
         revealedCells: viewerRevealed,
         exemptCells: ownTokenCells,
         revealOpacity: revealOpacityRef.current,
+        raster: playerFogRaster,
+        scratchCanvas: fogScratchRef.current,
       }, viewport);
     }
 
@@ -2128,7 +2150,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
 
     // Restore context state (back to screen-space)
     ctx.restore();
-  }, [currentMap, imageLoaded, mapImage, mapControls.zoom, mapControls.panOffset, userRole, user?.id, campaign?.characters, tokens, dmPreviewPlayerView, lightSources, selectedLightId, lightMode, wallSegments, wallColor, hoveredWallId, selectedWallIds, hoveredDoorId, wallMode, selectedEndpoint, wallInProgress, wallType, snapToGrid, brushSize, splitHoverPoint, polygonPoints, showRuler, rulerColor, effectiveRulerOrigin, showAoE, aoeConfig, aoeAnchor, hoverCoords, fogMode, isDM, fogState, viewerRevealed, viewerOwn, previewing, ruleFor, ownTokenCells, explorationEnabled, exploringAs, exploredCells, exploredRaster, socket, fogDragCurrent, wallMarquee, pings, prefersReducedMotion]);
+  }, [currentMap, imageLoaded, mapImage, mapControls.zoom, mapControls.panOffset, userRole, user?.id, campaign?.characters, tokens, dmPreviewPlayerView, lightSources, selectedLightId, lightMode, wallSegments, wallColor, hoveredWallId, selectedWallIds, hoveredDoorId, wallMode, selectedEndpoint, wallInProgress, wallType, snapToGrid, brushSize, splitHoverPoint, polygonPoints, showRuler, rulerColor, effectiveRulerOrigin, showAoE, aoeConfig, aoeAnchor, hoverCoords, fogMode, isDM, fogState, viewerRevealed, playerFogRaster, viewerOwn, previewing, ruleFor, ownTokenCells, explorationEnabled, exploringAs, exploredCells, exploredRaster, socket, fogDragCurrent, wallMarquee, pings, prefersReducedMotion]);
 
   // ── Layer draw dispatch + dirty-flag scheduling ──────────
   // A single rAF coalesces every repaint request; only the dirty layers
@@ -2150,7 +2172,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
   // Terrain-only content.
   useEffect(() => {
     markDirty('terrain');
-  }, [markDirty, showGrid, gridColor, effectiveFogState, previewing, previewedPlane, spiritLayerImage, spiritLayerOpacity]);
+  }, [markDirty, showGrid, gridColor, effectiveFogState, dmFogRaster, previewing, previewedPlane, spiritLayerImage, spiritLayerOpacity]);
 
   // Spirit flags affect the base/spirit images (terrain) and spirit-token
   // alpha (tokens).
@@ -2182,7 +2204,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
   // Overlay content — walls, lights, DM tools, measurement, pings, fog cursor.
   useEffect(() => {
     markDirty('overlay');
-  }, [markDirty, wallSegments, wallMode, wallInProgress, hoveredWallId, selectedWallIds, hoveredDoorId, splitHoverPoint, selectedEndpoint, wallType, snapToGrid, brushSize, lightSources, selectedLightId, lightMode, dmPreviewPlayerView, showRuler, rulerOrigin, rulerColor, effectiveRulerOrigin, showAoE, aoeConfig, aoeAnchor, fogMode, fogDragCurrent, fogState, viewerRevealed, previewing, ownTokenCells, exploredRaster, pings]);
+  }, [markDirty, wallSegments, wallMode, wallInProgress, hoveredWallId, selectedWallIds, hoveredDoorId, splitHoverPoint, selectedEndpoint, wallType, snapToGrid, brushSize, lightSources, selectedLightId, lightMode, dmPreviewPlayerView, showRuler, rulerOrigin, rulerColor, effectiveRulerOrigin, showAoE, aoeConfig, aoeAnchor, fogMode, fogDragCurrent, fogState, viewerRevealed, playerFogRaster, previewing, ownTokenCells, exploredRaster, pings]);
 
   // ============================================
   // Token Hit Testing
