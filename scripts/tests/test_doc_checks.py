@@ -17,7 +17,10 @@ import tempfile
 import textwrap
 import unittest
 
+import io
+
 SCRIPTS = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(SCRIPTS)
 
 
 def load(name):
@@ -191,6 +194,52 @@ class WebsocketEvents(unittest.TestCase):
             }
         '''})
         self.assertEqual(we.unreadable(), [])
+
+
+class MarkdownLinksIntegrity(unittest.TestCase):
+    """Verifies that scripts/check-markdown-links.py runs over the repository documentation without errors."""
+
+    def test_repository_markdown_links_are_valid(self):
+        cml = load('check-markdown-links')
+        errors, total_checked = cml.validate_markdown_links(ROOT)
+        self.assertEqual(errors, [], f"Broken markdown links detected ({len(errors)}):\n" + "\n".join(errors))
+        self.assertGreater(total_checked, 0, "Expected markdown links to be verified across repository docs")
+
+    def test_cli_execution_succeeds(self):
+        cml = load('check-markdown-links')
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        exit_code = cml.main(['check-markdown-links.py', '--root', ROOT], stdout=stdout, stderr=stderr)
+        self.assertEqual(exit_code, 0, f"check-markdown-links CLI failed with stderr:\n{stderr.getvalue()}")
+        self.assertEqual(stderr.getvalue(), '')
+        self.assertIn('Succès', stdout.getvalue())
+
+
+class BacklogTodosAudit(unittest.TestCase):
+    """Verifies that scripts/audit-backlog-todos.py --check-unreferenced runs over the codebase without orphan TODOs."""
+
+    def test_repository_code_has_no_unreferenced_todos(self):    
+        abt = load('audit-backlog-todos')
+        code_items = abt.scan_code(ROOT)
+        unreferenced = [item for item in code_items if not item.is_compliant]
+        self.assertEqual(
+            unreferenced, [],
+            f"Unreferenced or orphan TODO/FIXME comments found ({len(unreferenced)}):\n" +
+            "\n".join(f"{item.file_path}:{item.line_number}: {item.snippet}" for item in unreferenced)
+        )
+        self.assertGreater(len(code_items), 0, "Expected compliant normalized TODO items in repository code")
+
+    def test_cli_check_unreferenced_mode_succeeds(self):
+        abt = load('audit-backlog-todos')
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        exit_code = abt.main(
+            ['audit-backlog-todos.py', '--root', ROOT, '--check-unreferenced'],
+            stdout=stdout,
+            stderr=stderr
+        )
+        self.assertEqual(exit_code, 0, f"audit-backlog-todos --check-unreferenced failed with stderr:\n{stderr.getvalue()}")
+        self.assertEqual(stderr.getvalue().strip(), '')
 
 
 if __name__ == '__main__':

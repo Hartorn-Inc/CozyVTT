@@ -255,11 +255,7 @@ export function rollDice(expression: string): RollResult {
       // mathjs evaluate returns a number for simple expressions
       const result = evaluate(formula);
       total = typeof result === 'number' ? Math.floor(result) : parseInt(result.toString(), 10);
-      // TODO(play): dividing by zero is accepted, so `5/0` totals Infinity and
-      // `0/0` and `1-0/0` total NaN, and parseDiceExpression passes them too.
-      // Storing such a roll fails on the integer result column, and the roller
-      // sees "Failed to roll dice". A total that is not a finite number should
-      // throw a DiceParserError here, so the expression is refused as invalid.
+      // TODO(#155): handle division by zero and reject non-finite totals with DiceParserError
     } catch {
       throw new DiceParserError('Failed to evaluate expression');
     }

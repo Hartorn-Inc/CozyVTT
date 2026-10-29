@@ -311,7 +311,7 @@ export default function CreatureLibrary({ isOpen, onClose }: CreatureLibraryProp
   }, [campaign]);
 
   // ── Delete creature ──
-  // TODO(ui): this removes the creature from the main list only, so deleting
+  // TODO(#154): this removes the creature from the main list only, so deleting
   // one from the Favorites section leaves its row there until the library is
   // reopened. It should also drop it from `favoriteCreatures` and
   // `favoriteIds`.

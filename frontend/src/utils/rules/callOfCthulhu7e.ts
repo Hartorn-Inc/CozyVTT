@@ -46,7 +46,7 @@ export function cocHalfAndFifth(regular: number): { half: number; fifth: number 
 
 /** Damage bonus and build, from STR plus SIZ (the rulebook's Table I). */
 export function cocDamageBonusAndBuild(str: number, siz: number): { damageBonus: string; build: number } {
-  // TODO(rules): above 524 the table goes on, adding 1D6 and 1 build for each
+  // TODO(#152): above 524 the table goes on, adding 1D6 and 1 build for each
   // further 80 points; this stops at +5D6 and build 6. No investigator reaches
   // it (each characteristic stops at 99), but a creature entered on the sheet
   // could. Extend the steps past 524.

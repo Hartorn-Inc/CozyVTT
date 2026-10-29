@@ -38,7 +38,7 @@ function AssetCardInner({ asset, viewMode, onView, onDelete }: AssetCardProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   // Check if current user can delete this asset
-  // TODO(assets): the server also lets the DM of a campaign asset's campaign
+  // TODO(#154): the server also lets the DM of a campaign asset's campaign
   // delete it; offer Delete to that DM, as AssetDetailPanel should.
   const canDelete =
     user?.id === asset.uploadedById || user?.platformRole === 'ADMIN';
@@ -235,7 +235,7 @@ function AssetCardInner({ asset, viewMode, onView, onDelete }: AssetCardProps) {
   // Grid view
   return (
     <>
-    {/* TODO(ui): `transition-all` here and on the list card above also
+    {/* TODO(#154): `transition-all` here and on the list card above also
         transitions opacity, so in Firefox each card fades in twice: when
         Motion's fade ends it writes the final opacity on the element,
         and the 150ms CSS transition replays it from 0. The cards should

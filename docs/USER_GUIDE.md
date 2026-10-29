@@ -715,7 +715,7 @@ The branding settings on `PUT /api/admin/settings` name a path this instance ser
 browser contact that site before they have even signed in, and the app only displays images it
 serves itself.
 
-An admin upload UI is on the roadmap — see [Future Features](FUTURE_FEATURES.md).
+An admin upload UI is on the roadmap and tracked in GitHub Issues.
 
 ---
 

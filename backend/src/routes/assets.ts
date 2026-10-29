@@ -60,7 +60,7 @@ const router = Router();
 // this ceiling instead of keeping a second one that could drift.
 export const uploadLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  // TODO(assets): a value that is not a number gives NaN and turns this limit
+  // TODO(#154): a value that is not a number gives NaN and turns this limit
   // off; read it with positiveIntegerFromEnv as app.ts reads the general limit.
   max: parseInt(process.env.ASSET_UPLOAD_RATE_LIMIT || '30'),
   standardHeaders: true,
@@ -178,7 +178,7 @@ function handleAssetCaching(
 router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.session.userId!;
-    // TODO(assets): a parameter sent twice (`?search=a&search=b`) arrives as an
+    // TODO(#154): a parameter sent twice (`?search=a&search=b`) arrives as an
     // array, and the casts below hand it to Prisma, which throws, so the list
     // answers 500. Refuse a repeated parameter with 400, as invitable-users does.
     const { campaignId, page, limit, search, uploadedBy, usable } = req.query;
@@ -219,7 +219,7 @@ router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) 
 
     // Name search
     if (search) {
-      // TODO(ui): `search` reaches PostgreSQL as an unescaped LIKE pattern, so a % or _ in it matches any text; pass it through escapeLikePattern (utils/likePattern) so it matches only itself.
+      // TODO(#154): `search` reaches PostgreSQL as an unescaped LIKE pattern, so a % or _ in it matches any text; pass it through escapeLikePattern (utils/likePattern) so it matches only itself.
       where.name = { contains: search as string, mode: 'insensitive' };
     }
 
@@ -468,7 +468,7 @@ router.post(
       // What the bytes are (validateFileType), never what the browser said:
       // the export writes this into its archive, and it decides the thumbnail.
       const mimeType = req.detectedMimeType ?? 'application/octet-stream';
-      // TODO(upload): multer reads the file name's UTF-8 bytes as latin1, so a
+      // TODO(#154): multer reads the file name's UTF-8 bytes as latin1, so a
       // name with non-ASCII characters is stored garbled and shown so in the
       // library (downloads read it back through downloadNameOf); decode it as
       // UTF-8 before storing, and the names already stored with it.
@@ -1021,7 +1021,7 @@ router.get('/documents/:id', authenticated, async (req: AuthenticatedRequest, re
       const etag = `"${asset.id}-${stat.size}-${Math.floor(stat.mtimeMs)}"`;
       res.set('Cache-Control', 'private, no-cache');
       res.set('ETag', etag);
-      // TODO(assets): this 304 goes out before the document's sandbox CSP is set,
+      // TODO(#154): this 304 goes out before the document's sandbox CSP is set,
       // so it carries the app-wide policy and the browser keeps that one; set the
       // document's headers first.
       if (req.headers['if-none-match'] === etag) {

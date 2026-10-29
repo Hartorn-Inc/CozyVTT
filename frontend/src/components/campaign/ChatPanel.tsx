@@ -407,7 +407,7 @@ export default function ChatPanel() {
     try {
       console.log('[ChatPanel] Sending message:', content);
 
-      // TODO(play): this is sent with no acknowledgement. Sent while the
+      // TODO(#155): this is sent with no acknowledgement. Sent while the
       // connection is dropping, the message is lost: the client drops it once
       // its socket is gone, or socket.io delivers it on reconnect before the
       // socket has rejoined the campaign, which the server refuses. Either

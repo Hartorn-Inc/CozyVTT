@@ -105,10 +105,7 @@ export async function extractArchiveSafely(
       },
     });
 
-    // TODO(restore): stopping unzipper's entry stream part-way leaves the
-    // backup file open, so each refused restore keeps a file handle and the
-    // deleted upload's disk space until the process ends. unpackEntry below
-    // does this safely, and the restore should use it.
+    // TODO(#158): stopping unzipper stream part-way leaves backup file open; switch to unpackEntry helper
     await pipeline(entry.stream(), counter, createWriteStream(destPath));
   }
 }

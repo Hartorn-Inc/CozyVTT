@@ -196,7 +196,7 @@ export default function TokenTemplateLibrary({ isOpen, onClose }: TokenTemplateL
   const handleCopyToCampaign = useCallback(async (templateId: string, targetCampaignId: string) => {
     if (!campaign) return;
     try {
-      // TODO(ui): a copy that works only closes the menu, with nothing to say
+      // TODO(#153): a copy that works only closes the menu, with nothing to say
       // it happened, and a refusal shows the fixed sentence below without the
       // server's reason. Confirm the copy with a toast naming the campaign, and
       // show apiErrorMessage(err) on failure.

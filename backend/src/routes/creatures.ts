@@ -114,7 +114,7 @@ router.post('/seed', requireAuth, adminToSeed, async (_req: AuthenticatedRequest
 router.get('/', campaignDM, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { campaignId } = req.params;
-    // TODO(assets): a `search`, `source` or `cr` sent twice arrives as an array,
+    // TODO(#154): a `search`, `source` or `cr` sent twice arrives as an array,
     // which the casts below hand to Prisma, so the list answers 500. Refuse a
     // repeated parameter with 400, as invitable-users does.
     const { search, source, cr, limit = '50', offset = '0' } = req.query;
@@ -144,7 +144,7 @@ router.get('/', campaignDM, async (req: AuthenticatedRequest, res: Response) => 
     const where: Prisma.CreatureTemplateWhereInput = { AND: scopes };
 
     if (search) {
-      // TODO(ui): `search` reaches PostgreSQL as an unescaped LIKE pattern, so a % or _ in it matches any text; pass it through escapeLikePattern (utils/likePattern) so it matches only itself.
+      // TODO(#154): `search` reaches PostgreSQL as an unescaped LIKE pattern, so a % or _ in it matches any text; pass it through escapeLikePattern (utils/likePattern) so it matches only itself.
       where.name = { contains: search as string, mode: 'insensitive' };
     }
     if (source) {

@@ -186,7 +186,7 @@ const SkillRow: React.FC<{
       <div className="flex-1 min-w-0 flex items-center gap-1">
         <span className="text-sm text-sepia-900 truncate">{displayName}</span>
         {isClickable && <Dices className="w-3 h-3 text-sepia-600 opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" />}
-        {/* TODO(ui): the Other Language and Science rows already carry the
+        {/* TODO(#152): the Other Language and Science rows already carry the
            language or specialization in displayName, so these print it a
            second time, as in "Science (Physics) (Physics)". Show it here
            only when displayName does not. */}
@@ -204,7 +204,7 @@ const SkillRow: React.FC<{
       </div>
 
       {/* Current Value */}
-      {/* TODO(sheets): `parseInt(...) || 0` commits 0 the moment the box is
+      {/* TODO(#152): `parseInt(...) || 0` commits 0 the moment the box is
          cleared, so selecting a value and typing a new one starts from 0, the
          problem NumberField exists to solve. Use NumberField here with min at
          the base value. */}
@@ -284,7 +284,7 @@ export const SkillsList: React.FC<SkillsListProps> = ({ skills, themeColor, edit
                 );
               }
 
-              // TODO(sheets): the Firearms, Other Language and Science rows
+              // TODO(#152): the Firearms, Other Language and Science rows
               // below get no onRoll, so they do not roll from the sheet as
               // every other skill does. Pass onRoll to them as the Brawl row
               // above does.

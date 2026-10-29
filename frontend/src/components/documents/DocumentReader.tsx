@@ -260,7 +260,7 @@ export default function DocumentReader({
              allow-scripts is needed because the viewers themselves are script.
              allow-same-origin is deliberately absent.
 
-             TODO(safari): Safari shows a blank frame here. The suspected
+             TODO(#154): Safari shows a blank frame here. The suspected
              cause is the double sandbox, this attribute plus the sandbox
              directive in the response's Content-Security-Policy; Safari
              18.4's notes say that combination was fixed for a main frame
@@ -281,7 +281,7 @@ export default function DocumentReader({
                 Open this PDF in a new tab
               </button>
             </p>
-            {/* TODO(ui): Chrome's PDF viewer does not run in a frame sandboxed without
+            {/* TODO(#154): Chrome's PDF viewer does not run in a frame sandboxed without
                 allow-same-origin, so Chromium shows its blocked page here; opening the
                 file directly works. Show PDFs a way Chrome can display. */}
             <iframe
