@@ -436,6 +436,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
 
     return {
       ...withoutOrphanLanguages(withoutOrphanFeatures(own)),
+      level: typeof own.level === 'number' && Number.isFinite(own.level) ? own.level : 1,
       proficiencyBonus: profBonus,
       // Held to the range the server stores, so a sheet stored with more can
       // still be saved. Left out when absent, which is what makes the effects
@@ -810,44 +811,15 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   ]);
 
   /**
-   * Keep the stored spell save DC and attack bonus in step with the formulas,
-   * and read an older hand-typed value back into its parts.
-   *
-   * The same arrangement as initiative above, for the same reason: both used to
-   * be typed by hand, so a caster with a Rod of the Pact Keeper had a DC one
-   * higher than the formula gives. Deriving without converting would take that
-   * point away silently. The conversion runs once, only where the adjustment
-   * field is absent.
+   * Keep the stored spell save DC and attack bonus in step with the formulas.
    */
   useEffect(() => {
     if (!formData.spellcasting) return;
 
-    // TODO(#152): while no spellcasting ability is named, this effect keeps
-    // the stored DC at 8 + proficiency and the attack at proficiency. Naming
-    // the ability afterwards makes the backfill read that stored total as
-    // hand-typed, so it records minus the ability's modifier as the other bonus
-    // and the DC and attack do not move. The conversion should apply only to a
-    // total the sheet was loaded with, never to one this effect wrote.
-    const dcRead = dnd5eBackfilledSpellSaveDCBonus(formData);
-    const attackRead = dnd5eBackfilledSpellAttackBonus(formData);
-    const dcBackfill = dcRead === null ? null : withinBonusRange(dcRead);
-    const attackBackfill = attackRead === null ? null : withinBonusRange(attackRead);
-
-    const withBonuses = {
-      ...formData,
-      spellcasting: {
-        ...formData.spellcasting,
-        ...(dcBackfill !== null ? { spellSaveDCOtherBonus: dcBackfill } : {}),
-        ...(attackBackfill !== null ? { spellAttackOtherBonus: attackBackfill } : {}),
-      },
-    };
-
-    const dcTotal = dnd5eSpellSaveDC(withBonuses);
-    const attackTotal = dnd5eSpellAttackBonus(withBonuses);
+    const dcTotal = dnd5eSpellSaveDC(formData);
+    const attackTotal = dnd5eSpellAttackBonus(formData);
 
     const needsChange =
-      dcBackfill !== null ||
-      attackBackfill !== null ||
       formData.spellcasting.spellSaveDC !== dcTotal ||
       formData.spellcasting.spellAttackBonus !== attackTotal;
     if (!needsChange) return;
@@ -856,8 +828,6 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
       ...prev,
       spellcasting: {
         ...prev.spellcasting,
-        ...(dcBackfill !== null ? { spellSaveDCOtherBonus: dcBackfill } : {}),
-        ...(attackBackfill !== null ? { spellAttackOtherBonus: attackBackfill } : {}),
         spellSaveDC: dcTotal,
         spellAttackBonus: attackTotal,
       } as DnD5eSpellcasting,
@@ -1880,6 +1850,7 @@ min={0}
                 <input
                   key={`success-${i}`}
                   type="checkbox"
+                  aria-label={`Death save success ${i}`}
                   checked={(formData.deathSaves?.successes || 0) >= i}
                   onChange={(e) => {
                     if (e.target.checked) {
@@ -1900,6 +1871,7 @@ min={0}
                 <input
                   key={`failure-${i}`}
                   type="checkbox"
+                  aria-label={`Death save failure ${i}`}
                   checked={(formData.deathSaves?.failures || 0) >= i}
                   onChange={(e) => {
                     if (e.target.checked) {
@@ -2310,7 +2282,7 @@ min={0}
           <NumberField
             min={MIN_BONUS_OVERRIDE}
             max={MAX_BONUS_OVERRIDE}
-            value={formData.spellcasting?.spellSaveDCOtherBonus}
+            value={formData.spellcasting?.spellSaveDCOtherBonus ?? 0}
             onChange={(v: number) => updateField('spellcasting.spellSaveDCOtherBonus', v)}
             aria-label="Spell save DC other bonus"
             className="w-full px-2 py-1 border border-stone-300 rounded text-center focus:outline-none focus:ring-2 focus:ring-red-500"
@@ -2329,7 +2301,7 @@ min={0}
           <NumberField
             min={MIN_BONUS_OVERRIDE}
             max={MAX_BONUS_OVERRIDE}
-            value={formData.spellcasting?.spellAttackOtherBonus}
+            value={formData.spellcasting?.spellAttackOtherBonus ?? 0}
             onChange={(v: number) => updateField('spellcasting.spellAttackOtherBonus', v)}
             aria-label="Spell attack other bonus"
             className="w-full px-2 py-1 border border-stone-300 rounded text-center focus:outline-none focus:ring-2 focus:ring-red-500"
@@ -2359,6 +2331,7 @@ min={0}
             updateField('spellcasting.cantrips', e.target.value);
           }}
           placeholder="Enter cantrips separated by commas (e.g., Fire Bolt, Mage Hand, Prestidigitation)"
+          aria-label="Cantrips"
           rows={2}
           className="w-full px-3 py-2 border border-stone-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
         />
@@ -2445,6 +2418,7 @@ min={1}
                 value={spell.name || ''}
                 onChange={(e) => updateField(`spellcasting.spells.${index}.name`, e.target.value)}
                 placeholder="Spell Name"
+                aria-label={`Spell ${index + 1} name`}
                 className="flex-1 px-2 py-1 border border-stone-300 rounded font-medium focus:outline-none focus:ring-2 focus:ring-red-500"
               />
               <label className="flex items-center space-x-1 cursor-pointer" title="Prepared">
@@ -2475,10 +2449,12 @@ min={1}
                 <span className="text-xs text-stone-600">Con</span>
               </label>
               <button
+                type="button"
                 onClick={() => {
                   const newSpells = formData.spellcasting!.spells.filter((_, i) => i !== index);
                   updateField('spellcasting.spells', newSpells);
                 }}
+                aria-label={`Remove ${spell.name || 'spell'}`}
                 className="px-2 py-1 text-red-600 hover:text-red-800 font-bold"
               >
                 ×

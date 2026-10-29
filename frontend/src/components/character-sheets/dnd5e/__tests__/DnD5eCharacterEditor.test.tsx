@@ -175,7 +175,85 @@ describe('DnD5eCharacterEditor - Container Defaults (#211)', () => {
 
     render(<DnD5eCharacterEditor character={partialCharacter} onSave={onSave} onCancel={vi.fn()} />);
 
-    expect(screen.getByText('+3')).toBeInTheDocument();
+    expect(screen.getAllByText('+3').length).toBeGreaterThan(0);
     expect(screen.getAllByText('+0').length).toBeGreaterThan(0);
+  });
+
+  it('computes spell save DC on a sheet loaded without pre-existing spellcasting without injecting negative bonus offsets', async () => {
+    const onSave = vi.fn<(data: CharacterData) => Promise<void>>().mockResolvedValue(undefined);
+    const character = dnd5eCharacter({
+      proficiencyBonus: 2,
+      stats: {
+        strength: { score: 10, modifier: 0 },
+        dexterity: { score: 10, modifier: 0 },
+        constitution: { score: 10, modifier: 0 },
+        intelligence: { score: 16, modifier: 3 },
+        wisdom: { score: 10, modifier: 0 },
+        charisma: { score: 10, modifier: 0 },
+      },
+    });
+    delete (character.data as unknown as Record<string, unknown>).spellcasting;
+
+    render(<DnD5eCharacterEditor character={character} onSave={onSave} onCancel={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Spells/ }));
+
+    const abilityInput = screen.getByLabelText('Spellcasting Ability');
+    fireEvent.change(abilityInput, { target: { value: 'Intelligence' } });
+
+    await waitFor(() => {
+      expect(screen.getByText('13')).toBeInTheDocument();
+      expect(screen.getByText('+5')).toBeInTheDocument();
+    });
+
+    const dcOtherInput = screen.getByLabelText('Spell save DC other bonus') as HTMLInputElement;
+    const attackOtherInput = screen.getByLabelText('Spell attack other bonus') as HTMLInputElement;
+    expect(dcOtherInput.value).toBe('0');
+    expect(attackOtherInput.value).toBe('0');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(onSave).toHaveBeenCalled());
+
+    const saved = onSave.mock.calls[0][0] as unknown as {
+      spellcasting: {
+        spellSaveDC: number;
+        spellAttackBonus: number;
+        spellSaveDCOtherBonus?: number;
+        spellAttackOtherBonus?: number;
+      };
+    };
+
+    expect(saved.spellcasting.spellSaveDC).toBe(13);
+    expect(saved.spellcasting.spellAttackBonus).toBe(5);
+    expect(saved.spellcasting.spellSaveDCOtherBonus ?? 0).not.toBeLessThan(0);
+    expect(saved.spellcasting.spellAttackOtherBonus ?? 0).not.toBeLessThan(0);
+  });
+
+  it('provides accessible names for cantrips, spell name inputs, remove buttons, and death saves', () => {
+    const character = dnd5eCharacter({
+      spellcasting: {
+        ability: 'Intelligence',
+        spellSaveDC: 13,
+        spellAttackBonus: 5,
+        cantrips: ['Fire Bolt'],
+        spells: [{ level: 1, name: 'Magic Missile', prepared: true, ritual: false, concentration: false }],
+        slots: Object.fromEntries(['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((l) => [l, { total: 0, expended: 0 }])),
+      },
+    });
+
+    render(<DnD5eCharacterEditor character={character} onSave={vi.fn()} onCancel={vi.fn()} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Combat/ }));
+    expect(screen.getByLabelText('Death save success 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Death save success 2')).toBeInTheDocument();
+    expect(screen.getByLabelText('Death save success 3')).toBeInTheDocument();
+    expect(screen.getByLabelText('Death save failure 1')).toBeInTheDocument();
+    expect(screen.getByLabelText('Death save failure 2')).toBeInTheDocument();
+    expect(screen.getByLabelText('Death save failure 3')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Spells/ }));
+    expect(screen.getByLabelText('Cantrips')).toBeInTheDocument();
+    expect(screen.getByLabelText('Spell 1 name')).toBeInTheDocument();
+    expect(screen.getByLabelText('Remove Magic Missile')).toBeInTheDocument();
   });
 });
