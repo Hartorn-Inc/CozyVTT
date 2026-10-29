@@ -1095,7 +1095,7 @@ describe('parseDiceAST', () => {
   describe('Zero RNG guarantee', () => {
     test('does not call Math.random during parseDiceAST', () => {
       const spy = jest.spyOn(Math, 'random');
-      parseDiceAST('100d1000 + 4d6kh3 + adv + dis + d%');
+      parseDiceAST('10d1000 + 4d6kh3 + adv + dis + d%');
       expect(spy).not.toHaveBeenCalled();
       spy.mockRestore();
     });
