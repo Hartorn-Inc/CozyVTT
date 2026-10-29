@@ -479,6 +479,10 @@ describe('Dice Parser', () => {
       expect(() => rollDice('10/2/0')).toThrow('Division by zero');
       expect(() => rollDice('2+1d6/0')).toThrow(DiceParserError);
       expect(() => rollDice('2+1d6/0')).toThrow('Division by zero');
+      expect(() => rollDice('1d6/0 + 2')).toThrow(DiceParserError);
+      expect(() => rollDice('1d6/0 + 2')).toThrow('Division by zero');
+      expect(() => rollDice('(1d6/0) * 2')).toThrow(DiceParserError);
+      expect(() => rollDice('(1d6/0) * 2')).toThrow('Division by zero');
       expect(() => rollDice('1d6/-0')).toThrow(DiceParserError);
       expect(() => rollDice('1d6/-0')).toThrow('Division by zero');
       expect(() => rollDice('10/+0')).toThrow(DiceParserError);
@@ -746,7 +750,7 @@ describe('parseDiceExpression agrees with rollDice', () => {
     '6/-2', '6/--2', '6/-+2', '2d1*-3', '5+-2', '5-+2', '5--2', '5++2',
     '+5', '-5', '++5', '--5', '+-5', '-+-5', '---5', '1d1 - -1', '10 + - + 3',
     // Division by zero
-    '1d6/0', '10/0', '0/0', '4d6/0', '1d20/0', '2d20kh1/0', '10/2/0', '2+1d6/0', '1d6/-0', '10/+0',
+    '1d6/0', '10/0', '0/0', '4d6/0', '1d20/0', '2d20kh1/0', '10/2/0', '2+1d6/0', '1d6/0 + 2', '(1d6/0) * 2', '1d6/-0', '10/+0',
     // Malformed in various ways
     '2d6+', '+2d6', '2d6++3', 'dddd', 'invalid', '', '   ', 'd', '2d', 'd6',
     '2d6+-', '()', '2d6*', '/2d6', '1d6/', '/0', '1d6//0', '1d6/*2', '+', '-', '*2', '/2',
@@ -1184,6 +1188,11 @@ describe('parseDiceAST', () => {
       expect(() => parseDiceAST('1d20-')).toThrow(DiceParserError);
       expect(() => parseDiceAST('1d20*')).toThrow(DiceParserError);
       expect(() => parseDiceAST('1d20/')).toThrow(DiceParserError);
+    });
+
+    test('rejects unary operators on dice (+2d6, -2d6)', () => {
+      expect(() => parseDiceAST('+2d6')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('-2d6')).toThrow(DiceParserError);
     });
 
     test('rejects double operators (**)', () => {
