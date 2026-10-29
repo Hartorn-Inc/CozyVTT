@@ -160,6 +160,16 @@ _Avoid_: Spirit plane (for this view)
 The DM's combat turn order for a campaign. Distinct from the dice history of those rolls.
 _Avoid_: Encounter, combat log (for this object)
 
+## Operations
+
+**Graceful shutdown**:
+The bounded, sequenced termination of backend and reverse-proxy processes that drains in-flight requests, flushes pending audit and operational logs, and cleanly disconnects persistent WebSocket connections before process exit without resource leaks or unhandled write exceptions.
+_Avoid_: Hard kill, container abort, unclean exit
+
+**Administrator audit log**:
+The persistent audit trail recording sensitive Administrator actions—including setup, configuration updates, and Instance backup restorations—with best-effort persistence and fallback logging even under database or migration error conditions.
+_Avoid_: Event log, action log (for this administrative record)
+
 ## Contribution
 
 **EPURE orchestration**:
