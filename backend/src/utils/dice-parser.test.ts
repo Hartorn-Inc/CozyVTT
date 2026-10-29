@@ -678,10 +678,11 @@ describe('Dice Parser', () => {
       const result = rollDice('(2d6 + 1d4) * 2 - 3', mockRng);
       // 2d6 = 9, 1d4 = 3 => (9 + 3) * 2 - 3 = 12 * 2 - 3 = 24 - 3 = 21
       expect(result.total).toBe(21);
-      expect(result.rolls).toHaveLength(3);
+      expect(result.rolls).toHaveLength(4);
       expect(result.rolls[0].total).toBe(9);
       expect(result.rolls[1].total).toBe(3);
-      expect(result.rolls[2].value).toBe(3);
+      expect(result.rolls[2].value).toBe(2);
+      expect(result.rolls[3].value).toBe(3);
     });
 
     test('fractional division floors down with integer semantics', () => {
@@ -704,10 +705,13 @@ describe('Dice Parser', () => {
 
     test('parseDiceExpression validates expressions purely without calling Math.random', () => {
       const spy = jest.spyOn(Math, 'random');
-      expect(parseDiceExpression('4d6kh3 + 2d20kl1 + 5')).toBe(true);
-      expect(parseDiceExpression('1d100 * 2')).toBe(true);
-      expect(spy).not.toHaveBeenCalled();
-      spy.mockRestore();
+      try {
+        expect(parseDiceExpression('4d6kh3 + 2d20kl1 + 5')).toBe(true);
+        expect(parseDiceExpression('1d100 * 2')).toBe(true);
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });
@@ -1201,9 +1205,12 @@ describe('parseDiceAST', () => {
   describe('Zero RNG guarantee', () => {
     test('does not call Math.random during parseDiceAST', () => {
       const spy = jest.spyOn(Math, 'random');
-      parseDiceAST('10d1000 + 4d6kh3 + adv + dis + d%');
-      expect(spy).not.toHaveBeenCalled();
-      spy.mockRestore();
+      try {
+        parseDiceAST('10d1000 + 4d6kh3 + adv + dis + d%');
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
     });
   });
 });

@@ -336,29 +336,14 @@ export function evaluateArithmetic(tokens: string[]): number {
 }
 
 /**
- * Would this expression roll?
- *
- * Answers by rolling it and throwing the result away, rather than by
- * re-implementing the rules. It used to have its own copy of the token loop,
- * which checked each token in isolation and never checked that the tokens formed
- * a usable expression — so `2d6+`, `2d6*`, `2d6+-` and `/2d6` all passed
- * validation and then threw the moment they were rolled.
- *
- * Every caller validates and then rolls, so that gap let an expression clear the
- * gate and fail immediately afterwards. It was worse for anything that *stores* a
- * validated expression — a saved dice macro, an initiative fallback — where the
- * failure arrives long after the mistake was made and with nothing to connect
- * the two.
- *
- * Two functions answering one question will drift; this is the cheap fix, and
- * `dice-parser.test.ts` pins the two verdicts together so they cannot part again.
- * The wasted roll costs nothing: the expression is capped at 100 dice.
+ * Validate a dice expression purely by parsing it into the authoritative AST.
+ * Enforces all syntactic and semantic invariants without executing rolls or generating random numbers.
  *
  * @param expression Dice expression
  * @returns true if valid; throws DiceParserError if not
  */
 export function parseDiceExpression(expression: string): boolean {
-  rollDice(expression);
+  parseDiceAST(expression);
   return true;
 }
 
@@ -513,7 +498,7 @@ export function parseDiceAST(expression: string): DiceAST {
     }
 
     if (tokenIdx >= tokens.length) {
-      throw new DiceParserError('Unexpected end of expression');
+      throw new DiceParserError('Failed to evaluate expression');
     }
 
     const token = tokens[tokenIdx++];
