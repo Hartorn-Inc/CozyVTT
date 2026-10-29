@@ -17,7 +17,7 @@
  * - Expression max length: 200 chars
  */
 
-import { evaluate } from 'mathjs';
+
 
 // Limits
 const MAX_DICE = 100;
@@ -249,14 +249,21 @@ export function rollDice(expression: string): RollResult {
     // Build formula string
     const formula = formulaParts.join(' ');
 
-    // Evaluate the formula using mathjs (safe evaluation)
+    // Evaluate formula with zero-dependency arithmetic evaluator
     let total: number;
     try {
-      // mathjs evaluate returns a number for simple expressions
-      const result = evaluate(formula);
-      total = typeof result === 'number' ? Math.floor(result) : parseInt(result.toString(), 10);
-      // TODO(#155): handle division by zero and reject non-finite totals with DiceParserError
-    } catch {
+      const result = evaluateArithmetic(formulaParts);
+      if (!Number.isFinite(result)) {
+        throw new DiceParserError('Failed to evaluate expression');
+      }
+      total = Math.floor(result);
+      if (total === 0) {
+        total = 0;
+      }
+    } catch (error) {
+      if (error instanceof DiceParserError) {
+        throw error;
+      }
       throw new DiceParserError('Failed to evaluate expression');
     }
 
@@ -272,6 +279,124 @@ export function rollDice(expression: string): RollResult {
     }
     throw new DiceParserError(`Failed to parse expression: ${expression}`);
   }
+}
+
+/**
+ * Evaluates arithmetic formula tokens using standard operator precedence (*, / before +, -),
+ * left-to-right associativity, and leading/chained unary signs (+, -).
+ * Uses IEEE 754 floating-point operations.
+ * Rejects division by zero and non-finite intermediate/resulting values with DiceParserError.
+ */
+export function evaluateArithmetic(tokens: string[]): number {
+  if (tokens.length === 0) {
+    throw new DiceParserError('Failed to evaluate expression');
+  }
+
+  let index = 0;
+
+  function parsePrimary(): number {
+    if (index >= tokens.length) {
+      throw new DiceParserError('Failed to evaluate expression');
+    }
+
+    const token = tokens[index];
+
+    // Handle unary + and -
+    if (token === '+' || token === '-') {
+      index++;
+      const operand = parsePrimary();
+      const signed = token === '-' ? -operand : operand;
+      if (!Number.isFinite(signed)) {
+        throw new DiceParserError('Failed to evaluate expression');
+      }
+      return signed;
+    }
+
+    // Parenthesized expressions if encountered
+    if (token === '(') {
+      index++;
+      const inner = parseAdditive();
+      if (index >= tokens.length || tokens[index] !== ')') {
+        throw new DiceParserError('Failed to evaluate expression');
+      }
+      index++;
+      return inner;
+    }
+
+    // Number token
+    const value = Number(token);
+    if (!Number.isFinite(value) || token.trim() === '') {
+      throw new DiceParserError('Failed to evaluate expression');
+    }
+
+    index++;
+    return value;
+  }
+
+  function parseMultiplicative(): number {
+    let left = parsePrimary();
+
+    while (index < tokens.length) {
+      const op = tokens[index];
+      if (op !== '*' && op !== '/') {
+        break;
+      }
+      index++;
+      const right = parsePrimary();
+
+      if (op === '*') {
+        left = left * right;
+      } else {
+        if (right === 0) {
+          throw new DiceParserError('Division by zero');
+        }
+        left = left / right;
+      }
+
+      if (!Number.isFinite(left)) {
+        throw new DiceParserError('Failed to evaluate expression');
+      }
+    }
+
+    return left;
+  }
+
+  function parseAdditive(): number {
+    let left = parseMultiplicative();
+
+    while (index < tokens.length) {
+      const op = tokens[index];
+      if (op !== '+' && op !== '-') {
+        break;
+      }
+      index++;
+      const right = parseMultiplicative();
+
+      if (op === '+') {
+        left = left + right;
+      } else {
+        left = left - right;
+      }
+
+      if (!Number.isFinite(left)) {
+        throw new DiceParserError('Failed to evaluate expression');
+      }
+    }
+
+    return left;
+  }
+
+  const result = parseAdditive();
+
+  if (index < tokens.length) {
+    throw new DiceParserError('Failed to evaluate expression');
+  }
+
+  if (!Number.isFinite(result)) {
+    throw new DiceParserError('Failed to evaluate expression');
+  }
+
+  return result;
 }
 
 /**
