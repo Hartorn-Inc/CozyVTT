@@ -40,63 +40,60 @@ export function canEditCampaign(campaignRole: CampaignRole, platformRole: Platfo
   return isDM(campaignRole) || isAdmin(platformRole);
 }
 
-// TODO(#152): nothing calls canEditCharacter, and it disagrees with
-// PUT /api/characters/:id, which decides this itself: it lets any admin edit,
-// it takes the campaign id from its caller instead of the character, and it
-// does not refuse a spectator who owns the character. Delete it, or make it
-// match the route and have the route call it, so the rule is declared once.
-// The same goes for the other helpers here that no route calls (isAdmin,
-// isDM, isPlayer, canEditCampaign, canManageMaps, canToggleSpiritLayer,
-// canChangeVibe, canManageSessions, canInvitePlayers, canDeleteMessages,
-// canExportCampaign): each is a second statement of a rule the routes state
-// in their guards.
+export interface CharacterEditPermissionResult {
+  allowed: boolean;
+  reason?: 'NOT_FOUND' | 'SPECTATOR' | 'FORBIDDEN';
+  isDM?: boolean;
+}
+
 /**
- * Check if user can edit a specific character
- * 
- * - Players can edit own characters
- * - DM can edit any character in campaign
- * - Admin can edit any character
+ * Canonical authorization check for character edits per ADR-0014 and ADR-0021.
+ *
+ * - SPECTATOR membership role in character's campaign is strictly denied
+ * - Character owner is allowed if not SPECTATOR in the character's campaign
+ * - Campaign DM is allowed only if the character owner is still an active member
+ * - Non-campaign-members and unrelated users are denied
  */
 export async function canEditCharacter(
   userId: string,
-  characterId: string,
-  campaignId: string,
-  platformRole: PlatformRole
-): Promise<boolean> {
-  // Admins can edit anything
-  if (isAdmin(platformRole)) {
-    return true;
-  }
-
-  // Get character
-  const character = await prisma.character.findUnique({
-    where: { id: characterId },
-  });
+  characterOrId: string | { id?: string; userId: string; campaignId: string | null }
+): Promise<CharacterEditPermissionResult> {
+  const character = typeof characterOrId === 'string'
+    ? await prisma.character.findUnique({ where: { id: characterOrId } })
+    : characterOrId;
 
   if (!character) {
-    return false;
+    return { allowed: false, reason: 'NOT_FOUND' };
   }
 
-  // Owner can always edit their own character
-  if (character.userId === userId) {
-    return true;
+  const membership = character.campaignId
+    ? await prisma.campaignMembership.findUnique({
+        where: { userId_campaignId: { userId, campaignId: character.campaignId } },
+      })
+    : null;
+
+  if (membership?.role === 'SPECTATOR') {
+    return { allowed: false, reason: 'SPECTATOR' };
   }
 
-  // Check if user is DM of the campaign
-  const membership = await prisma.campaignMembership.findUnique({
-    where: {
-      userId_campaignId: {
-        userId,
-        campaignId,
-      },
-    },
-  });
-
-  if (membership && isDM(membership.role)) {
-    return true;
+  let ownerInCampaign = false;
+  if (membership?.role === 'DM' && character.campaignId !== null) {
+    const ownerMembership = await prisma.campaignMembership.findUnique({
+      where: { userId_campaignId: { userId: character.userId, campaignId: character.campaignId } },
+      select: { userId: true },
+    });
+    ownerInCampaign = ownerMembership !== null;
   }
 
-  return false;
+  const isAuthorized =
+    character.userId === userId ||
+    (membership?.role === 'DM' && character.campaignId !== null && ownerInCampaign);
+
+  if (!isAuthorized) {
+    return { allowed: false, reason: 'FORBIDDEN' };
+  }
+
+  return { allowed: true, isDM: membership?.role === 'DM' };
 }
 
 /**
