@@ -140,6 +140,10 @@ _Avoid_: Inactive map, background map, draft map
 The DM's manual reveal grid on a map. Distinct from dynamic lighting and from explored memory.
 _Avoid_: Darkness, vision, exploration (for this object)
 
+**Fog raster cache**:
+An offscreen canvas buffer sized at 1 pixel per grid cell representing the static manual fog state (unrevealed cells), blitted onto the main viewport in a single `drawImage` operation. Distinct from the dynamic lighting explored raster.
+_Avoid_: Explored raster (for manual fog), fog bitmap, fog texture
+
 **Explored memory**:
 Per-member grey overlay of cells that member has already seen on a map. Distinct from fog. It is not used to decide whether a token is sent.
 _Avoid_: Exploration (unqualified), vision history
