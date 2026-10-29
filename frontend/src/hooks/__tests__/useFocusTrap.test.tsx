@@ -89,4 +89,107 @@ describe('useFocusTrap', () => {
     expect(onClose).not.toHaveBeenCalled();
     expect(nestedClose).toHaveBeenCalled();
   });
+
+  it('preserves focus on autoFocus elements inside the container rather than forcing first control', async () => {
+    function TrapWithAutoFocus() {
+      const ref = useFocusTrap(true);
+      return (
+        <div ref={ref} role="dialog" aria-label="Create User Modal">
+          <button type="button" aria-label="Close dialog">
+            Close
+          </button>
+          <input type="email" autoFocus data-testid="autofocus-input" placeholder="user@example.com" />
+          <button type="button">Submit</button>
+        </div>
+      );
+    }
+
+    render(<TrapWithAutoFocus />);
+    expect(document.activeElement).toBe(screen.getByTestId('autofocus-input'));
+
+    await nextFrame();
+
+    expect(document.activeElement).toBe(screen.getByTestId('autofocus-input'));
+    expect(document.activeElement).not.toBe(screen.getByRole('button', { name: 'Close dialog' }));
+  });
+
+  it('moves focus to the first focusable element when activeElement is outside the container', async () => {
+    function TrapWithoutAutoFocus() {
+      const ref = useFocusTrap(true);
+      return (
+        <div ref={ref} role="dialog" aria-label="Simple Dialog">
+          <button type="button" aria-label="Close dialog">
+            Close
+          </button>
+          <input type="text" data-testid="field" />
+        </div>
+      );
+    }
+
+    const outsideButton = document.createElement('button');
+    outsideButton.textContent = 'Trigger';
+    document.body.appendChild(outsideButton);
+    outsideButton.focus();
+    expect(document.activeElement).toBe(outsideButton);
+
+    try {
+      render(<TrapWithoutAutoFocus />);
+      await nextFrame();
+
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close dialog' }));
+    } finally {
+      document.body.removeChild(outsideButton);
+    }
+  });
+
+  it('focuses the container itself when no focusable elements are present', async () => {
+    function EmptyTrap() {
+      const ref = useFocusTrap(true);
+      return (
+        <div ref={ref} role="dialog" aria-label="Empty Dialog">
+          <p>Static info message</p>
+        </div>
+      );
+    }
+
+    render(<EmptyTrap />);
+    await nextFrame();
+
+    const dialog = screen.getByRole('dialog', { name: 'Empty Dialog' });
+    expect(dialog).toHaveAttribute('tabindex', '-1');
+    expect(document.activeElement).toBe(dialog);
+  });
+
+  it('maintains keyboard focus trap boundaries when starting from an autoFocus element (WCAG 2.1 AA)', async () => {
+    function TrapWithAutoFocus() {
+      const ref = useFocusTrap(true);
+      return (
+        <div ref={ref} role="dialog" aria-label="Form Dialog">
+          <button type="button">Close</button>
+          <input type="text" autoFocus data-testid="name-field" />
+          <button type="button">Save</button>
+        </div>
+      );
+    }
+
+    render(<TrapWithAutoFocus />);
+    await nextFrame();
+
+    const closeBtn = screen.getByRole('button', { name: 'Close' });
+    const saveBtn = screen.getByRole('button', { name: 'Save' });
+    const input = screen.getByTestId('name-field');
+
+    expect(document.activeElement).toBe(input);
+
+    saveBtn.focus();
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+    });
+    expect(document.activeElement).toBe(closeBtn);
+
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', shiftKey: true, bubbles: true }));
+    });
+    expect(document.activeElement).toBe(saveBtn);
+  });
 });
