@@ -195,3 +195,25 @@ _Avoid_: Link check (for the property itself)
 **Dead backlog documentation**:
 Static markdown documents (such as `docs/FUTURE_FEATURES.md`) storing unmanaged feature proposals or outdated bug lists outside the primary issue tracker.
 _Avoid_: Archive, backlog file, future roadmap (for static documents)
+
+## Frontend Styling and Theme Architecture
+
+**Cozy Theme**:
+One of the 16 preset visual ambiance themes configured in CozyVTT (such as parchment, sepia, forest, midnight), setting custom CSS properties on the root element to style the entire virtual tabletop interface.
+_Avoid_: Skin, template (for visual styling), style pack
+
+**Theme Token**:
+A semantic design variable declared in the CSS `@theme` directive representing colors, typography, elevations, or spacing across the CozyVTT user interface.
+_Avoid_: Tailwind variable, design token (unqualified)
+
+**Ink Variant**:
+A high-contrast semantic color token suffixed with `-ink` (such as `text-brand-ink` or `text-forest-green-ink`), engineered to guarantee WCAG AA/AAA contrast ratios against corresponding background surfaces.
+_Avoid_: Dark color, contrast text, inverted color
+
+**Composite Utility Class**:
+A reusable frontend CSS class combining atomic design primitives into CozyVTT component styling (such as `btn-primary`, `card`, `input-cozy`).
+_Avoid_: Component tag, style widget, macro class
+
+**CSS-First Theme Configuration**:
+Tailwind CSS v4's native declarative `@theme` configuration embedded directly in CSS files (`frontend/src/index.css`), eliminating JavaScript-based configuration files (`tailwind.config.js`).
+_Avoid_: JS config, PostCSS script, theme module
