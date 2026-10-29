@@ -38,7 +38,7 @@ import { api } from '../../../services/api';
 import { useServerConfigQuery } from '@/hooks/queries';
 import { getUploadLimit, formatUploadLimit } from '@/utils/uploadLimits';
 import NumberField from '../../ui/NumberField';
-import ListLimitNote, { ADD_BUTTON_OFF, listChangeAllowed, listIsFull } from '../ListLimitNote';
+import ListLimitNote, { ADD_BUTTON_OFF, listChangeAllowed, listIsFull, listFullMessage } from '../ListLimitNote';
 import {
   passiveScore,
   dnd5eSpellSaveDC,
@@ -153,6 +153,9 @@ function withoutOrphanFeatures(sheet: DnD5eFormData): DnD5eFormData {
   delete (settled as Record<string, unknown>).features;
   return settled;
 }
+
+export const DND5E_CUSTOM_SKILLS_MAX = 30;
+export const DND5E_OTHER_DAMAGE_ROLLS_MAX = 10;
 
 const DEFAULT_ABILITY_SCORE = 10;
 
@@ -353,6 +356,7 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   const levelFieldId = useId();
   const levelErrorId = useId();
   const xpFieldId = useId();
+  const customSkillsLimitId = useId();
   const { data: serverConfig } = useServerConfigQuery();
 
   // Type assertion for D&D 5e character data
@@ -1237,7 +1241,10 @@ export const DnD5eCharacterEditor: React.FC<DnD5eCharacterEditorProps> = ({
   );
 
   // Render Stats & Skills tab
-  const renderStatsTab = () => (
+  const renderStatsTab = () => {
+    const customSkillsFull = listIsFull(formData.customSkills, DND5E_CUSTOM_SKILLS_MAX);
+
+    return (
     <div className="space-y-6">
       {/* Character Details */}
       <div className="grid grid-cols-2 gap-4">
@@ -1477,22 +1484,24 @@ min={1}
       <div className="bg-stone-50 border border-stone-200 rounded-lg p-4">
         <div className="flex items-center justify-between mb-1">
           <h3 className="text-lg font-semibold text-stone-800">Your Own Skills</h3>
-          {/* TODO(#152): the schema keeps at most 30 of these and this button
-              has no limit, so a 31st skill makes a sheet that cannot be saved.
-              Turn the button off at the limit, as the lists below do. */}
           <button
             type="button"
-            onClick={() =>
+            onClick={() => {
+              if (customSkillsFull) return;
               updateField('customSkills', [
                 ...(formData.customSkills || []),
                 { name: '', ability: 'dexterity', proficient: true, expertise: false },
-              ])
-            }
-            className="px-3 py-1 text-sm font-medium text-white bg-red-700 hover:bg-red-800 rounded-lg transition-colors"
+              ]);
+            }}
+            disabled={customSkillsFull}
+            aria-describedby={customSkillsFull ? customSkillsLimitId : undefined}
+            title={customSkillsFull ? listFullMessage(DND5E_CUSTOM_SKILLS_MAX) : undefined}
+            className={`px-3 py-1 text-sm font-medium text-white bg-red-700 hover:bg-red-800 rounded-lg transition-colors ${ADD_BUTTON_OFF}`}
           >
             + Add Skill
           </button>
         </div>
+        <ListLimitNote full={customSkillsFull} max={DND5E_CUSTOM_SKILLS_MAX} id={customSkillsLimitId} />
         <p className="text-xs text-stone-500 mb-3">
           Tool proficiencies, or anything your table made up. Pick the ability it uses
           and the bonus is worked out for you.
@@ -1633,7 +1642,8 @@ min={1}
         </p>
       </div>
     </div>
-  );
+    );
+  };
 
   // The 5e conditions, shared with the token editor so the two cannot drift.
   //
@@ -1978,7 +1988,10 @@ min={0}
         </div>
         <ListLimitNote full={listIsFull(formData.attacks)} />
         <div className="space-y-4">
-          {(formData.attacks || []).map((attack, index) => (
+          {(formData.attacks || []).map((attack, index) => {
+            const additionalDamageFull = listIsFull(attack.additionalDamage, DND5E_OTHER_DAMAGE_ROLLS_MAX);
+            const damageRollsLimitId = `attack-${index}-damage-rolls-limit`;
+            return (
             <div key={index} className="bg-white border border-stone-300 rounded-lg p-3 space-y-2">
               <div className="flex items-start justify-between">
                 <input
@@ -2134,22 +2147,24 @@ min={0}
                   <label className="block text-xs font-semibold text-stone-600">
                     Other Damage Rolls
                   </label>
-                  {/* TODO(#152): the schema keeps at most 10 of these per
-                      attack and this button has no limit, so an 11th makes a
-                      sheet that cannot be saved. Turn it off at the limit. */}
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={() => {
+                      if (additionalDamageFull) return;
                       updateField(`attacks.${index}.additionalDamage`, [
                         ...(attack.additionalDamage || []),
                         { label: '', damageRoll: '', damageType: '' },
-                      ])
-                    }
-                    className="px-2 py-0.5 text-xs font-medium text-red-700 hover:text-red-900"
+                      ]);
+                    }}
+                    disabled={additionalDamageFull}
+                    aria-describedby={additionalDamageFull ? damageRollsLimitId : undefined}
+                    title={additionalDamageFull ? listFullMessage(DND5E_OTHER_DAMAGE_ROLLS_MAX) : undefined}
+                    className={`px-2 py-0.5 text-xs font-medium text-red-700 hover:text-red-900 ${ADD_BUTTON_OFF}`}
                   >
                     + Add Damage Roll
                   </button>
                 </div>
+                <ListLimitNote full={additionalDamageFull} max={DND5E_OTHER_DAMAGE_ROLLS_MAX} id={damageRollsLimitId} />
                 {(attack.additionalDamage || []).map((entry, dmgIndex) => (
                   <div key={dmgIndex} className="flex gap-2 mb-1">
                     <input
@@ -2215,7 +2230,8 @@ min={0}
                 />
               </div>
             </div>
-          ))}
+          );
+        })}
           {(!formData.attacks || formData.attacks.length === 0) && (
             <div className="text-sm text-stone-500 italic">No attacks added yet</div>
           )}
