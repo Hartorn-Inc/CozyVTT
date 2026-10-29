@@ -48,105 +48,49 @@ _Avoid_: Mood, atmosphere (unqualified), ambiance (for this object)
 The user who owns the campaign. Distinct from the sitting DM.
 _Avoid_: Host, admin (for this role)
 
+**Sitting DM**:
+The user currently running a campaign session. A campaign owner may hand this role to another member.
+_Avoid_: DM (unqualified), GM, host
+
 **Member**:
-A user with a role in a campaign: DM, player, or spectator.
-_Avoid_: Participant, player (for the membership itself)
+A user who belongs to a Campaign. May be the owner, a sitting DM, or a player.
+_Avoid_: User (within a campaign context), participant, player (for the role)
+
+**Player**:
+A campaign member who is neither the owner nor the sitting DM for that session.
+_Avoid_: User, member (when role distinction matters)
 
 **Session**:
-A live play period on a campaign, with captured table state.
-_Avoid_: Game, match, login, sign-in (for this object)
+A scheduled or active play period within a Campaign.
+_Avoid_: Game, meet, event
 
-**Login session**:
-The signed-in connection of a browser to the instance. Distinct from a play Session.
-_Avoid_: Session (for this object)
+**Active session**:
+A Session currently in progress. Only one may be active per Campaign at a time.
+_Avoid_: Current game, live session
 
-**DM**:
-The member currently running a campaign's table. The seat can be handed to another member without changing campaign ownership.
-_Avoid_: GM, narrator, host (for this role)
+**Map**:
+A play area within a Campaign, backed by an image asset and optionally layered with a grid, walls, lights, and tokens.
+_Avoid_: Board, scene, canvas
 
-**Character**:
-A playable sheet belonging to one user, assigned to at most one campaign.
-_Avoid_: PC, sheet (when meaning this object)
+**Grid**:
+The coordinate overlay on a Map (square or hexagonal) that defines movement units.
+_Avoid_: Overlay (unqualified), mesh
 
-**Character owner**:
-The user the character belongs to. Distinct from the campaign owner and the DM.
-_Avoid_: Owner (unqualified)
-
-**Game system**:
-The rules framework a Character's sheet is written for. A Character may have none.
-_Avoid_: System (unqualified), ruleset, RPG system
-
-**Flexible sheet**:
-A Character or published character template with no game system: the player lays out sections instead of a fixed sheet.
-_Avoid_: Custom sheet, generic sheet, untyped sheet
-
-**Starter template**:
-A hardcoded starting sheet for a game system, offered by the Instance.
-_Avoid_: Template (unqualified), example sheet (for this object)
-
-**Published character template**:
-A shareable sheet in the Instance library, readable by every signed-in user. Distinct from a starter template and from a token template. Never carries Keeper's Notes.
-_Avoid_: Public template, character template (unqualified), shared template
-
-**Token template**:
-A reusable token definition that belongs to one Campaign.
-_Avoid_: Template (unqualified), token preset
-
-**Keeper's Notes**:
-The Call of Cthulhu field on a Character that only the DM of that Character's Campaign may read or write. It is a field, not a role. Published character templates never carry it.
-_Avoid_: Keeper (as a role), GM notes, private notes (for this field)
-
-**Derived value**:
-A number the sheet can recompute from inputs the user entered. Distinct from a current resource and from a printed creature total.
-_Avoid_: Cached total (as the concept), calculated field, computed stat (for this object)
-
-**Current resource**:
-The remaining amount of a pool the table spends at play, such as current hit points or remaining hit dice. Distinct from a derived value.
-_Avoid_: HP (unqualified), pool (unqualified)
-
-**Printed total**:
-A creature number stored as printed, not recomputed from parts. Distinct from a Character derived value.
-_Avoid_: Derived value (for this)
-
-**Uploader**:
-The user who added an asset. Distinct from campaign owner and character owner.
-_Avoid_: Owner, author (for this role)
-
-**Personal asset**:
-An asset that belongs to one user, not to a campaign.
-_Avoid_: Private asset, user asset, shared asset (as a kind of ownership)
-
-**Campaign asset**:
-An asset that belongs to one campaign.
-_Avoid_: Table asset, global asset (for this scope)
-
-**Leftover file**:
-A file on disk with no asset record. Distinct from a campaign asset whose campaign is gone.
-_Avoid_: Orphaned asset (for this leftover)
+**Fog of war**:
+The DM-controlled layer masking portions of a Map from players until revealed.
+_Avoid_: Shroud, mask (unqualified), darkness
 
 **Token**:
-A piece on a campaign map (player, NPC, or object) with position, image, and optional stats. It can exist without a bound character.
-_Avoid_: Sprite, pawn, miniature
+A visual marker placed on a Map representing a character, monster, or object.
+_Avoid_: Pawn, piece, figure, avatar
 
-**Current map**:
-The map the campaign is showing at the table.
-_Avoid_: Active map, live map, shown map
+**Wall**:
+A line segment on a Map that blocks line of sight, light, or movement for tokens.
+_Avoid_: Barrier, obstacle, line (unqualified)
 
-**Prepared map**:
-A campaign map that is not the current map.
-_Avoid_: Inactive map, background map, draft map
-
-**Fog**:
-The DM's manual reveal grid on a map. Distinct from dynamic lighting and from explored memory.
-_Avoid_: Darkness, vision, exploration (for this object)
-
-**Explored memory**:
-Per-member grey overlay of cells that member has already seen on a map. Distinct from fog. It is not used to decide whether a token is sent.
-_Avoid_: Exploration (unqualified), vision history
-
-**Dynamic lighting**:
-Line-of-sight lighting on a map that can hide tokens from members who cannot see them. Distinct from fog.
-_Avoid_: Vision, LOS, lighting (unqualified)
+**Asset**:
+An uploaded file (image or audio) stored by CozyVTT and referenced by maps, tokens, or audio tracks.
+_Avoid_: File, upload (unqualified), media
 
 **Spirit layer**:
 The second plane of a map, distinct from the material plane. A token lives on one or the other.
@@ -195,3 +139,25 @@ _Avoid_: Link check (for the property itself)
 **Dead backlog documentation**:
 Static markdown documents (such as `docs/FUTURE_FEATURES.md`) storing unmanaged feature proposals or outdated bug lists outside the primary issue tracker.
 _Avoid_: Archive, backlog file, future roadmap (for static documents)
+
+## Dice Notation and Parsing
+
+**Dice Expression**:
+A mathematical string describing one or more die rolls with optional modifiers and arithmetic operations (e.g., `1d20+5`, `4d6kh3`, `2d20kl1-2`, `d%`).
+_Avoid_: Dice formula, roll command, dice string (unqualified)
+
+**Dice AST**:
+The deterministic Abstract Syntax Tree generated by `parseDiceAST` representing tokenized dice groups, constant modifiers, and binary operations without invoking random roll generation.
+_Avoid_: Parsed roll, roll tree, math expression
+
+**Roll Evaluation**:
+The execution phase that traverses a validated `DiceAST`, samples random numbers via a designated RNG provider for each die node, calculates keep/drop sets, and computes final arithmetic totals.
+_Avoid_: Parsing, rolling (unqualified when separating AST from roll execution)
+
+**Dice Selection Modifier**:
+A qualifier affixed to a dice term instructing the evaluator to retain or omit specific subsets of rolled dice: Keep Highest (`kh`), Keep Lowest (`kl`), Drop Highest (`dh`), or Drop Lowest (`dl`).
+_Avoid_: Die filter, roll option, dice flag
+
+**Grammar Parity**:
+The strict requirement that frontend validation (`frontend/src/utils/diceExpression.ts`) and backend expression handling (`backend/src/utils/dice-parser.ts`) accept and reject identical expression subsets, enforced continuously by automated tests (`keepInStep.test.ts`).
+_Avoid_: Loose validation, syntax alignment
