@@ -574,35 +574,20 @@ export function deriveReadableTokens(colors: ThemeColors): Record<string, string
 export function applyThemeColors(colors: ThemeColors): void {
   const root = document.documentElement;
   const properties: Record<string, string> = {
-    '--color-brand': colors.brand,
     '--color-brand-rgb': colors.brand,
-    '--color-brand-dark': colors.brandDark,
     '--color-brand-dark-rgb': colors.brandDark,
-    '--color-accent': colors.accent,
     '--color-accent-rgb': colors.accent,
-    '--color-accent-hover': colors.accentHover,
     '--color-accent-hover-rgb': colors.accentHover,
-    '--color-accent-text': colors.accentText,
     '--color-accent-text-rgb': colors.accentText,
-    '--color-bg-base': colors.bgBase,
     '--color-bg-base-rgb': colors.bgBase,
-    '--color-bg-surface': colors.bgSurface,
     '--color-bg-surface-rgb': colors.bgSurface,
-    '--color-bg-surface-light': colors.bgSurfaceLight,
     '--color-bg-surface-light-rgb': colors.bgSurfaceLight,
-    '--color-bg-surface-dark': colors.bgSurfaceDark,
     '--color-bg-surface-dark-rgb': colors.bgSurfaceDark,
-    '--color-ink': colors.ink,
     '--color-ink-rgb': colors.ink,
-    '--color-ink-secondary': colors.inkSecondary,
     '--color-ink-secondary-rgb': colors.inkSecondary,
-    '--color-ink-muted': colors.inkMuted,
     '--color-ink-muted-rgb': colors.inkMuted,
-    '--color-paper': colors.paper,
     '--color-paper-rgb': colors.paper,
-    '--color-danger': colors.danger,
     '--color-danger-rgb': colors.danger,
-    '--color-spirit': colors.spirit,
     '--color-spirit-rgb': colors.spirit,
   };
 
@@ -611,10 +596,9 @@ export function applyThemeColors(colors: ThemeColors): void {
   }
 
   // Readable text variants + state colors, computed from the above.
-  // Set last: --color-ink-muted is intentionally overwritten with its clamped
+  // Set last: --color-ink-muted-rgb is intentionally overwritten with its clamped
   // value when the authored one is too faint to read.
   for (const [name, value] of Object.entries(deriveReadableTokens(colors))) {
-    root.style.setProperty(name, value);
     root.style.setProperty(`${name}-rgb`, value);
   }
 }

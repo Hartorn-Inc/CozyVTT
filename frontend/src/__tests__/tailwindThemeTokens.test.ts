@@ -151,4 +151,41 @@ describe('Tailwind CSS 4 index.css configuration', () => {
 
     expect(indexCss).toContain('[data-separator]:focus-visible');
   });
+
+  it('does not redeclare non-rgb theme color tokens in :root', () => {
+    const rootBlock = /:root\s*\{([\s\S]*?)\}/.exec(indexCss)?.[1] ?? '';
+    expect(rootBlock).not.toBe('');
+
+    const forbiddenRootProperties = [
+      '--color-brand:',
+      '--color-brand-dark:',
+      '--color-accent:',
+      '--color-accent-hover:',
+      '--color-accent-text:',
+      '--color-bg-base:',
+      '--color-bg-surface:',
+      '--color-bg-surface-light:',
+      '--color-bg-surface-dark:',
+      '--color-ink:',
+      '--color-ink-secondary:',
+      '--color-ink-muted:',
+      '--color-paper:',
+      '--color-danger:',
+      '--color-spirit:',
+      '--color-brand-ink:',
+      '--color-accent-ink:',
+      '--color-spirit-ink:',
+      '--color-danger-ink:',
+      '--color-success:',
+      '--color-success-ink:',
+      '--color-warning:',
+      '--color-warning-ink:',
+      '--color-info:',
+      '--color-info-ink:',
+    ];
+
+    for (const prop of forbiddenRootProperties) {
+      expect(rootBlock).not.toContain(prop);
+    }
+  });
 });
