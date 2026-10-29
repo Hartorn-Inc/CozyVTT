@@ -1186,6 +1186,11 @@ describe('parseDiceAST', () => {
       expect(() => parseDiceAST('1d20/')).toThrow(DiceParserError);
     });
 
+    test('rejects unary operators on dice (+2d6, -2d6)', () => {
+      expect(() => parseDiceAST('+2d6')).toThrow(DiceParserError);
+      expect(() => parseDiceAST('-2d6')).toThrow(DiceParserError);
+    });
+
     test('rejects double operators (**)', () => {
       expect(() => parseDiceAST('1d20**5')).toThrow(DiceParserError);
     });

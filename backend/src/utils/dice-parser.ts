@@ -543,6 +543,9 @@ export function parseDiceAST(expression: string): DiceAST {
     }
 
     if (token.type === 'DICE') {
+      if (hasUnary) {
+        throw new DiceParserError(`Unexpected token: ${token.raw}`);
+      }
       const diceNode: DiceNode = {
         type: 'dice',
         count: token.count!,
@@ -552,16 +555,6 @@ export function parseDiceAST(expression: string): DiceAST {
       if (token.modifier) {
         diceNode.modifier = token.modifier;
         diceNode.modifierCount = token.modifierCount;
-      }
-
-      if (hasUnary && sign === -1) {
-        return {
-          type: 'binaryOp',
-          operator: '-',
-          op: '-',
-          left: { type: 'modifier', value: 0 },
-          right: diceNode,
-        };
       }
       return diceNode;
     }

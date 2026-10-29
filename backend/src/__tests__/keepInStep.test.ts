@@ -113,11 +113,19 @@
  * above it names one too; when an update of that package asks for the same
  * version or a newer one, the override is no longer needed, and left in place
  * it would hold the package back.
+ *
+ * The dice expression validator. The browser checks expressions on character
+ * sheets before rolling them, and the server validates them before rolling or
+ * storing a macro; if the two disagree, valid shorthand rolls or valid attack
+ * expressions fail client-side, or malformed syntax accepted by the browser
+ * fails on the server.
  */
 
 import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
+import ts from 'typescript';
+import { parseDiceExpression } from '../utils/dice-parser';
 import { RESTORE_PREAMBLE, RESTORE_TRAILER, loginSessionRestoreTrailer, restorePreamble } from '../utils/pgRestore';
 import { sessionSecretProblem } from '../config/sessionSecret';
 import { SOCKET_CEILINGS, type CeilingWindow } from '../websocket/shared';
@@ -782,5 +790,78 @@ describe.each(['backend', 'frontend'])('the npm overrides in %s/package.json', (
       return newer(version, asked) ? [] : [`${parent} asks for ${name} ${asked}, the override holds it at ${version}: remove the override`];
     });
     expect(wrong).toEqual([]);
+  });
+});
+
+/**
+ * Load and instantiate isValidDiceExpression directly from frontend source
+ * to guarantee strict behavioral parity without leaking build dependencies.
+ */
+function loadFrontendDiceValidator(): (expr: string) => boolean {
+  const source = read('frontend/src/utils/diceExpression.ts');
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const moduleObj: { exports: { isValidDiceExpression?: (expr: string) => boolean } } = { exports: {}
+  };
+  const fn = new Function('module', 'exports', transpiled);
+  fn(moduleObj, moduleObj.exports);
+  if (typeof moduleObj.exports.isValidDiceExpression !== 'function') {
+    throw new Error('frontend/src/utils/diceExpression.ts does not export isValidDiceExpression');
+  }
+  return moduleObj.exports.isValidDiceExpression;
+}
+
+describe('the dice expression validator parity between frontend and backend', () => {
+  const isValidDiceExpression = loadFrontendDiceValidator();
+
+  const corpus = [
+    // Ordinary things people roll
+    '1d20', '2d6+3', '4d6kh3', '1d20+5', '2d20kh1', '2d20kl1', '1d100', '3d8-1',
+    '1d12*2', '10d6', '1d6+1d8', '5', '1d20 + 5', '  2d6  +  3  ',
+    // Shorthands and case insensitivity
+    'adv', 'dis', 'ADV', 'Dis', 'd%', '1d%', '2d%', '3D%', 'd20', 'd6', '1D20', '2D6',
+    // Selection modifiers (kh, kl, dh, dl)
+    '4d6kh4', '2d20kl1', '4d6dh1', '4d6dl1', '4d6KH3', '4d6DL1', '4d6DH2',
+    // Parentheses and compound expressions
+    '(2 + 3) * 4', '((1d20 + 5) * 2)', '(1d20)', '1d20++5', '1d20+-5', '100d1', 'd1000', '1d20+9999',
+    // Arithmetic precedence, associativity, and chained unary signs
+    '6/4*2', '10-3-2', '2+3*4', '2*3+4', '12/3/2', '12/3*2', '20-10+5', '20-10-5',
+    '24/6*2/4', '1d1+2*3-4/2', '2*3+4*5', '10-2*3+8/4', '1d1+1d1*2', '1d1*2+1d1',
+    '2d1*3/2', '1d1*3/2', '1d1-1', '0*5', '0+0', '0-0', '0/5', '-0',
+    '1d1--1', '2++3', '-7/2', '10+-+3', '1d1+-+3', '10---3', '1d1*--3', '2*--3',
+    '6/-2', '6/--2', '6/-+2', '2d1*-3', '5+-2', '5-+2', '5--2', '5++2',
+    '+5', '-5', '++5', '--5', '+-5', '-+-5', '---5', '1d1 - -1', '10 + - + 3',
+    // Static division by zero
+    '1d6/0', '10/0', '0/0', '4d6/0', '1d20/0', '2d20kh1/0', '10/2/0', '2+1d6/0', '1d6/-0', '10/+0',
+    '1d20/(5-5)',
+    // Malformed syntax and dangling operators
+    '2d6+', '+2d6', '2d6*', '/2d6', '1d6/', '/0', '1d6//0', '1d6/*2', '+', '-', '*2', '/2',
+    '2d6+-', '///',
+    // Empty or unbalanced parentheses
+    '()', '(   )', '(1d20+5', '1d20+5)', '1d20**5',
+    // Invalid keep/drop modifiers
+    '4d6kh5', '4d6kh0', '4d6kl5', '4d6kl0',
+    '4d6dh4', '4d6dh5', '4d6dh0',
+    '2d6dl2', '4d6dl4', '4d6dl5', '4d6dl0',
+    '1d6dl1', '1d6dh1', '2d6kh', '4d6dl',
+    // Out-of-range counts, sizes, and modifiers
+    '101d20', '50d6+51d6', '1d1001', '1d0', 'd0', '1d20+10000', '10000', '-10000',
+    // Invalid characters and words
+    '', '   ', 'dddd', 'invalid', 'hello world', '2x6', '2d', 'd', '1d20 5', '%',
+  ];
+
+  it.each(corpus)('gives the identical verdict for %j on frontend and backend', (expr) => {
+    const backendAccepts = (() => {
+      try {
+        return parseDiceExpression(expr) === true;
+      } catch {
+        return false;
+      }
+    })();
+
+    const frontendAccepts = isValidDiceExpression(expr);
+
+    expect(frontendAccepts).toBe(backendAccepts);
   });
 });
