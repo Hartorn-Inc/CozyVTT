@@ -246,7 +246,7 @@ export interface PF2eBulk {
 export interface PF2eFeat {
   level: number;
   name: string;
-  notes: string;
+  notes?: string;
   /** What the editor's text box under the feat holds. */
   description?: string;
 }

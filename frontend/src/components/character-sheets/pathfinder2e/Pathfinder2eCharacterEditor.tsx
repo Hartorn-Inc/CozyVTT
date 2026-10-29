@@ -32,6 +32,7 @@ import type {
   PF2eInitiative,
   PF2eClassDC,
   PF2eHitPoints,
+  PF2eFeat,
   PF2eFeats,
   PF2eSpellSlots,
   PF2eAppearance,
@@ -136,18 +137,152 @@ const PROFICIENCY_RANKS: ProficiencyRank[] = ['untrained', 'trained', 'expert', 
 const calculateModifier = (score: number): number => Math.floor((score - 10) / 2);
 const formatModifier = (mod: number): string => mod >= 0 ? `+${mod}` : `${mod}`;
 
-// TODO(#152): the inventory's Bulk box stores what is typed as a string, so
-// an item typed as "2" counts as 0 here and in bulkToNumber in BulkTracker, and
-// only light items add to the total. Read a numeric string as its number.
-const calculateTotalBulk = (inventory: PF2eInventoryItem[]): number => {
+/**
+ * Parse bulk input (number, numeric string, "L" for light, or "—"/"-" for none)
+ * into a numeric value via parseFloat.
+ */
+export const bulkToNumber = (bulk: number | string | undefined | null): number => {
+  if (typeof bulk === 'number') return Number.isFinite(bulk) ? bulk : 0;
+  if (typeof bulk === 'string') {
+    const trimmed = bulk.trim();
+    if (trimmed === 'L' || trimmed === 'l') return 0.1;
+    if (trimmed === '—' || trimmed === '-' || trimmed === '') return 0;
+    const parsed = parseFloat(trimmed);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
+};
+
+/**
+ * Calculate total bulk from inventory items, parsing numeric strings.
+ */
+export const calculateTotalBulk = (inventory: PF2eInventoryItem[]): number => {
   return inventory.reduce((total, item) => {
-    let itemBulk = 0;
-    if (typeof item.bulk === 'number') itemBulk = item.bulk;
-    else if (item.bulk === 'L') itemBulk = 0.1;
-    else if (item.bulk === '—' || item.bulk === '-') itemBulk = 0;
+    const itemBulk = bulkToNumber(item.bulk);
     return total + (itemBulk * (item.quantity || 1));
   }, 0);
 };
+
+const DEFAULT_ATTRIBUTES = [
+  'strength',
+  'dexterity',
+  'constitution',
+  'intelligence',
+  'wisdom',
+  'charisma',
+] as const;
+
+function createDefaultAttributes(raw?: unknown): PF2eAttributes {
+  const source = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const attributes: Partial<PF2eAttributes> = {};
+  for (const attr of DEFAULT_ATTRIBUTES) {
+    const rawAttr = typeof source[attr] === 'object' && source[attr] !== null
+      ? (source[attr] as Record<string, unknown>)
+      : {};
+    const score = typeof rawAttr.score === 'number' && Number.isFinite(rawAttr.score) ? rawAttr.score : 10;
+    const modifier = typeof rawAttr.modifier === 'number' && Number.isFinite(rawAttr.modifier)
+      ? rawAttr.modifier
+      : calculateModifier(score);
+    attributes[attr] = { score, modifier };
+  }
+  return attributes as PF2eAttributes;
+}
+
+const DEFAULT_SAVING_THROWS = ['fortitude', 'reflex', 'will'] as const;
+
+function createDefaultSavingThrows(raw?: unknown): PF2eSavingThrows {
+  const source = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const saves: Partial<PF2eSavingThrows> = {};
+  for (const save of DEFAULT_SAVING_THROWS) {
+    const rawSave = typeof source[save] === 'object' && source[save] !== null
+      ? (source[save] as Record<string, unknown>)
+      : {};
+    const proficiencyRank = (typeof rawSave.proficiencyRank === 'string' && PROFICIENCY_RANKS.includes(rawSave.proficiencyRank as ProficiencyRank))
+      ? (rawSave.proficiencyRank as ProficiencyRank)
+      : 'untrained';
+    const itemBonus = typeof rawSave.itemBonus === 'number' && Number.isFinite(rawSave.itemBonus) ? rawSave.itemBonus : 0;
+    const bonus = typeof rawSave.bonus === 'number' && Number.isFinite(rawSave.bonus) ? rawSave.bonus : 0;
+    saves[save] = { proficiencyRank, itemBonus, bonus };
+  }
+  return saves as PF2eSavingThrows;
+}
+
+function createDefaultArmorClass(raw?: unknown): PF2eArmorClass {
+  const source = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const total = typeof source.total === 'number' && Number.isFinite(source.total) ? source.total : 10;
+  const proficiencyRank = (typeof source.proficiencyRank === 'string' && PROFICIENCY_RANKS.includes(source.proficiencyRank as ProficiencyRank))
+    ? (source.proficiencyRank as ProficiencyRank)
+    : 'untrained';
+  const capDex = typeof source.capDex === 'number' && Number.isFinite(source.capDex) ? source.capDex : null;
+  const itemBonus = typeof source.itemBonus === 'number' && Number.isFinite(source.itemBonus) ? source.itemBonus : 0;
+  const armorPenalty = typeof source.armorPenalty === 'number' && Number.isFinite(source.armorPenalty) ? source.armorPenalty : 0;
+  return { total, proficiencyRank, capDex, itemBonus, armorPenalty };
+}
+
+function createDefaultHitPoints(raw?: unknown): PF2eHitPoints {
+  const source = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  const ancestryHp = typeof source.ancestryHp === 'number' && Number.isFinite(source.ancestryHp) ? source.ancestryHp : 6;
+  const classHpPerLevel = typeof source.classHpPerLevel === 'number' && Number.isFinite(source.classHpPerLevel) ? source.classHpPerLevel : 6;
+  const current = typeof source.current === 'number' && Number.isFinite(source.current) ? source.current : 0;
+  const temporary = typeof source.temporary === 'number' && Number.isFinite(source.temporary) ? source.temporary : 0;
+  const maximum = typeof source.maximum === 'number' && Number.isFinite(source.maximum)
+    ? source.maximum
+    : ancestryHp + classHpPerLevel;
+  const resistances = Array.isArray(source.resistances) ? (source.resistances as string[]) : [];
+  const immunities = Array.isArray(source.immunities) ? (source.immunities as string[]) : [];
+  const weaknesses = Array.isArray(source.weaknesses) ? (source.weaknesses as string[]) : [];
+  return { maximum, ancestryHp, classHpPerLevel, current, temporary, resistances, immunities, weaknesses };
+}
+
+function createDefaultAppearance(raw?: unknown): PF2eAppearance {
+  const source = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  return {
+    age: (typeof source.age === 'number' || typeof source.age === 'string') ? (source.age as number) : ('' as unknown as number),
+    height: typeof source.height === 'string' ? source.height : '',
+    weight: typeof source.weight === 'string' ? source.weight : '',
+    eyes: typeof source.eyes === 'string' ? source.eyes : '',
+    skin: typeof source.skin === 'string' ? source.skin : '',
+    hair: typeof source.hair === 'string' ? source.hair : '',
+  };
+}
+
+function createDefaultPersonality(raw?: unknown): PF2ePersonality {
+  const source = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+  return {
+    traits: typeof source.traits === 'string' ? source.traits : '',
+    ideals: typeof source.ideals === 'string' ? source.ideals : '',
+    bonds: typeof source.bonds === 'string' ? source.bonds : '',
+    flaws: typeof source.flaws === 'string' ? source.flaws : '',
+  };
+}
+
+function normalizeFeats(featsList?: unknown[]): PF2eFeat[] {
+  if (!Array.isArray(featsList)) return [];
+  return featsList.map((item) => {
+    const raw = typeof item === 'object' && item !== null ? (item as Record<string, unknown>) : {};
+    const level = typeof raw.level === 'number' && Number.isFinite(raw.level) ? raw.level : 1;
+    const name = typeof raw.name === 'string' ? raw.name : '';
+    const description = typeof raw.description === 'string'
+      ? raw.description
+      : (typeof raw.notes === 'string' ? raw.notes : '');
+    return {
+      level,
+      name,
+      description,
+      ...(typeof raw.notes === 'string' ? { notes: raw.notes } : {}),
+    };
+  });
+}
+
+function normalizeFeatForSave(feat: PF2eFeat): PF2eFeat {
+  const description = feat.description !== undefined ? feat.description : (feat.notes || '');
+  const normalized: PF2eFeat = {
+    ...feat,
+    description,
+  };
+  delete (normalized as unknown as Record<string, unknown>).notes;
+  return normalized;
+}
 
 export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorProps> = ({
   character,
@@ -168,92 +303,89 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
 
   const data = character.data as PF2eFormData;
 
-  const [formData, setFormData] = useState<PF2eFormData>(() => ({
-    ...data,
-    attributes: data.attributes || {
-      strength: { score: 10, modifier: 0 },
-      dexterity: { score: 10, modifier: 0 },
-      constitution: { score: 10, modifier: 0 },
-      intelligence: { score: 10, modifier: 0 },
-      wisdom: { score: 10, modifier: 0 },
-      charisma: { score: 10, modifier: 0 },
-    },
-    savingThrows: data.savingThrows || {
-      fortitude: { proficiencyRank: 'untrained', itemBonus: 0, bonus: 0 },
-      reflex: { proficiencyRank: 'untrained', itemBonus: 0, bonus: 0 },
-      will: { proficiencyRank: 'untrained', itemBonus: 0, bonus: 0 },
-    },
-    perception: data.perception || { proficiencyRank: 'untrained', itemBonus: 0, bonus: 0, senses: [] },
-    // Attributes and spellcasting are read in the editor's spelling, so a sheet
-    // a template wrote with "str" or "Arcane" keeps its numbers.
-    skills: data.skills ? withFullSkillAttributes(data.skills) : {
-      acrobatics: { attribute: 'dexterity', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      arcana: { attribute: 'intelligence', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      athletics: { attribute: 'strength', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      crafting: { attribute: 'intelligence', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      deception: { attribute: 'charisma', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      diplomacy: { attribute: 'charisma', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      intimidation: { attribute: 'charisma', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      medicine: { attribute: 'wisdom', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      nature: { attribute: 'wisdom', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      occultism: { attribute: 'intelligence', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      performance: { attribute: 'charisma', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      religion: { attribute: 'wisdom', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      society: { attribute: 'intelligence', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      stealth: { attribute: 'dexterity', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      survival: { attribute: 'wisdom', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-      thievery: { attribute: 'dexterity', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
-    },
-    loreSkills: (data.loreSkills || []).map((lore) => ({ ...lore, attribute: fullAttributeName(lore.attribute) })),
-    armorClass: data.armorClass || { total: 10, proficiencyRank: 'untrained', capDex: null, itemBonus: 0, armorPenalty: 0 },
-    classDC: data.classDC
-      ? { ...data.classDC, keyAttribute: fullAttributeName(data.classDC.keyAttribute) }
-      : { total: 10, keyAttribute: 'intelligence', proficiencyRank: 'untrained' },
-    initiative: data.initiative || { usedStat: 'perception', bonus: 0 },
-    speed: data.speed || { land: 30, other: [] },
-    hp: data.hp || { maximum: 0, ancestryHp: 6, classHpPerLevel: 6, current: 0, temporary: 0, resistances: [], immunities: [], weaknesses: [] },
-    deathAndDying: data.deathAndDying || { dying: 0, wounded: 0, doomed: 0 },
-    conditions: data.conditions || [],
-    proficiencies: data.proficiencies || {
-      weapons: { simple: 'untrained', martial: 'untrained', advanced: 'untrained', unarmed: 'untrained' },
-      armor: { unarmored: 'untrained', light: 'untrained', medium: 'untrained', heavy: 'untrained' },
-    },
-    strikes: data.strikes || [],
-    currency: data.currency || { cp: 0, sp: 0, gp: 0, pp: 0 },
-    inventory: data.inventory || [],
-    bulk: data.bulk || { current: 0, encumbered: 5, maximum: 10 },
-    languages: data.languages || [],
-    feats: {
-      ancestryAndHeritage: data.feats?.ancestryAndHeritage || [],
-      class: data.feats?.class || [],
-      skill: data.feats?.skill || [],
-      general: data.feats?.general || [],
-      bonus: data.feats?.bonus || [],
-    },
-    classFeatures: data.classFeatures || [],
-    spellcasting: data.spellcasting ? {
-      ...data.spellcasting,
-      tradition: editorTradition(data.spellcasting.tradition),
-      type: editorCastingType(data.spellcasting.type),
-      keyAttribute: fullAttributeName(data.spellcasting.keyAttribute),
-      cantrips: readPf2eCantrips(data.spellcasting.cantrips),
-      slots: readPf2eSpellSlots(data.spellcasting.slots),
-      spells: data.spellcasting.spells || [],
-      focusSpells: data.spellcasting.focusSpells || { focusPoints: { total: 0, current: 0 }, spells: [] },
-      innateSpells: data.spellcasting.innateSpells || [],
-      rituals: (data.spellcasting.rituals ?? []).map((ritual) =>
-        typeof ritual === 'string' ? { name: ritual, rank: 1 } : ritual),
-    } : undefined,
-    // TODO(#152): `{}` has none of the keys these types require, and the
-    // inputs below read straight off them. Pre-existing; cast so the
-    // behaviour for a sheet stored without one is exactly what it was.
-    appearance: (data.appearance || {}) as PF2eAppearance,
-    personality: (data.personality || {}) as PF2ePersonality,
-    backstory: data.backstory || '',
-    alliesAndOrganizations: data.alliesAndOrganizations || { name: '', description: '' },
-    notes: data.notes || '',
-    treasure: data.treasure || '',
-  }));
+  const [formData, setFormData] = useState<PF2eFormData>(() => {
+    const own = JSON.parse(JSON.stringify(data ?? {})) as PF2eFormData;
+    const attributes = createDefaultAttributes(own.attributes);
+    const savingThrows = createDefaultSavingThrows(own.savingThrows);
+    const armorClass = createDefaultArmorClass(own.armorClass);
+    const hp = createDefaultHitPoints(own.hp);
+    const appearance = createDefaultAppearance(own.appearance);
+    const personality = createDefaultPersonality(own.personality);
+
+    return {
+      ...own,
+      level: typeof own.level === 'number' && Number.isFinite(own.level) ? own.level : 1,
+      attributes,
+      savingThrows,
+      armorClass,
+      hp,
+      appearance,
+      personality,
+      perception: own.perception || { proficiencyRank: 'untrained', itemBonus: 0, bonus: 0, senses: [] },
+      // Attributes and spellcasting are read in the editor's spelling, so a sheet
+      // a template wrote with "str" or "Arcane" keeps its numbers.
+      skills: own.skills ? withFullSkillAttributes(own.skills) : {
+        acrobatics: { attribute: 'dexterity', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        arcana: { attribute: 'intelligence', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        athletics: { attribute: 'strength', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        crafting: { attribute: 'intelligence', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        deception: { attribute: 'charisma', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        diplomacy: { attribute: 'charisma', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        intimidation: { attribute: 'charisma', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        medicine: { attribute: 'wisdom', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        nature: { attribute: 'wisdom', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        occultism: { attribute: 'intelligence', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        performance: { attribute: 'charisma', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        religion: { attribute: 'wisdom', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        society: { attribute: 'intelligence', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        stealth: { attribute: 'dexterity', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        survival: { attribute: 'wisdom', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+        thievery: { attribute: 'dexterity', proficiencyRank: 'untrained', armorPenalty: 0, itemBonus: 0, bonus: 0 },
+      },
+      loreSkills: (own.loreSkills || []).map((lore) => ({ ...lore, attribute: fullAttributeName(lore.attribute) })),
+      classDC: own.classDC
+        ? { ...own.classDC, keyAttribute: fullAttributeName(own.classDC.keyAttribute) }
+        : { total: 10, keyAttribute: 'intelligence', proficiencyRank: 'untrained' },
+      initiative: own.initiative || { usedStat: 'perception', bonus: 0 },
+      speed: own.speed || { land: 30, other: [] },
+      deathAndDying: own.deathAndDying || { dying: 0, wounded: 0, doomed: 0 },
+      conditions: own.conditions || [],
+      proficiencies: own.proficiencies || {
+        weapons: { simple: 'untrained', martial: 'untrained', advanced: 'untrained', unarmed: 'untrained' },
+        armor: { unarmored: 'untrained', light: 'untrained', medium: 'untrained', heavy: 'untrained' },
+      },
+      strikes: own.strikes || [],
+      currency: own.currency || { cp: 0, sp: 0, gp: 0, pp: 0 },
+      inventory: own.inventory || [],
+      bulk: own.bulk || { current: 0, encumbered: 5, maximum: 10 },
+      languages: own.languages || [],
+      feats: {
+        ancestryAndHeritage: normalizeFeats(own.feats?.ancestryAndHeritage),
+        class: normalizeFeats(own.feats?.class),
+        skill: normalizeFeats(own.feats?.skill),
+        general: normalizeFeats(own.feats?.general),
+        bonus: normalizeFeats(own.feats?.bonus),
+      },
+      classFeatures: own.classFeatures || [],
+      spellcasting: own.spellcasting ? {
+        ...own.spellcasting,
+        tradition: editorTradition(own.spellcasting.tradition),
+        type: editorCastingType(own.spellcasting.type),
+        keyAttribute: fullAttributeName(own.spellcasting.keyAttribute),
+        cantrips: readPf2eCantrips(own.spellcasting.cantrips),
+        slots: readPf2eSpellSlots(own.spellcasting.slots),
+        spells: own.spellcasting.spells || [],
+        focusSpells: own.spellcasting.focusSpells || { focusPoints: { total: 0, current: 0 }, spells: [] },
+        innateSpells: own.spellcasting.innateSpells || [],
+        rituals: (own.spellcasting.rituals ?? []).map((ritual) =>
+          typeof ritual === 'string' ? { name: ritual, rank: 1 } : ritual),
+      } : undefined,
+      backstory: own.backstory || '',
+      alliesAndOrganizations: own.alliesAndOrganizations || { name: '', description: '' },
+      notes: own.notes || '',
+      treasure: own.treasure || '',
+    };
+  });
 
   /**
    * Class features as editable rows, whatever shape the sheet holds them in.
@@ -751,11 +883,11 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
         inventory: omitUnnamedRows(formData.inventory, 'name'),
         feats: formData.feats
           ? {
-              ancestryAndHeritage: omitUnnamedRows(formData.feats.ancestryAndHeritage, 'name') ?? [],
-              class: omitUnnamedRows(formData.feats.class, 'name') ?? [],
-              skill: omitUnnamedRows(formData.feats.skill, 'name') ?? [],
-              general: omitUnnamedRows(formData.feats.general, 'name') ?? [],
-              bonus: omitUnnamedRows(formData.feats.bonus, 'name') ?? [],
+              ancestryAndHeritage: (omitUnnamedRows(formData.feats.ancestryAndHeritage, 'name') ?? []).map(normalizeFeatForSave),
+              class: (omitUnnamedRows(formData.feats.class, 'name') ?? []).map(normalizeFeatForSave),
+              skill: (omitUnnamedRows(formData.feats.skill, 'name') ?? []).map(normalizeFeatForSave),
+              general: (omitUnnamedRows(formData.feats.general, 'name') ?? []).map(normalizeFeatForSave),
+              bonus: (omitUnnamedRows(formData.feats.bonus, 'name') ?? []).map(normalizeFeatForSave),
             }
           : formData.feats,
         spellcasting: formData.spellcasting
@@ -1592,14 +1724,14 @@ min={0} value={formData.currency?.[currency.key]} onChange={(v: number) => updat
             <div key={index} className="bg-white border border-stone-200 rounded-lg p-3">
               <div className="flex items-center justify-between mb-2">
                 <input type="text" value={item.name} onChange={(e) => updateField(`inventory.${index}.name`, e.target.value)} placeholder="Item Name" className="flex-1 px-2 py-1 border border-stone-300 rounded font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                <button onClick={() => { const newInventory = formData.inventory!.filter((_, i) => i !== index); updateField('inventory', newInventory); }} className="ml-2 px-2 py-1 text-red-600 hover:text-red-800">
+                <button onClick={() => { const newInventory = formData.inventory!.filter((_, i) => i !== index); updateField('inventory', newInventory); }} aria-label={`Remove ${item.name || 'item'}`} className="ml-2 px-2 py-1 text-red-600 hover:text-red-800">
                   <Trash2 className="w-4 h-4" />
                 </button>
               </div>
               <div className="grid grid-cols-4 gap-2">
                 <NumberField
 min={1} value={item.quantity} onChange={(v: number) => updateField(`inventory.${index}.quantity`, v)} placeholder="Qty" className="px-2 py-1 border border-stone-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500" fallback={1} />
-                <input type="text" value={item.bulk} onChange={(e) => updateField(`inventory.${index}.bulk`, e.target.value)} placeholder="Bulk" className="px-2 py-1 border border-stone-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="text" value={item.bulk} onChange={(e) => updateField(`inventory.${index}.bulk`, e.target.value)} placeholder="Bulk" aria-label={`Item ${index + 1} bulk`} className="px-2 py-1 border border-stone-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500" />
                 <NumberField
 min={0} value={item.value} onChange={(v: number) => updateField(`inventory.${index}.value`, v)} placeholder="Value" className="px-2 py-1 border border-stone-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500" fallback={0} />
                 <div className="flex items-center space-x-1 text-xs">
@@ -1692,27 +1824,53 @@ min={0} value={item.value} onChange={(v: number) => updateField(`inventory.${ind
             </div>
             <ListLimitNote full={listIsFull(formData.feats?.[key])} />
             <div className="space-y-3">
-              {(formData.feats?.[key] || []).map((feat, index) => (
-                <div key={index} className="bg-white border border-stone-200 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <input type="text" value={feat.name} onChange={(e) => updateField(`feats.${key}.${index}.name`, e.target.value)} placeholder="Feat Name" className="flex-1 px-2 py-1 border border-stone-300 rounded font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    <div className="flex items-center space-x-2 ml-2">
-                      <label className="text-xs text-stone-600">Level:</label>
-                      <NumberField
-min={1} max={20} value={feat.level} onChange={(v: number) => updateField(`feats.${key}.${index}.level`, v)} className="w-16 px-2 py-1 border border-stone-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500" fallback={1} />
+              {(formData.feats?.[key] || []).map((feat, index) => {
+                const featDescription = feat.description !== undefined ? feat.description : (feat.notes || '');
+                return (
+                  <div key={index} className="bg-white border border-stone-200 rounded-lg p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <input
+                        type="text"
+                        value={feat.name}
+                        onChange={(e) => updateField(`feats.${key}.${index}.name`, e.target.value)}
+                        placeholder="Feat Name"
+                        aria-label={`Feat ${index + 1} name`}
+                        className="flex-1 px-2 py-1 border border-stone-300 rounded font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <div className="flex items-center space-x-2 ml-2">
+                        <label className="text-xs text-stone-600">Level:</label>
+                        <NumberField
+                          min={1}
+                          max={20}
+                          value={feat.level}
+                          onChange={(v: number) => updateField(`feats.${key}.${index}.level`, v)}
+                          aria-label={`Feat ${index + 1} level`}
+                          className="w-16 px-2 py-1 border border-stone-300 rounded text-sm text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          fallback={1}
+                        />
+                      </div>
+                      <button
+                        onClick={() => {
+                          const newFeats = formData.feats![key].filter((_, i) => i !== index);
+                          updateField(`feats.${key}`, newFeats);
+                        }}
+                        aria-label={`Remove ${feat.name || 'feat'}`}
+                        className="ml-2 px-2 py-1 text-red-600 hover:text-red-800"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
                     </div>
-                    <button onClick={() => { const newFeats = formData.feats![key].filter((_, i) => i !== index); updateField(`feats.${key}`, newFeats); }} className="ml-2 px-2 py-1 text-red-600 hover:text-red-800">
-                      <Trash2 className="w-4 h-4" />
-                    </button>
+                    <textarea
+                      value={featDescription}
+                      onChange={(e) => updateField(`feats.${key}.${index}.description`, e.target.value)}
+                      placeholder="Feat description or benefits..."
+                      aria-label={`${feat.name || 'Feat'} description`}
+                      rows={2}
+                      className="w-full px-2 py-1 border border-stone-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
                   </div>
-                  {/* TODO(#152): a feat from the built-in templates holds
-                     its text in notes, which the view shows and this box
-                     does not, so the editor opens it empty and the notes can
-                     be neither changed nor removed. Show notes here when
-                     there is no description, and keep one field. */}
-                  <textarea value={feat.description || ''} onChange={(e) => updateField(`feats.${key}.${index}.description`, e.target.value)} placeholder="Feat description or benefits..." rows={2} className="w-full px-2 py-1 border border-stone-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                </div>
-              ))}
+                );
+              })}
               {(!formData.feats?.[key] || formData.feats![key].length === 0) && (
                 <div className="text-sm text-stone-500 italic text-center py-4">No {label.toLowerCase()} added yet</div>
               )}
