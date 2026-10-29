@@ -64,6 +64,10 @@ _Avoid_: Session (for this object)
 The member currently running a campaign's table. The seat can be handed to another member without changing campaign ownership.
 _Avoid_: GM, narrator, host (for this role)
 
+**Sitting DM**:
+The member currently assigned the active `DM` role in a campaign. The sitting DM possesses operational management authority over the campaign table and campaign-scoped assets, even if campaign ownership remains with the founding creator.
+_Avoid_: Active host, current owner (for this role)
+
 **Character**:
 A playable sheet belonging to one user, assigned to at most one campaign.
 _Avoid_: PC, sheet (when meaning this object)
@@ -119,6 +123,10 @@ _Avoid_: Private asset, user asset, shared asset (as a kind of ownership)
 **Campaign asset**:
 An asset that belongs to one campaign.
 _Avoid_: Table asset, global asset (for this scope)
+
+**Sandboxed document**:
+A document asset (Markdown, plain text, or PDF) served with defensive isolation headers (`Content-Security-Policy: default-src 'none'; sandbox` and `X-Content-Type-Options: nosniff`) preventing script execution in the instance origin context.
+_Avoid_: Raw document, unsafe asset, embedded view
 
 **Leftover file**:
 A file on disk with no asset record. Distinct from a campaign asset whose campaign is gone.
