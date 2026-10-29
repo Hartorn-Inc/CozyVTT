@@ -110,9 +110,9 @@ describe('Tailwind CSS 4 index.css configuration', () => {
 
   it('declares typography, border radii, blur filters, and custom animations in @theme', () => {
     const themeBlock = /@theme\s*\{([\s\S]*?)\}/.exec(indexCss)?.[1] ?? '';
-    expect(themeBlock).toContain('--font-heading: var(--font-heading);');
-    expect(themeBlock).toContain('--font-body: var(--font-body);');
-    expect(themeBlock).toContain('--font-mono: var(--font-mono);');
+    expect(themeBlock).toContain("--font-heading: 'Quicksand', 'Comfortaa', sans-serif;");
+    expect(themeBlock).toContain("--font-body: 'Inter', 'Open Sans', sans-serif;");
+    expect(themeBlock).toContain("--font-mono: 'JetBrains Mono', monospace;");
     expect(themeBlock).toContain('--radius-cozy: 12px;');
     expect(themeBlock).toContain('--radius-cozy-lg: 20px;');
     expect(themeBlock).toContain('--blur-cozy: 10px;');

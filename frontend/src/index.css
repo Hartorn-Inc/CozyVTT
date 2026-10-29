@@ -1,52 +1,52 @@
 @import 'tailwindcss';
 
 @theme {
-  /* ── Semantic theme colors (driven by CSS variables) ── */
-  --color-brand: rgb(var(--color-brand) / <alpha-value>);
-  --color-brand-dark: rgb(var(--color-brand-dark) / <alpha-value>);
-  --color-accent: rgb(var(--color-accent) / <alpha-value>);
-  --color-accent-hover: rgb(var(--color-accent-hover) / <alpha-value>);
-  --color-accent-text: rgb(var(--color-accent-text) / <alpha-value>);
-  --color-canvas: rgb(var(--color-bg-base) / <alpha-value>);
-  --color-surface: rgb(var(--color-bg-surface) / <alpha-value>);
-  --color-surface-light: rgb(var(--color-bg-surface-light) / <alpha-value>);
-  --color-surface-dark: rgb(var(--color-bg-surface-dark) / <alpha-value>);
-  --color-ink: rgb(var(--color-ink) / <alpha-value>);
-  --color-ink-secondary: rgb(var(--color-ink-secondary) / <alpha-value>);
-  --color-ink-muted: rgb(var(--color-ink-muted) / <alpha-value>);
-  --color-paper: rgb(var(--color-paper) / <alpha-value>);
-  --color-danger: rgb(var(--color-danger) / <alpha-value>);
-  --color-spirit: rgb(var(--color-spirit) / <alpha-value>);
+  /* ── Semantic theme colors (driven by base RGB channel custom properties) ── */
+  --color-brand: rgb(var(--color-brand-rgb));
+  --color-brand-dark: rgb(var(--color-brand-dark-rgb));
+  --color-accent: rgb(var(--color-accent-rgb));
+  --color-accent-hover: rgb(var(--color-accent-hover-rgb));
+  --color-accent-text: rgb(var(--color-accent-text-rgb));
+  --color-canvas: rgb(var(--color-bg-base-rgb));
+  --color-surface: rgb(var(--color-bg-surface-rgb));
+  --color-surface-light: rgb(var(--color-bg-surface-light-rgb));
+  --color-surface-dark: rgb(var(--color-bg-surface-dark-rgb));
+  --color-ink: rgb(var(--color-ink-rgb));
+  --color-ink-secondary: rgb(var(--color-ink-secondary-rgb));
+  --color-ink-muted: rgb(var(--color-ink-muted-rgb));
+  --color-paper: rgb(var(--color-paper-rgb));
+  --color-danger: rgb(var(--color-danger-rgb));
+  --color-spirit: rgb(var(--color-spirit-rgb));
 
   /* ── Readable text variants ── */
-  --color-brand-ink: rgb(var(--color-brand-ink) / <alpha-value>);
-  --color-accent-ink: rgb(var(--color-accent-ink) / <alpha-value>);
-  --color-spirit-ink: rgb(var(--color-spirit-ink) / <alpha-value>);
-  --color-danger-ink: rgb(var(--color-danger-ink) / <alpha-value>);
+  --color-brand-ink: rgb(var(--color-brand-ink-rgb));
+  --color-accent-ink: rgb(var(--color-accent-ink-rgb));
+  --color-spirit-ink: rgb(var(--color-spirit-ink-rgb));
+  --color-danger-ink: rgb(var(--color-danger-ink-rgb));
 
   /* ── Semantic states ── */
-  --color-success: rgb(var(--color-success) / <alpha-value>);
-  --color-success-ink: rgb(var(--color-success-ink) / <alpha-value>);
-  --color-warning: rgb(var(--color-warning) / <alpha-value>);
-  --color-warning-ink: rgb(var(--color-warning-ink) / <alpha-value>);
-  --color-info: rgb(var(--color-info) / <alpha-value>);
-  --color-info-ink: rgb(var(--color-info-ink) / <alpha-value>);
+  --color-success: rgb(var(--color-success-rgb));
+  --color-success-ink: rgb(var(--color-success-ink-rgb));
+  --color-warning: rgb(var(--color-warning-rgb));
+  --color-warning-ink: rgb(var(--color-warning-ink-rgb));
+  --color-info: rgb(var(--color-info-rgb));
+  --color-info-ink: rgb(var(--color-info-ink-rgb));
 
   /* ── Historical aliases (resolve to the same CSS variables) ── */
-  --color-moss-green: rgb(var(--color-brand) / <alpha-value>);
-  --color-forest-shadow: rgb(var(--color-brand-dark) / <alpha-value>);
-  --color-warm-amber: rgb(var(--color-accent) / <alpha-value>);
-  --color-sunset-orange: rgb(var(--color-accent-hover) / <alpha-value>);
-  --color-soft-cream: rgb(var(--color-bg-base) / <alpha-value>);
-  --color-parchment: rgb(var(--color-bg-surface) / <alpha-value>);
-  --color-parchment-light: rgb(var(--color-bg-surface-light) / <alpha-value>);
-  --color-parchment-dark: rgb(var(--color-bg-surface-dark) / <alpha-value>);
-  --color-charcoal: rgb(var(--color-ink) / <alpha-value>);
-  --color-warm-gray: rgb(var(--color-ink-secondary) / <alpha-value>);
-  --color-stone-gray: rgb(var(--color-ink-muted) / <alpha-value>);
-  --color-paper-white: rgb(var(--color-paper) / <alpha-value>);
-  --color-spirit-red: rgb(var(--color-danger) / <alpha-value>);
-  --color-spirit-purple: rgb(var(--color-spirit) / <alpha-value>);
+  --color-moss-green: rgb(var(--color-brand-rgb));
+  --color-forest-shadow: rgb(var(--color-brand-dark-rgb));
+  --color-warm-amber: rgb(var(--color-accent-rgb));
+  --color-sunset-orange: rgb(var(--color-accent-hover-rgb));
+  --color-soft-cream: rgb(var(--color-bg-base-rgb));
+  --color-parchment: rgb(var(--color-bg-surface-rgb));
+  --color-parchment-light: rgb(var(--color-bg-surface-light-rgb));
+  --color-parchment-dark: rgb(var(--color-bg-surface-dark-rgb));
+  --color-charcoal: rgb(var(--color-ink-rgb));
+  --color-warm-gray: rgb(var(--color-ink-secondary-rgb));
+  --color-stone-gray: rgb(var(--color-ink-muted-rgb));
+  --color-paper-white: rgb(var(--color-paper-rgb));
+  --color-spirit-red: rgb(var(--color-danger-rgb));
+  --color-spirit-purple: rgb(var(--color-spirit-rgb));
 
   /* ── Call of Cthulhu 7e - Vintage 1920s Palette (static, not themed) ── */
   --color-sepia-100: #F5EBD9;
@@ -60,9 +60,9 @@
   --color-sepia-900: #2E2419;
 
   /* ── Custom font families ── */
-  --font-heading: var(--font-heading);
-  --font-body: var(--font-body);
-  --font-mono: var(--font-mono);
+  --font-heading: 'Quicksand', 'Comfortaa', sans-serif;
+  --font-body: 'Inter', 'Open Sans', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
 
   /* ── Border radii ── */
   --radius-cozy: 12px;
@@ -96,40 +96,64 @@
 @layer base {
   :root {
     /* ── Theme Color Channels (R G B) ──
-       Stored as space-separated channels so Tailwind opacity modifiers work:
-       e.g. text-brand/50 → color: rgb(var(--color-brand) / 0.5)            */
+       Stored as space-separated channels without colliding with Tailwind theme properties. */
 
     /* Primary brand */
+    --color-brand-rgb: 74 93 78;
+    --color-brand-dark-rgb: 44 62 47;
     --color-brand: 74 93 78;
     --color-brand-dark: 44 62 47;
 
     /* Accent / CTA */
+    --color-accent-rgb: 212 165 116;
+    --color-accent-hover-rgb: 232 158 91;
+    --color-accent-text-rgb: 44 62 47;
     --color-accent: 212 165 116;
     --color-accent-hover: 232 158 91;
     --color-accent-text: 44 62 47;
 
     /* Backgrounds */
+    --color-bg-base-rgb: 255 249 230;
+    --color-bg-surface-rgb: 244 236 216;
+    --color-bg-surface-light-rgb: 251 247 238;
+    --color-bg-surface-dark-rgb: 224 212 184;
     --color-bg-base: 255 249 230;
     --color-bg-surface: 244 236 216;
     --color-bg-surface-light: 251 247 238;
     --color-bg-surface-dark: 224 212 184;
 
     /* Text */
+    --color-ink-rgb: 31 41 55;
+    --color-ink-secondary-rgb: 107 96 90;
+    --color-ink-muted-rgb: 107 114 128;
     --color-ink: 31 41 55;
     --color-ink-secondary: 107 96 90;
     --color-ink-muted: 107 114 128;
 
     /* Utility */
+    --color-paper-rgb: 254 254 254;
+    --color-danger-rgb: 192 57 43;
     --color-paper: 254 254 254;
     --color-danger: 192 57 43;
 
     /* Game-specific (not theme-dependent) */
+    --color-spirit-rgb: 147 112 219;
     --color-spirit: 147 112 219;
 
     /* ── Readable text variants and state colors ──
        Overwritten per theme by applyThemeColors() → deriveReadableTokens();
        these defaults match the Cozy Default palette so the app renders
        correctly during the first paint, before a theme is applied. */
+    --color-brand-ink-rgb: 74 93 78;
+    --color-accent-ink-rgb: 138 90 43;
+    --color-spirit-ink-rgb: 106 71 178;
+    --color-danger-ink-rgb: 176 46 33;
+    --color-success-rgb: 34 139 68;
+    --color-success-ink-rgb: 30 122 60;
+    --color-warning-rgb: 191 129 20;
+    --color-warning-ink-rgb: 148 100 15;
+    --color-info-rgb: 37 99 190;
+    --color-info-ink-rgb: 37 99 190;
     --color-brand-ink: 74 93 78;
     --color-accent-ink: 138 90 43;
     --color-spirit-ink: 106 71 178;
@@ -292,7 +316,7 @@
 }
 
 [data-separator]:focus-visible {
-  outline: 2px solid rgb(var(--color-brand));
+  outline: 2px solid rgb(var(--color-brand-rgb));
   outline-offset: 2px;
 }
 
