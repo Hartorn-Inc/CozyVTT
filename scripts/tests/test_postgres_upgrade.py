@@ -86,6 +86,26 @@ class PostgresUpgradeDetectionTests(unittest.TestCase):
         self.assertEqual(res.returncode, 0)
         self.assertIn('Cluster is already PostgreSQL 19', res.stdout)
 
+    def test_detect_coexisting_clusters_prefers_newer_version(self):
+        cluster_18 = os.path.join(self.test_dir, '18', 'docker')
+        cluster_19 = os.path.join(self.test_dir, '19', 'docker')
+        os.makedirs(cluster_18, exist_ok=True)
+        os.makedirs(cluster_19, exist_ok=True)
+        with open(os.path.join(cluster_18, 'PG_VERSION'), 'w', encoding='utf-8') as f:
+            f.write('18\n')
+        with open(os.path.join(cluster_19, 'PG_VERSION'), 'w', encoding='utf-8') as f:
+            f.write('19\n')
+
+        res = self.run_script('detect')
+        self.assertEqual(res.returncode, 0)
+        self.assertIn('CLUSTER_DETECTED=true', res.stdout)
+        self.assertIn('DETECTED_VERSION=19', res.stdout)
+        self.assertIn(cluster_19, res.stdout)
+
+        check_res = self.run_script('check', env={'TARGET_PG_VERSION': '19'})
+        self.assertEqual(check_res.returncode, 0)
+        self.assertIn('Cluster is already PostgreSQL 19', check_res.stdout)
+
     def test_rehearse_backup_checks_archive_format(self):
         fake_backup = os.path.join(self.test_dir, 'test-backup.zip')
         with open(fake_backup, 'wb') as f:

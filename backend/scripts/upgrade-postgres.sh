@@ -25,7 +25,7 @@ detect_cluster() {
   layout=""
 
   # Check version-specific subdirectories first (e.g., /var/lib/postgresql/18/docker or 18/data)
-  for v in 18 17 16 15 14 13 19; do
+  for v in 19 18 17 16 15 14 13; do
     if [ -f "$DATA_ROOT/$v/docker/PG_VERSION" ]; then
       detected_version=$(cat "$DATA_ROOT/$v/docker/PG_VERSION")
       layout="$DATA_ROOT/$v/docker"
