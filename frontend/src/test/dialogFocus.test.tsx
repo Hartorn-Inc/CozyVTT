@@ -3,8 +3,7 @@
  * focus, so keys a test types next land where it expects.
  *
  * A field with autoFocus puts focus inside the dialog before the trap's frame
- * runs. Waiting for focus to be inside the dialog is then not enough: the
- * trap's frame still moves focus to the dialog's first control afterwards.
+ * runs; the focus trap preserves that focus rather than forcing first control.
  */
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
@@ -49,6 +48,6 @@ describe('waitForDialogFocus', () => {
     await nextFrame();
 
     expect(document.activeElement).toBe(focusedWhenReturned);
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Close dialog' }));
+    expect(document.activeElement).toBe(screen.getByLabelText('Email'));
   });
 });
