@@ -3,7 +3,7 @@
  * Tests for the dice expression parser
  */
 
-import { rollDice, parseDiceExpression, DiceParserError } from './dice-parser';
+import { rollDice, parseDiceExpression, evaluateArithmetic, DiceParserError } from './dice-parser';
 
 describe('Dice Parser', () => {
   describe('Basic Rolls', () => {
@@ -412,6 +412,52 @@ describe('Dice Parser', () => {
 
     it.each(cases)('%s totals %d', (expression, expected) => {
       expect(rollDice(expression).total).toBe(expected);
+    });
+  });
+
+  describe('Arithmetic Evaluator direct tests & error cases', () => {
+    test('division by zero throws DiceParserError in rollDice', () => {
+      expect(() => rollDice('4d6/0')).toThrow(DiceParserError);
+      expect(() => rollDice('4d6/0')).toThrow('Division by zero');
+      expect(() => rollDice('1d20/(5-5)')).toThrow(DiceParserError);
+    });
+
+    test('division by zero throws DiceParserError in evaluateArithmetic', () => {
+      expect(() => evaluateArithmetic(['10', '/', '0'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['10', '/', '0'])).toThrow('Division by zero');
+      expect(() => evaluateArithmetic(['10', '/', '-', '0'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['10', '/', '-', '0'])).toThrow('Division by zero');
+    });
+
+    test('chained unary signs evaluate correctly in evaluateArithmetic', () => {
+      expect(evaluateArithmetic(['-', '-', '5'])).toBe(5);
+      expect(evaluateArithmetic(['-', '+', '5'])).toBe(-5);
+      expect(evaluateArithmetic(['-', '-', '-', '5'])).toBe(-5);
+      expect(evaluateArithmetic(['2', '*', '-', '-', '3'])).toBe(6);
+      expect(evaluateArithmetic(['10', '-', '-', '-', '2'])).toBe(8);
+      expect(evaluateArithmetic(['6', '/', '-', '2'])).toBe(-3);
+    });
+
+    test('operator precedence and left-to-right associativity are strictly respected', () => {
+      expect(evaluateArithmetic(['2', '+', '3', '*', '4'])).toBe(14);
+      expect(evaluateArithmetic(['2', '*', '3', '+', '4'])).toBe(10);
+      expect(evaluateArithmetic(['10', '-', '3', '-', '2'])).toBe(5);
+      expect(evaluateArithmetic(['12', '/', '3', '/', '2'])).toBe(2);
+      expect(evaluateArithmetic(['12', '/', '3', '*', '2'])).toBe(8);
+      expect(evaluateArithmetic(['6', '/', '4', '*', '2'])).toBe(3);
+    });
+
+    test('non-finite results throw DiceParserError', () => {
+      expect(() => evaluateArithmetic(['1e308', '*', '1e308'])).toThrow(DiceParserError);
+    });
+
+    test('empty or invalid tokens throw DiceParserError', () => {
+      expect(() => evaluateArithmetic([])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['+'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['2', '+'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['*', '2'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['/', '2'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['2', '3'])).toThrow(DiceParserError);
     });
   });
 
