@@ -520,17 +520,19 @@ export async function assetUsedInUserCampaign(
   // always meant to say: you see an asset because somebody who has it brought
   // it somewhere you both are.
   //
-  // A null uploader (their account was deleted) grants nothing, deliberately —
-  // there is no longer anyone whose access is being shared.
-  if (!uploaderId) return false;
-
   const [viewerIn, uploaderIn] = await Promise.all([
     prisma.campaignMembership.findMany({ where: { userId }, select: { campaignId: true, role: true } }),
-    prisma.campaignMembership.findMany({ where: { userId: uploaderId }, select: { campaignId: true } }),
+    uploaderId
+      ? prisma.campaignMembership.findMany({ where: { userId: uploaderId }, select: { campaignId: true } })
+      : Promise.resolve([]),
   ]);
 
-  const uploaderCampaigns = new Set(uploaderIn.map((m) => m.campaignId));
-  const shared = viewerIn.filter((m) => uploaderCampaigns.has(m.campaignId));
+  const shared = uploaderId
+    ? (() => {
+        const uploaderCampaigns = new Set(uploaderIn.map((m) => m.campaignId));
+        return viewerIn.filter((m) => uploaderCampaigns.has(m.campaignId));
+      })()
+    : viewerIn;
   const campaignIds = shared.map((m) => m.campaignId);
 
   if (campaignIds.length === 0) return false;
@@ -596,6 +598,15 @@ export async function assetUsedInUserCampaign(
   ) {
     return true;
   }
+
+  const linkedDoc = await prisma.campaignDocument.findFirst({
+    where: {
+      assetId,
+      campaignId: { in: campaignIds },
+    },
+    select: { id: true },
+  });
+  if (linkedDoc) return true;
 
   // The track a campaign is playing. The DM sets it and every player's browser
   // fetches it, so it is used by the whole table for as long as it is set.

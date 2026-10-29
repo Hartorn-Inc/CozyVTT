@@ -30,6 +30,7 @@ import { createTestApp } from '../../__tests__/helpers/test-app';
 import { prisma, createTestUser, cleanupUsers, TEST_PASSWORD } from '../../__tests__/helpers/db';
 import * as assetUsage from '../../services/assetUsage';
 import { personalFilesBeingRemoved } from '../../services/accountDeletion';
+import { canReadAsset } from '../../services/permissions';
 import logger from '../../utils/logger';
 
 const app = createTestApp();
@@ -132,5 +133,67 @@ describe.each([
 
     expect(res.status).toBe(200);
     expect(await eventually(async () => logged.mock.calls.some(([message]) => String(message).includes('personal files could not all be removed')))).toBe(true);
+  });
+});
+
+describe('kept personal files after account deletion', () => {
+  it('preserves read access to campaign members for orphaned assets while refusing strangers', async () => {
+    const uploader = await member('Orphan Uploader');
+    const campaignMember = await member('Campaign Member');
+    const stranger = await member('Campaign Stranger');
+
+    const campaign = await prisma.campaign.create({
+      data: {
+        name: 'Orphaned Asset Campaign',
+        ownerId: campaignMember.user.id,
+        vibeSettings: {},
+      },
+    });
+    await prisma.campaignMembership.createMany({
+      data: [
+        { campaignId: campaign.id, userId: uploader.user.id, role: 'PLAYER' },
+        { campaignId: campaign.id, userId: campaignMember.user.id, role: 'DM' },
+      ],
+    });
+
+    const asset = await personalToken(uploader.user.id);
+
+    const map = await prisma.map.create({
+      data: {
+        campaignId: campaign.id,
+        name: 'Map with Orphan Asset',
+        imageUrl: `/api/assets/maps/${asset.id}`,
+        baseLayerUrl: `/api/assets/maps/${asset.id}`,
+        width: 10,
+        height: 10,
+        gridSize: 50,
+        tokens: [],
+        annotations: [],
+      },
+    });
+    await prisma.campaign.update({
+      where: { id: campaign.id },
+      data: { currentMapId: map.id },
+    });
+
+    await uploader.agent.delete('/api/auth/account').send({ password: TEST_PASSWORD });
+    await personalFilesBeingRemoved.finished();
+
+    const keptAsset = await prisma.asset.findUnique({ where: { id: asset.id } });
+    expect(keptAsset).not.toBeNull();
+    expect(keptAsset?.uploadedById).toBeNull();
+
+    expect(await canReadAsset(keptAsset!, campaignMember.user.id, false)).toBe(true);
+    expect(await canReadAsset(keptAsset!, stranger.user.id, false)).toBe(false);
+
+    const memberRes = await campaignMember.agent.get(`/api/assets/tokens/${asset.id}`);
+    expect(memberRes.status).toBe(200);
+
+    const strangerRes = await stranger.agent.get(`/api/assets/tokens/${asset.id}`);
+    expect(strangerRes.status).toBe(404);
+
+    await prisma.map.deleteMany({ where: { campaignId: campaign.id } });
+    await prisma.campaignMembership.deleteMany({ where: { campaignId: campaign.id } });
+    await prisma.campaign.delete({ where: { id: campaign.id } });
   });
 });
