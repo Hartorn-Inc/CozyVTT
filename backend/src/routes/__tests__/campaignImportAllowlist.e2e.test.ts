@@ -18,27 +18,6 @@ import path from 'path';
 const SCRATCH = fs.mkdtempSync(path.join(os.tmpdir(), 'cozyvtt-import-allowlist-'));
 process.env.UPLOAD_DIR = path.join(SCRATCH, 'uploads');
 
-// The fixtures here are a format's first bytes and no more. The real
-// file-type does not identify the PNG one, and takes the Ogg one for an Ogg
-// file that is not sound, so this answers as it does for whole files.
-jest.mock('file-type', () => {
-  const sniff = (head: Buffer) => {
-    if (head.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) return { ext: 'png', mime: 'image/png' };
-    if (head.subarray(0, 2).toString('latin1') === 'MZ') return { ext: 'exe', mime: 'application/x-msdownload' };
-    if (head.subarray(0, 4).equals(Buffer.from('49492a00', 'hex'))) return { ext: 'tif', mime: 'image/tiff' };
-    if (head.subarray(0, 5).toString('latin1') === '%PDF-') return { ext: 'pdf', mime: 'application/pdf' };
-    if (head.subarray(0, 4).toString('latin1') === 'OggS') return { ext: 'ogg', mime: 'audio/ogg' };
-    return undefined;
-  };
-  return {
-    fileTypeFromBuffer: async (buf: Buffer) => sniff(buf),
-    fileTypeFromFile: async (file: string) => {
-      const { readFileSync } = jest.requireActual<typeof import('fs')>('fs');
-      return sniff(readFileSync(file).subarray(0, 16));
-    },
-  };
-});
-
 import request from 'supertest';
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import { prisma, createTestUser, cleanupUsers, TEST_PASSWORD } from '../../__tests__/helpers/db';
@@ -46,12 +25,26 @@ import { writeZip } from '../../__tests__/helpers/zipFixtures';
 
 const app = createTestApp();
 
+function oggVorbis(): Buffer {
+  const packet = Buffer.concat([Buffer.from([1]), Buffer.from('vorbis', 'latin1'), Buffer.alloc(23)]);
+  const page = Buffer.alloc(28);
+  page.write('OggS', 0, 'latin1');
+  page[5] = 0x02;
+  page.writeUInt32LE(1, 14);
+  page[26] = 1;
+  page[27] = packet.length;
+  return Buffer.concat([page, packet]);
+}
+
 const BYTES = {
-  png: Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(64)]),
-  exe: Buffer.concat([Buffer.from('MZ', 'latin1'), Buffer.alloc(64)]),
-  tiff: Buffer.concat([Buffer.from('49492a00', 'hex'), Buffer.alloc(64)]),
-  pdf: Buffer.from('%PDF-1.7\n%%EOF\n', 'latin1'),
-  ogg: Buffer.concat([Buffer.from('OggS', 'latin1'), Buffer.alloc(64)]),
+  png: Buffer.from(
+    '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63000100000500010d0a2db40000000049454e44ae426082',
+    'hex'
+  ),
+  exe: Buffer.concat([Buffer.from('MZ', 'latin1'), Buffer.alloc(200)]),
+  tiff: Buffer.concat([Buffer.from('49492a00080000000000', 'hex'), Buffer.alloc(64)]),
+  pdf: Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF\n'),
+  ogg: oggVorbis(),
   // An MP3 with no ID3 tag: file-type does not always know one, and the
   // upload route accepts it on its frame header.
   mp3: Buffer.concat([Buffer.from([0xff, 0xfb, 0x90, 0x64]), Buffer.alloc(64)]),
