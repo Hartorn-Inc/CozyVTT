@@ -10,8 +10,8 @@ permissions:
 jobs:
   verify-contract:
     name: "Verify EPURE Consumer Contract"
-    uses: Giskard-AI/epure/.github/workflows/epure-check.yml@21d6763bc8f0f2f9c42734787618dd545d1ede71 # v1.5.5
+    uses: Giskard-AI/epure/.github/workflows/epure-check.yml@1ce6971413870fb812f9c964997142b2813e68ac # v1.5.9
     with:
       repository: ${{ github.repository }}
-      pinned_ref: "Giskard-AI/epure/.github/workflows/epure-check.yml@21d6763bc8f0f2f9c42734787618dd545d1ede71 # v1.5.5"
+      pinned_ref: "Giskard-AI/epure/.github/workflows/epure-check.yml@1ce6971413870fb812f9c964997142b2813e68ac # v1.5.9"
       strict_sha_pinning: true

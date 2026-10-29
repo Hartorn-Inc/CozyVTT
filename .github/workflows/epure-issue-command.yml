@@ -9,7 +9,7 @@ permissions: {}
 jobs:
   authorize-command:
     name: "Authorize /epure Issue Command"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read # read repository metadata and collaborator permission level
@@ -22,7 +22,7 @@ jobs:
     steps:
       - name: Run pre-bundled EPURE authorization gate
         id: gate
-        uses: Giskard-AI/epure/actions/authorize-command@21d6763bc8f0f2f9c42734787618dd545d1ede71 # v1.5.5
+        uses: Giskard-AI/epure/actions/authorize-command@1ce6971413870fb812f9c964997142b2813e68ac # v1.5.9
         with:
           repository: ${{ github.repository }}
           issue_number: ${{ github.event.issue.number }}
@@ -36,7 +36,7 @@ jobs:
     name: "Orchestrate Authorized /epure Lifecycle"
     needs: authorize-command
     if: ${{ needs.authorize-command.outputs.authorized == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     environment: gemini
     concurrency:
@@ -48,9 +48,27 @@ jobs:
       pull-requests: write # open, review, and squash-merge task PRs
       checks: write # publish ai-review, impeccable-gate, and PR title check runs
     steps:
+      - name: Provision Ubuntu 26.04 kernel sandbox (landrun + bubblewrap) & stateless RTK
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends landrun bubblewrap ca-certificates curl
+          # renovate: datasource=github-releases depName=rtk-ai/rtk
+          RTK_VERSION="v1.0.1"
+          RTK_ARCHIVE="rtk-x86_64-unknown-linux-musl.tar.gz"
+          curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/${RTK_ARCHIVE}" -o "/tmp/${RTK_ARCHIVE}"
+          curl -fsSL "https://github.com/rtk-ai/rtk/releases/download/${RTK_VERSION}/checksums.txt" -o "/tmp/rtk-checksums.txt"
+          (cd /tmp && sha256sum --check --ignore-missing rtk-checksums.txt)
+          mkdir -p "$RUNNER_TEMP/bin"
+          tar -xzf "/tmp/${RTK_ARCHIVE}" -C "$RUNNER_TEMP/bin" rtk
+          chmod 0755 "$RUNNER_TEMP/bin/rtk"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+          echo "RTK_TELEMETRY_DISABLED=1" >> "$GITHUB_ENV"
+          echo "RTK_RECALL=0" >> "$GITHUB_ENV"
+          echo "RTK_TEE=0" >> "$GITHUB_ENV"
+          echo "NO_COLOR=1" >> "$GITHUB_ENV"
       - name: Run pre-bundled EPURE issue orchestrator
         id: orchestrate
-        uses: Giskard-AI/epure/actions/orchestrate-issue@21d6763bc8f0f2f9c42734787618dd545d1ede71 # v1.5.5
+        uses: Giskard-AI/epure/actions/orchestrate-issue@1ce6971413870fb812f9c964997142b2813e68ac # v1.5.9
         with:
           repository: ${{ github.repository }}
           issue_number: ${{ github.event.issue.number }}
