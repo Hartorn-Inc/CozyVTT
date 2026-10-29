@@ -18,20 +18,23 @@ import logger from '../utils/logger';
 export const PASSWORD_CHANGE_REQUIRED = 'PASSWORD_CHANGE_REQUIRED';
 
 /**
- * Paths that stay reachable while a password change is pending.
+ * Common paths that stay reachable while a mandatory security challenge is pending.
  * Relative to the /api mount point.
  */
-// TODO(#157): middleware/adminMfa.ts keeps its own copy of these paths and
-// nothing keeps the two in step; build one from the other or add a
-// keepInStep check.
-const ALLOWED_PATHS = new Set([
+export const BASE_SECURITY_GATED_PATHS = [
   '/auth/change-password', // the one thing a gated session may do
   '/auth/logout',
   '/auth/me',
   '/auth/ping',
   '/auth/appearance',
   '/config',
-]);
+] as const;
+
+/**
+ * Paths that stay reachable while a password change is pending.
+ * Relative to the /api mount point.
+ */
+export const ALLOWED_PATHS = new Set<string>(BASE_SECURITY_GATED_PATHS);
 
 /**
  * Resolve the flag for the current session.

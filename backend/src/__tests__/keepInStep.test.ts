@@ -119,6 +119,12 @@
  * storing a macro; if the two disagree, valid shorthand rolls or valid attack
  * expressions fail client-side, or malformed syntax accepted by the browser
  * fails on the server.
+ *
+ * The security-gated allowed paths. Both passwordChange.ts and adminMfa.ts gate
+ * sessions behind mandatory challenges (forced password change and mandatory
+ * admin MFA enrollment) and allow only critical session and auth endpoints
+ * through. Parity between the two sets is enforced so an allowed path is not
+ * added or removed from one gate without the other.
  */
 
 import crypto from 'crypto';
@@ -130,6 +136,8 @@ import { RESTORE_PREAMBLE, RESTORE_TRAILER, loginSessionRestoreTrailer, restoreP
 import { sessionSecretProblem } from '../config/sessionSecret';
 import { SOCKET_CEILINGS, type CeilingWindow } from '../websocket/shared';
 import { THEME_IDS, FONT_IDS } from '../validators/appearance';
+import { BASE_SECURITY_GATED_PATHS, ALLOWED_PATHS as PASSWORD_CHANGE_ALLOWED_PATHS } from '../middleware/passwordChange';
+import { ALLOWED_PATHS as ADMIN_MFA_ALLOWED_PATHS } from '../middleware/adminMfa';
 
 const root = path.resolve(__dirname, '../../..');
 const read = (rel: string) => fs.readFileSync(path.join(root, rel), 'utf8');
@@ -863,5 +871,34 @@ describe('the dice expression validator parity between frontend and backend', ()
     const frontendAccepts = isValidDiceExpression(expr);
 
     expect(frontendAccepts).toBe(backendAccepts);
+  });
+});
+
+describe('the security-gated allowed paths parity between passwordChange and adminMfa', () => {
+  it('ensures all base security-gated paths are present in adminMfa ALLOWED_PATHS', () => {
+    for (const p of BASE_SECURITY_GATED_PATHS) {
+      expect(ADMIN_MFA_ALLOWED_PATHS.has(p)).toBe(true);
+    }
+  });
+
+  it('keeps critical session and auth endpoints in parity between passwordChange and adminMfa', () => {
+    const criticalEndpoints = [
+      '/auth/change-password',
+      '/auth/logout',
+      '/auth/me',
+      '/auth/ping',
+      '/auth/appearance',
+      '/config',
+    ];
+
+    for (const endpoint of criticalEndpoints) {
+      expect(PASSWORD_CHANGE_ALLOWED_PATHS.has(endpoint)).toBe(true);
+      expect(ADMIN_MFA_ALLOWED_PATHS.has(endpoint)).toBe(true);
+    }
+  });
+
+  it('ensures adminMfa ALLOWED_PATHS contains only base paths plus MFA-specific endpoints', () => {
+    const expected = new Set([...BASE_SECURITY_GATED_PATHS, '/auth/mfa/setup', '/auth/mfa/verify']);
+    expect(ADMIN_MFA_ALLOWED_PATHS).toEqual(expected);
   });
 });
