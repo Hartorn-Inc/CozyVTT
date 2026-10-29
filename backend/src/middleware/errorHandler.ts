@@ -31,10 +31,11 @@ export function errorHandler(
   res: express.Response,
   next: express.NextFunction
 ): void {
-  // Body-parser reports an oversized body as 413 and malformed JSON as 400.
+  // Body-parser reports an oversized body as 413, malformed JSON as 400,
+  // and unsupported charsets/encodings as 415.
   // Reporting those as 500 blamed the server for something the caller could fix
   // and told them nothing useful — a note too large to save looked like a crash.
-  // Only these two are translated, and each to a message written here.
+  // Only these are translated, and each to a message written here.
   //
   // Deliberately NOT forwarding `err.message` for anything else: an error from
   // any library may carry a filesystem path, a connection string or an internal
@@ -44,23 +45,26 @@ export function errorHandler(
   // valid code, from inside the handler that exists to stop things throwing.
   const fields: object = typeof err === 'object' && err !== null ? err : {};
   const rawStatus = 'status' in fields ? fields.status : undefined;
+  const statusCode = 'statusCode' in fields ? fields.statusCode : undefined;
   const parserType = 'type' in fields ? fields.type : undefined;
   const message = 'message' in fields && typeof fields.message === 'string' ? fields.message : String(err);
   const stack = 'stack' in fields && typeof fields.stack === 'string' ? fields.stack : undefined;
-  const tooLarge = rawStatus === 413 || parserType === 'entity.too.large';
+  const tooLarge = rawStatus === 413 || statusCode === 413 || parserType === 'entity.too.large';
   const notJson = parserType === 'entity.parse.failed';
+  const unsupportedMedia =
+    rawStatus === 415 ||
+    statusCode === 415 ||
+    parserType === 'charset.unsupported' ||
+    parserType === 'encoding.unsupported';
   const loginSessionStoreUnavailable = isLoginSessionStoreUnavailable(err);
-  // TODO(#157): body-parser's own 415s (`charset.unsupported`,
-  // `encoding.unsupported`) fall through to the 500 below. Answer them 415 as
-  // the caller's mistake, like the two cases above.
 
-  if (tooLarge || notJson) {
+  if (tooLarge || notJson || unsupportedMedia) {
     // The caller's mistake, not the server's, and never logged with its
     // message: the JSON parser's message quotes the text around the error,
     // which in a sign-in request is the password.
     logger.warn('Request body refused', {
       type: typeof parserType === 'string' ? parserType : undefined,
-      status: tooLarge ? 413 : 400,
+      status: tooLarge ? 413 : notJson ? 400 : 415,
       method: req.method,
       path: req.path,
     });
@@ -87,6 +91,14 @@ export function errorHandler(
     res.status(400).json({
       error: 'Bad Request',
       message: 'The request body was not valid JSON.',
+    });
+    return;
+  }
+
+  if (unsupportedMedia) {
+    res.status(415).json({
+      error: 'Unsupported Media Type',
+      message: 'Unsupported media type',
     });
     return;
   }
