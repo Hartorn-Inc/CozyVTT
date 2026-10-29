@@ -394,8 +394,16 @@ describe('Dice Parser', () => {
     // down of a fractional total.
     const cases: [string, number][] = [
       ['2+3*4', 14],
+      ['2*3+4', 10],
       ['10-3-2', 5],
       ['6/4*2', 3],
+      ['12/3/2', 2],
+      ['12/3*2', 8],
+      ['20-10+5', 15],
+      ['20-10-5', 5],
+      ['24/6*2/4', 2],
+      ['10-2*3+8/4', 6],
+      ['2*3+4*5', 26],
       ['7/2', 3],
       ['100/3', 33],
       ['1-5', -4],
@@ -403,11 +411,41 @@ describe('Dice Parser', () => {
       ['-7/2', -4],
       ['2++3', 5],
       ['1d1--1', 2],
+      ['10+-+3', 7],
+      ['1d1+-+3', -2],
+      ['10---3', 7],
+      ['1d1*--3', 3],
+      ['2*--3', 6],
+      ['6/-2', -3],
+      ['6/--2', 3],
+      ['6/-+2', -3],
+      ['2d1*-3', -6],
+      ['5+-2', 3],
+      ['5-+2', 3],
+      ['5--2', 7],
+      ['5++2', 7],
+      ['+5', 5],
+      ['-5', -5],
+      ['++5', 5],
+      ['--5', 5],
+      ['+-5', -5],
+      ['-+-5', 5],
+      ['---5', -5],
+      ['1d1 - -1', 2],
+      ['10 + - + 3', 7],
       ['9999*9999', 99980001],
       ['4d1kh3+2', 5],
       ['2d1*3/2', 3],
       ['1d1*3/2', 1],
+      ['1d1+2*3-4/2', 5],
+      ['1d1+1d1*2', 3],
+      ['1d1*2+1d1', 3],
       ['1d1-1', 0],
+      ['0*5', 0],
+      ['0+0', 0],
+      ['0-0', 0],
+      ['0/5', 0],
+      ['-0', 0],
     ];
 
     it.each(cases)('%s totals %d', (expression, expected) => {
@@ -417,25 +455,68 @@ describe('Dice Parser', () => {
 
   describe('Arithmetic Evaluator direct tests & error cases', () => {
     test('division by zero throws DiceParserError in rollDice', () => {
+      expect(() => rollDice('1d6/0')).toThrow(DiceParserError);
+      expect(() => rollDice('1d6/0')).toThrow('Division by zero');
+      expect(() => rollDice('10/0')).toThrow(DiceParserError);
+      expect(() => rollDice('10/0')).toThrow('Division by zero');
+      expect(() => rollDice('0/0')).toThrow(DiceParserError);
+      expect(() => rollDice('0/0')).toThrow('Division by zero');
       expect(() => rollDice('4d6/0')).toThrow(DiceParserError);
       expect(() => rollDice('4d6/0')).toThrow('Division by zero');
+      expect(() => rollDice('1d20/0')).toThrow(DiceParserError);
+      expect(() => rollDice('1d20/0')).toThrow('Division by zero');
+      expect(() => rollDice('2d20kh1/0')).toThrow(DiceParserError);
+      expect(() => rollDice('2d20kh1/0')).toThrow('Division by zero');
+      expect(() => rollDice('10/2/0')).toThrow(DiceParserError);
+      expect(() => rollDice('10/2/0')).toThrow('Division by zero');
+      expect(() => rollDice('2+1d6/0')).toThrow(DiceParserError);
+      expect(() => rollDice('2+1d6/0')).toThrow('Division by zero');
+      expect(() => rollDice('1d6/-0')).toThrow(DiceParserError);
+      expect(() => rollDice('1d6/-0')).toThrow('Division by zero');
+      expect(() => rollDice('10/+0')).toThrow(DiceParserError);
+      expect(() => rollDice('10/+0')).toThrow('Division by zero');
       expect(() => rollDice('1d20/(5-5)')).toThrow(DiceParserError);
     });
 
+    test('division by zero throws DiceParserError in parseDiceExpression', () => {
+      expect(() => parseDiceExpression('1d6/0')).toThrow(DiceParserError);
+      expect(() => parseDiceExpression('1d6/0')).toThrow('Division by zero');
+      expect(() => parseDiceExpression('10/0')).toThrow(DiceParserError);
+      expect(() => parseDiceExpression('10/0')).toThrow('Division by zero');
+      expect(() => parseDiceExpression('0/0')).toThrow(DiceParserError);
+      expect(() => parseDiceExpression('0/0')).toThrow('Division by zero');
+    });
+
     test('division by zero throws DiceParserError in evaluateArithmetic', () => {
+      expect(() => evaluateArithmetic(['1', '/', '0'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['1', '/', '0'])).toThrow('Division by zero');
       expect(() => evaluateArithmetic(['10', '/', '0'])).toThrow(DiceParserError);
       expect(() => evaluateArithmetic(['10', '/', '0'])).toThrow('Division by zero');
+      expect(() => evaluateArithmetic(['0', '/', '0'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['0', '/', '0'])).toThrow('Division by zero');
       expect(() => evaluateArithmetic(['10', '/', '-', '0'])).toThrow(DiceParserError);
       expect(() => evaluateArithmetic(['10', '/', '-', '0'])).toThrow('Division by zero');
+      expect(() => evaluateArithmetic(['10', '/', '+', '0'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['10', '/', '+', '0'])).toThrow('Division by zero');
+      expect(() => evaluateArithmetic(['12', '/', '(', '3', '-', '3', ')'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['12', '/', '(', '3', '-', '3', ')'])).toThrow('Division by zero');
     });
 
     test('chained unary signs evaluate correctly in evaluateArithmetic', () => {
       expect(evaluateArithmetic(['-', '-', '5'])).toBe(5);
       expect(evaluateArithmetic(['-', '+', '5'])).toBe(-5);
+      expect(evaluateArithmetic(['+', '-', '5'])).toBe(-5);
+      expect(evaluateArithmetic(['+', '+', '5'])).toBe(5);
       expect(evaluateArithmetic(['-', '-', '-', '5'])).toBe(-5);
+      expect(evaluateArithmetic(['10', '+', '-', '+', '3'])).toBe(7);
+      expect(evaluateArithmetic(['1', '-', '-', '1'])).toBe(2);
+      expect(evaluateArithmetic(['2', '+', '+', '3'])).toBe(5);
+      expect(evaluateArithmetic(['-', '7', '/', '2'])).toBe(-3.5);
       expect(evaluateArithmetic(['2', '*', '-', '-', '3'])).toBe(6);
       expect(evaluateArithmetic(['10', '-', '-', '-', '2'])).toBe(8);
       expect(evaluateArithmetic(['6', '/', '-', '2'])).toBe(-3);
+      expect(evaluateArithmetic(['6', '/', '-', '-', '2'])).toBe(3);
+      expect(evaluateArithmetic(['6', '/', '-', '+', '2'])).toBe(-3);
     });
 
     test('operator precedence and left-to-right associativity are strictly respected', () => {
@@ -445,10 +526,26 @@ describe('Dice Parser', () => {
       expect(evaluateArithmetic(['12', '/', '3', '/', '2'])).toBe(2);
       expect(evaluateArithmetic(['12', '/', '3', '*', '2'])).toBe(8);
       expect(evaluateArithmetic(['6', '/', '4', '*', '2'])).toBe(3);
+      expect(evaluateArithmetic(['20', '-', '10', '+', '5'])).toBe(15);
+      expect(evaluateArithmetic(['20', '-', '10', '-', '5'])).toBe(5);
+      expect(evaluateArithmetic(['24', '/', '6', '*', '2', '/', '4'])).toBe(2);
+      expect(evaluateArithmetic(['2', '*', '3', '+', '4', '*', '5'])).toBe(26);
+      expect(evaluateArithmetic(['10', '-', '2', '*', '3', '+', '8', '/', '4'])).toBe(6);
+      expect(evaluateArithmetic(['(', '2', '+', '3', ')', '*', '4'])).toBe(20);
+      expect(evaluateArithmetic(['2', '*', '(', '3', '+', '4', ')'])).toBe(14);
+      expect(evaluateArithmetic(['10', '-', '(', '3', '-', '2', ')'])).toBe(9);
+      expect(evaluateArithmetic(['12', '/', '(', '3', '*', '2', ')'])).toBe(2);
     });
 
     test('non-finite results throw DiceParserError', () => {
       expect(() => evaluateArithmetic(['1e308', '*', '1e308'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['1e308', '*', '2'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['-', '1e308', '*', '2'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['Infinity'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['-Infinity'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['NaN'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['1', '+', 'Infinity'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['(', '1e308', '*', '2', ')'])).toThrow(DiceParserError);
     });
 
     test('empty or invalid tokens throw DiceParserError', () => {
@@ -458,6 +555,11 @@ describe('Dice Parser', () => {
       expect(() => evaluateArithmetic(['*', '2'])).toThrow(DiceParserError);
       expect(() => evaluateArithmetic(['/', '2'])).toThrow(DiceParserError);
       expect(() => evaluateArithmetic(['2', '3'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['(', '2', '+', '3'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['2', '+', '3', ')'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['abc'])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic([''])).toThrow(DiceParserError);
+      expect(() => evaluateArithmetic(['   '])).toThrow(DiceParserError);
     });
   });
 
@@ -518,9 +620,19 @@ describe('parseDiceExpression agrees with rollDice', () => {
     // Ordinary things people roll
     '1d20', '2d6+3', '4d6kh3', '1d20+5', '2d20kh1', '2d20kl1', '1d100', '3d8-1',
     '1d12*2', '10d6', '1d6+1d8', '5', '1d20 + 5',
+    // Arithmetic precedence, associativity, and chained unary signs
+    '6/4*2', '10-3-2', '2+3*4', '2*3+4', '12/3/2', '12/3*2', '20-10+5', '20-10-5',
+    '24/6*2/4', '1d1+2*3-4/2', '2*3+4*5', '10-2*3+8/4', '1d1+1d1*2', '1d1*2+1d1',
+    '2d1*3/2', '1d1*3/2', '1d1-1', '0*5', '0+0', '0-0', '0/5', '-0',
+    '1d1--1', '2++3', '-7/2', '10+-+3', '1d1+-+3', '10---3', '1d1*--3', '2*--3',
+    '6/-2', '6/--2', '6/-+2', '2d1*-3', '5+-2', '5-+2', '5--2', '5++2',
+    '+5', '-5', '++5', '--5', '+-5', '-+-5', '---5', '1d1 - -1', '10 + - + 3',
+    // Division by zero
+    '1d6/0', '10/0', '0/0', '4d6/0', '1d20/0', '2d20kh1/0', '10/2/0', '2+1d6/0', '1d6/-0', '10/+0',
     // Malformed in various ways
     '2d6+', '+2d6', '2d6++3', 'dddd', 'invalid', '', '   ', 'd', '2d', 'd6',
-    '2d6+-', '()', '2d6*', '/2d6',
+    '2d6+-', '()', '2d6*', '/2d6', '1d6/', '/0', '1d6//0', '1d6/*2', '+', '-', '*2', '/2',
+    '1d20/(5-5)',
     // Past the limits
     '101d20', '50d6+51d6', '1d1001', '1d0', '1d20+10000',
   ];
