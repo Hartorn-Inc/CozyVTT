@@ -39,6 +39,26 @@ function app(): express.Express {
   a.get('/login-session-store-down', () => {
     throw new LoginSessionStoreUnavailable();
   });
+  a.get('/status-415', () => {
+    const err = new Error('unsupported');
+    (err as unknown as { status: number }).status = 415;
+    throw err;
+  });
+  a.get('/status-code-415', () => {
+    const err = new Error('unsupported');
+    (err as unknown as { statusCode: number }).statusCode = 415;
+    throw err;
+  });
+  a.get('/charset-unsupported', () => {
+    const err = new Error('unsupported charset');
+    (err as unknown as { type: string }).type = 'charset.unsupported';
+    throw err;
+  });
+  a.get('/encoding-unsupported', () => {
+    const err = new Error('unsupported encoding');
+    (err as unknown as { type: string }).type = 'encoding.unsupported';
+    throw err;
+  });
   a.use(errorHandler);
   // What the handler passes on, and Express's own handler after it.
   a.use((err: unknown, _req: express.Request, _res: express.Response, next: express.NextFunction) => {
@@ -97,6 +117,69 @@ describe('a request body over the size limit', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ level: 'warn', type: 'entity.too.large', status: 413 });
     expect(logs.lines.join('')).not.toContain('hunter2');
+  });
+});
+
+describe('a request with an unsupported charset or encoding', () => {
+  it('answers 415 when charset is unsupported by body-parser', async () => {
+    const logs = captureLogs();
+    const res = await request(app())
+      .post('/api/auth/login')
+      .set('Content-Type', 'application/json; charset=unsupported-charset')
+      .send('{"a":1}');
+    const entries = await logs.stop();
+
+    expect(res.status).toBe(415);
+    expect(res.body.error).toBe('Unsupported Media Type');
+    expect(res.body.message).toBe('Unsupported media type');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      level: 'warn',
+      message: 'Request body refused',
+      type: 'charset.unsupported',
+      status: 415,
+      method: 'POST',
+      path: '/api/auth/login',
+    });
+  });
+
+  it('answers 415 when content-encoding is unsupported by body-parser', async () => {
+    const logs = captureLogs();
+    const res = await request(app())
+      .post('/api/auth/login')
+      .set('Content-Type', 'application/json')
+      .set('Content-Encoding', 'unsupported-encoding')
+      .send('{"a":1}');
+    const entries = await logs.stop();
+
+    expect(res.status).toBe(415);
+    expect(res.body.error).toBe('Unsupported Media Type');
+    expect(res.body.message).toBe('Unsupported media type');
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      level: 'warn',
+      message: 'Request body refused',
+      type: 'encoding.unsupported',
+      status: 415,
+      method: 'POST',
+      path: '/api/auth/login',
+    });
+  });
+
+  it.each([
+    ['status: 415', '/status-415'],
+    ['statusCode: 415', '/status-code-415'],
+    ['type: charset.unsupported', '/charset-unsupported'],
+    ['type: encoding.unsupported', '/encoding-unsupported'],
+  ])('answers 415 for error with %s', async (_desc, path) => {
+    const logs = captureLogs();
+    const res = await request(app()).get(path);
+    const entries = await logs.stop();
+
+    expect(res.status).toBe(415);
+    expect(res.body.error).toBe('Unsupported Media Type');
+    expect(res.body.message).toBe('Unsupported media type');
+    expect(entries.some((e) => e.level === 'error')).toBe(false);
   });
 });
 
