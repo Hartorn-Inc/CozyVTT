@@ -81,6 +81,7 @@ import TableSkeleton from '@/components/skeletons/TableSkeleton';
 import ConfirmDialog from '@/components/common/ConfirmDialog';
 import Button from '@/components/ui/Button';
 import { apiErrorMessage, apiErrorStatus, apiDeletionBlockers } from '@/utils/errors';
+import { copyText } from '@/utils/clipboard';
 import Modal from '@/components/ui/Modal';
 import { assetScopeLabel } from '@/utils/assetUrl';
 import DeletionBlockers from '@/components/admin/DeletionBlockers';
@@ -623,18 +624,14 @@ export default function AdminPage() {
     if (left.length === 0) setDeleteError('');
   };
 
-  // TODO(#157): navigator.clipboard is undefined over plain HTTP, so on a LAN
-  // instance this copies nothing and says nothing; the temporary password
-  // stays on screen to copy by hand. Use copyText from utils/clipboard, which
-  // falls back to the older copy, and say so when it fails, as the two-factor
-  // Copy buttons do.
   const handleCopyToClipboard = async (text: string, setCopiedFn: (v: boolean) => void) => {
-    try {
-      await navigator.clipboard.writeText(text);
+    const success = await copyText(text);
+    if (success) {
       setCopiedFn(true);
+      showToast('Password copied to clipboard', 'success');
       setTimeout(() => setCopiedFn(false), 2000);
-    } catch {
-      // clipboard unavailable — user can select manually
+    } else {
+      showToast('Failed to copy password. Please select and copy manually.', 'error');
     }
   };
 
@@ -1498,7 +1495,9 @@ export default function AdminPage() {
                                             </code>
                                             <Button
                                               onClick={() => handleCopyToClipboard(tempPassword, setCopied)}
-                                              variant="secondary" className="flex items-center gap-1 text-xs py-2 px-3"
+                                              variant="secondary"
+                                              className="flex items-center gap-1 text-xs py-2 px-3"
+                                              title="Copy temporary password"
                                             >
                                               {copied ? <Check className="w-3.5 h-3.5 text-success-ink" /> : <Copy className="w-3.5 h-3.5" />}
                                               {copied ? 'Copied' : 'Copy'}
@@ -2753,7 +2752,9 @@ export default function AdminPage() {
               </code>
               <Button
                 onClick={() => handleCopyToClipboard(newUserPassword, setNewUserPasswordCopied)}
-                variant="secondary" className="flex items-center gap-1 text-xs py-2 px-3"
+                variant="secondary"
+                className="flex items-center gap-1 text-xs py-2 px-3"
+                title="Copy temporary password"
               >
                 {newUserPasswordCopied ? <Check className="w-3.5 h-3.5 text-success-ink" /> : <Copy className="w-3.5 h-3.5" />}
                 {newUserPasswordCopied ? 'Copied' : 'Copy'}
