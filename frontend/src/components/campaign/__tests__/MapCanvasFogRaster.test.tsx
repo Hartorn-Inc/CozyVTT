@@ -220,12 +220,14 @@ beforeAll(() => {
     fillText: vi.fn(),
     beginPath: vi.fn(),
     closePath: vi.fn(),
+    clip: vi.fn(),
     moveTo: vi.fn(),
     lineTo: vi.fn(),
     stroke: vi.fn(),
     fill: vi.fn(),
     arc: vi.fn(),
     rect: vi.fn(),
+    roundRect: vi.fn(),
     setLineDash: vi.fn(),
     measureText: vi.fn().mockReturnValue({ width: 50 }),
     createImageData: vi.fn((w: number, h: number) => ({
@@ -395,7 +397,9 @@ describe('MapCanvas Fog Raster Caching and Memoization', () => {
 
     // Wait for map image loading
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    act(() => {
       flushRAF();
     });
 
@@ -450,7 +454,9 @@ describe('MapCanvas Fog Raster Caching and Memoization', () => {
     });
 
     await act(async () => {
-      await new Promise((r) => setTimeout(r, 10));
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    act(() => {
       flushRAF();
     });
 
