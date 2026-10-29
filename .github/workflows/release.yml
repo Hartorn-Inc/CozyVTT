@@ -13,14 +13,14 @@ permissions: {}
 jobs:
   release:
     name: "Release Promotion (dev -> main)"
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     environment: release
     permissions:
       contents: write # promote dev to main and push immutable release tag
     steps:
       - name: Verify Release App boundary
-        uses: Giskard-AI/epure/actions/verify-app-role@0e4495eda7c4a92d98580ed8dbd3637a437aafc1 # v1.5.8
+        uses: Giskard-AI/epure/actions/verify-app-role@1ce6971413870fb812f9c964997142b2813e68ac # v1.5.9
         with:
           app_role: "release"
           operation: "promote_dev_to_main"
