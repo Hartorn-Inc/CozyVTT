@@ -347,7 +347,7 @@ describe('malformed multipart upload bodies', () => {
     }
   );
 
-  // TODO(#3): these two leave a refused body to the generic error handler,
+  // TODO(#154): these two leave a refused body to the generic error handler,
   // which answers 500 "An unexpected error occurred". A refusal should be a 400
   // that says what was wrong, as on the routes above. Until then this checks
   // only what matters most: that the server survives and does not report success.

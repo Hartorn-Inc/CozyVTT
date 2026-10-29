@@ -237,7 +237,7 @@ export function registerWallHandlers(io: Server, socket: AuthenticatedSocket): v
           // is now, so one the DM moved since the sight was worked out is
           // refused if it went out of it, and on a map lit since then, with
           // no sight worked out, no door is seen yet.
-          // TODO(#5): manual fog is not asked. A player can still toggle a
+          // TODO(#156): manual fog is not asked. A player can still toggle a
           // door in unrevealed squares, which their screen covers, and learn
           // from the answer that it is there. Refuse a door with no revealed
           // square on either side of its middle, and offer none in the

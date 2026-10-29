@@ -20,7 +20,7 @@ Furthermore, maintaining static roadmap files directly conflicts with ADR 0003 (
    - **Outright deletion**: Drop obsolete proposals, features already implemented in current releases, and items designated as "Won't Do".
    - **Thematic grouping**: Group minor UI/UX anomalies and micro-fixes by subsystem into consolidated GitHub issues rather than spawning dozens of isolated micro-tickets.
    - **Individual issues for major initiatives**: Open standalone GitHub issues for significant feature proposals or major architectural refactorings, labeled `scope:extracted-feature`.
-   - **Catalog artifact**: Record all extracted issues in a structured inventory document (`docs/reports/extracted-issues-backlog.md`) detailing source location, context, description, and acceptance criteria prior to synchronization.
+   - **Direct synchronization to GitHub Issues (no static backlog file)**: Once the transitional extraction inventory is synchronized to GitHub Issues (`#152`–`#182`), no static catalog file is retained in `docs/reports/`, ensuring strict adherence to ADR 0003.
 
 3. **Normalization of Source Code TODO Comments**:
    - Strictly preserve functional logic and execution behavior (zero runtime impact, verified via unit/integration test suites).

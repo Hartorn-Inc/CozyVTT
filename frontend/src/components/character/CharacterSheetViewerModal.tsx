@@ -69,7 +69,7 @@ export default function CharacterSheetViewerModal({
   const [showEditor, setShowEditor] = useState(false);
 
   // Fetch character owner's name
-  // TODO(#1): GET /api/users/:id answers 403 for anyone but the user and
+  // TODO(#152): GET /api/users/:id answers 403 for anyone but the user and
   // an admin, so a DM viewing a player's sheet sees "Unknown Player" and the
   // console logs the refusal. Take the name from the campaign roster, which
   // already holds every member's display name.
@@ -191,7 +191,7 @@ export default function CharacterSheetViewerModal({
 
   // Passed to the sheet views only when this viewer may roll; without it the
   // stats render as plain text rather than clickable rolls.
-  // TODO(#1): on the Characters page there is no socket, yet the owner still
+  // TODO(#152): on the Characters page there is no socket, yet the owner still
   // gets this handler, so the stats look clickable and a click rolls nothing.
   // Pass a handler only when there is a live socket to roll on.
   const rollHandler = canRoll ? handleRoll : undefined;

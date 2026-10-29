@@ -623,7 +623,7 @@ export default function AdminPage() {
     if (left.length === 0) setDeleteError('');
   };
 
-  // TODO(#6): navigator.clipboard is undefined over plain HTTP, so on a LAN
+  // TODO(#157): navigator.clipboard is undefined over plain HTTP, so on a LAN
   // instance this copies nothing and says nothing; the temporary password
   // stays on screen to copy by hand. Use copyText from utils/clipboard, which
   // falls back to the older copy, and say so when it fails, as the two-factor

@@ -105,7 +105,7 @@ export function createApp(options: AppOptions): express.Express {
           scriptSrc: ["'self'"],
           styleSrc: ["'self'", "'unsafe-inline'"], // Required for Motion / Tailwind inline styles
           imgSrc: ["'self'", 'data:', 'blob:'],    // Canvas exports and base64 avatars
-          // TODO(#7): ws: and wss: allow a live connection to any host.
+          // TODO(#158): ws: and wss: allow a live connection to any host.
           // CSP Level 3 lets 'self' match the page's own ws: and wss:; check
           // the socket still connects with 'self' alone in each browser at the
           // floor, then drop both here and in frontend/security-headers.conf.

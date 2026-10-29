@@ -398,7 +398,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
       // The DM rolls for a whole encounter, so the DM's rolls have a ceiling
       // of their own; everyone else's count as dice rolls, below.
       if (socket.role === 'DM' && !withinCeiling(socket, 'initiative.roll')) return;
-      // TODO(#4): a player's roll is counted against the dice.roll ceiling
+      // TODO(#155): a player's roll is counted against the dice.roll ceiling
       // only after the spectator, token and expression checks below, so a
       // flood of refused initiative rolls is never counted and each draws its
       // own error. Count it here, before those checks, as dice.roll now does.
@@ -644,7 +644,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
         const roll = rollResult;
         // The roll is stored and ordered by now: a failure to write its dice
         // log entry is logged, and the new order below still goes out.
-        // TODO(#4): this entry is only broadcast. Unlike a roll made in dice.ts
+        // TODO(#155): this entry is only broadcast. Unlike a roll made in dice.ts
         // it is never written to the diceRoll table, so it is gone from the dice
         // log on reload. Store it as other rolls are stored.
         if (roll) await bestEffort('initiative.roll dice log', async () => {
@@ -652,7 +652,7 @@ export function registerInitiativeHandlers(io: Server, socket: AuthenticatedSock
           // The server names the token; a name the client sends is not used.
           // An obscured token is not named in the dice log even to the DM, since
           // one entry reaches everyone who is sent the token.
-          // TODO(#4): who rolled is not considered, so a player rolling for
+          // TODO(#155): who rolled is not considered, so a player rolling for
           // their own obscured token sees it logged as "Unknown creature", while
           // a roll from their sheet names the character. Send the roller the
           // token's name and everyone else the placeholder.

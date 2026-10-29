@@ -136,7 +136,7 @@ const PROFICIENCY_RANKS: ProficiencyRank[] = ['untrained', 'trained', 'expert', 
 const calculateModifier = (score: number): number => Math.floor((score - 10) / 2);
 const formatModifier = (mod: number): string => mod >= 0 ? `+${mod}` : `${mod}`;
 
-// TODO(#1): the inventory's Bulk box stores what is typed as a string, so
+// TODO(#152): the inventory's Bulk box stores what is typed as a string, so
 // an item typed as "2" counts as 0 here and in bulkToNumber in BulkTracker, and
 // only light items add to the total. Read a numeric string as its number.
 const calculateTotalBulk = (inventory: PF2eInventoryItem[]): number => {
@@ -244,7 +244,7 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
       rituals: (data.spellcasting.rituals ?? []).map((ritual) =>
         typeof ritual === 'string' ? { name: ritual, rank: 1 } : ritual),
     } : undefined,
-    // TODO(#1): `{}` has none of the keys these types require, and the
+    // TODO(#152): `{}` has none of the keys these types require, and the
     // inputs below read straight off them. Pre-existing; cast so the
     // behaviour for a sheet stored without one is exactly what it was.
     appearance: (data.appearance || {}) as PF2eAppearance,
@@ -1705,7 +1705,7 @@ min={1} max={20} value={feat.level} onChange={(v: number) => updateField(`feats.
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
-                  {/* TODO(#1): a feat from the built-in templates holds
+                  {/* TODO(#152): a feat from the built-in templates holds
                      its text in notes, which the view shows and this box
                      does not, so the editor opens it empty and the notes can
                      be neither changed nor removed. Show notes here when

@@ -108,7 +108,7 @@ export function createShutdown(targets: ShutdownTargets, options: ShutdownOption
 
   return (signal) => {
     if (running) {
-      // TODO(#7): once exitAfterLogs has closed the logger, this line
+      // TODO(#158): once exitAfterLogs has closed the logger, this line
       // (a second signal while the log files are written) and the lines after
       // the deadline's exit throw "write after end", which onProcessFailure
       // then reports on the console in their place. Right: write them to the

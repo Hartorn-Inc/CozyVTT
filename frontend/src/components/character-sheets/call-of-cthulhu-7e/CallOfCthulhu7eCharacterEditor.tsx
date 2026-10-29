@@ -158,7 +158,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
   // Form state
   const [formData, setFormData] = useState<CoC7eFormData>(() => ({
     ...data,
-    // TODO(#1): `{}` has none of the keys these types require, and the
+    // TODO(#152): `{}` has none of the keys these types require, and the
     // effects and inputs below read straight off them. Pre-existing; the casts
     // keep the behaviour for a sheet stored without one exactly as it was.
     characteristics: (data.characteristics || {}) as CoC7eCharacteristics,
@@ -337,7 +337,7 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               improvementChecked: prev.derivedStats?.dodge?.improvementChecked || false,
             },
             sanity: {
-              // TODO(#1): POW may be 100 but the schema caps Sanity at 99, so
+              // TODO(#152): POW may be 100 but the schema caps Sanity at 99, so
               // an investigator with POW 100 and no Sanity yet gets 100 for both
               // of these and the sheet cannot be saved. Cap the starting value at
               // 99 and the current value at maxSanity.

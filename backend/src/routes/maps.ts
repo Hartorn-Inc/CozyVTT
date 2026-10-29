@@ -1232,7 +1232,7 @@ router.put('/:id/set-current', campaignDM, async (req: AuthenticatedRequest, res
 // TOKEN MANIPULATION ENDPOINTS
 // ============================================
 
-// TODO(#2): broadcast live WebSocket map changes for token create, update, and delete REST routes
+// TODO(#153): broadcast live WebSocket map changes for token create, update, and delete REST routes
 
 /**
  * POST /api/campaigns/:campaignId/maps/:id/tokens

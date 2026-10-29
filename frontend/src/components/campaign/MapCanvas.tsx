@@ -506,7 +506,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
     selectedEndpoint, setSelectedEndpoint,
     moveSelectedWalls, deleteSelectedWalls, selectedSegmentType,
   } = useWallSelection({ wallSegments, commitWalls });
-  // TODO(#5): the wall pointer and keyboard handlers further down
+  // TODO(#156): the wall pointer and keyboard handlers further down
   // belong in useWallSelection too. They still read a dozen MapCanvas closures
   // (viewport, tool mode, the socket), so they stay here until those are lifted.
 
@@ -2604,7 +2604,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
       return;
     }
 
-    // TODO(#5): this checks isDM and not previewing, so during a player-view
+    // TODO(#156): this checks isDM and not previewing, so during a player-view
     // preview, where no light markers are drawn, a click still places, selects
     // or drags a light with nothing on screen to show it. Ignore the light
     // tool while previewing.
@@ -2892,7 +2892,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
         }
         if (!move.hasDragged) { markDirty('overlay'); return; }
         // Previewed against where the drag began, so the offset never compounds.
-        // TODO(#5): a wall change from someone else that arrives during the
+        // TODO(#156): a wall change from someone else that arrives during the
         // drag is carried into the history, but this preview starts again from
         // preDragState, taken before it, and the drop sends that list, so a
         // player's door toggle in the middle of the DM's drag is undone for
@@ -3670,7 +3670,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
         {userRole === 'DM' && (
           <>
             <div className="w-px h-6 bg-moss-green/20" />
-            {/* TODO(#2): while dmShowSpiritTokens is true the tokens are
+            {/* TODO(#153): while dmShowSpiritTokens is true the tokens are
                shown, yet the title says "Hiding spirit tokens (click to
                show)"; both branches say click to show. It should read
                "Spirit tokens shown, click to hide" in that case. */}
@@ -3917,7 +3917,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
         </DmToolPanelContainer>
       )}
 
-      {/* TODO(#5): the button that ends a preview renders only while
+      {/* TODO(#156): the button that ends a preview renders only while
          lighting or fog is on, and nothing else resets dmPreviewPlayerView,
          so turning both off during a preview leaves the DM in the player's
          view until one is turned back on or the page reloads. End the

@@ -105,7 +105,7 @@ export async function extractArchiveSafely(
       },
     });
 
-    // TODO(#7): stopping unzipper stream part-way leaves backup file open; switch to unpackEntry helper
+    // TODO(#158): stopping unzipper stream part-way leaves backup file open; switch to unpackEntry helper
     await pipeline(entry.stream(), counter, createWriteStream(destPath));
   }
 }

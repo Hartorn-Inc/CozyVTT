@@ -7,7 +7,7 @@ Le dépôt CozyVTT comportait historiquement un fichier `docs/FUTURE_FEATURES.md
 En parallèle, le code source applicatif (`backend/src/` et `frontend/src/`) contient des commentaires `TODO` et `FIXME` flottants, sans référence d'issue de suivi, ce qui empêche une visibilité claire sur la dette technique réelle et son ordonnancement.
 
 Cette spécification définit le cadre méthodologique, l'outillage automatisé et les garde-fous nécessaires pour :
-1. Auditer, trier et migrer le contenu de `docs/FUTURE_FEATURES.md` vers un catalogue d'issues GitHub prêtes à l'emploi (`docs/reports/extracted-issues-backlog.md`).
+1. Auditer, trier et migrer le contenu de `docs/FUTURE_FEATURES.md` et des `TODO` du code directement vers les Issues GitHub (`#152` à `#182`), sans conserver de catalogue Markdown statique permanent conformément à l'ADR-0003.
 2. Supprimer définitivement `docs/FUTURE_FEATURES.md` et mettre à jour tous les documents référents sans créer de dossier d'archive.
 3. Auditer et normaliser les commentaires `TODO`/`FIXME` du code source sous le format strict `// TODO(#<issue_id>): <description>` sans aucune altération de la logique fonctionnelle.
 4. Mettre en place des scripts Python de vérification d'intégrité (liens Markdown et détection de TODOs orphelins) intégrés dans les tests de garde du dépôt.
@@ -82,11 +82,11 @@ Chaque entrée issue de `docs/FUTURE_FEATURES.md` est soumise à une règle de t
 
 ---
 
-## 5. Spécification du Catalogue d'Issues Extraites (`docs/reports/extracted-issues-backlog.md`)
+## 5. Spécification des Issues Extraites vers GitHub Issues (`#152` à `#182`)
 
-Le document `docs/reports/extracted-issues-backlog.md` regroupe l'ensemble des issues issues de `docs/FUTURE_FEATURES.md` et des TODOs du code, formaté sous forme de fiches d'issues GitHub complètes :
-- **Titre** : `[Extracted] <Titre explicite>`
-- **Labels** : `scope:extracted-feature`, `type:bug` ou `type:feature`
+Après une phase transitoire de staging documentaire, les 31 issues retenues (`#152` à `#182`, issues de `docs/FUTURE_FEATURES.md` et des `Referenced TODOs` du code) sont créées directement dans GitHub Issues (sans conserver de fichier statique `docs/reports/` conformément à l'ADR-0003 et à l'ADR-0020) avec :
+- **Titre** : Titre conventionnel explicite (`fix(...)`, `refactor(...)`, `feat(...)`)
+- **Labels** : `scope:extracted-feature`, `bug` / `tech-debt` / `enhancement`, `interest:high|medium|low`, `complexity:S|M|L|XL`
 - **Fichier d'origine** : Chemin et section source dans `docs/FUTURE_FEATURES.md` ou fichier de code
 - **Description & Contexte** : Explication détaillée du besoin ou de l'anomalie
 - **Critères d'acceptation** : Liste à cocher vérifiable

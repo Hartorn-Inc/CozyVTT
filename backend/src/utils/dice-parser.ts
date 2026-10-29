@@ -255,7 +255,7 @@ export function rollDice(expression: string): RollResult {
       // mathjs evaluate returns a number for simple expressions
       const result = evaluate(formula);
       total = typeof result === 'number' ? Math.floor(result) : parseInt(result.toString(), 10);
-      // TODO(#4): handle division by zero and reject non-finite totals with DiceParserError
+      // TODO(#155): handle division by zero and reject non-finite totals with DiceParserError
     } catch {
       throw new DiceParserError('Failed to evaluate expression');
     }

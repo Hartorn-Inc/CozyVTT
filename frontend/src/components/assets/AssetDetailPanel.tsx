@@ -80,7 +80,7 @@ export default function AssetDetailPanel({ asset, onClose, onDelete, onUpdate }:
   const canUploadGlobal = isAdmin || !!user?.globalAssetManager;
 
   // Check permissions
-  // TODO(#3): the server also lets the DM of a campaign asset's campaign
+  // TODO(#154): the server also lets the DM of a campaign asset's campaign
   // delete and move it, but this and canMove below offer Delete and Move only
   // to the uploader or an admin. Offer both to that DM too.
   const canDelete = isOwner || isAdmin;
@@ -187,7 +187,7 @@ export default function AssetDetailPanel({ asset, onClose, onDelete, onUpdate }:
       setMoveCampaignId('');
       onUpdate?.(updated);
     } catch (err) {
-      // TODO(#3): apiErrorText reads the reply's error field, the short status
+      // TODO(#154): apiErrorText reads the reply's error field, the short status
       // label, so a refused move shows only "Forbidden". Read
       // apiErrorMessage(err) first, which carries the reason.
       setMoveError(apiErrorText(err) ?? 'Failed to move asset. Please try again.');
