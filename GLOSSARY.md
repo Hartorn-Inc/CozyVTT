@@ -14,7 +14,7 @@ _Avoid_: Admin (unqualified), platform admin, root, owner
 
 **Operator**:
 The person who runs the host: Compose, the tunnel, volumes, and off-host backup copies. Distinct from Administrator, campaign owner, and DM.
-_Avoid_: Self-hoster, sysadmin, admin (unqualified), host (for this role)
+_Avoid_: Self-hoster, sysadmin, admin (for this role), host (for this role)
 
 **Bootstrap superuser**:
 The PostgreSQL role Compose creates from `DATABASE_USER` on an empty volume. First start after upgrade uses it to create the schema owner. The app does not connect as this role.
@@ -120,6 +120,10 @@ _Avoid_: Private asset, user asset, shared asset (as a kind of ownership)
 An asset that belongs to one campaign.
 _Avoid_: Table asset, global asset (for this scope)
 
+**Detached asset**:
+A personal asset retained after its uploader's account deletion because it is referenced in an active Campaign, whose `uploadedById` field is set to `null` to preserve table continuity while respecting user account removal.
+_Avoid_: Orphaned asset, leftover file, ghost asset
+
 **Leftover file**:
 A file on disk with no asset record. Distinct from a campaign asset whose campaign is gone.
 _Avoid_: Orphaned asset (for this leftover)
@@ -173,6 +177,14 @@ _Avoid_: Advisory review, Codex review, Luna review, Grok review
 **Reviewer pass**:
 One readonly roster role from `.cursor/agents/*.md` run against a pull request or design gate, returning structured JSON findings (`must_fix`, `informational`, `no_action`).
 _Avoid_: Codex pass, Luna pass, review (unqualified)
+
+**Security-gated path**:
+An API endpoint accessible to an authenticated user whose Login session is paused pending completion of a mandatory security transition (such as mandatory password change or MFA enrollment).
+_Avoid_: Whitelisted route, bypass route, public route (for this gated state)
+
+**Focus trap**:
+A dialog accessibility mechanism that constrains keyboard focus navigation within a modal dialog while preserving initial focus on designated form controls (`autoFocus`).
+_Avoid_: Focus lock, modal trap (unqualified)
 
 ## Backlog and Documentation Governance
 
