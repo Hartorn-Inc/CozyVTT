@@ -148,6 +148,18 @@ _Avoid_: Exploration (unqualified), vision history
 Line-of-sight lighting on a map that can hide tokens from members who cannot see them. Distinct from fog.
 _Avoid_: Vision, LOS, lighting (unqualified)
 
+**Door sight authorization**:
+The server-side check ensuring that a player cannot interact with a door unless at least one adjacent side of the door's midpoint is revealed (outside manual fog) and visible (within dynamic lighting if enabled).
+_Avoid_: Door permission, door check
+
+**Door hit radius**:
+The distance threshold in world coordinates used to detect a click or hover on a door segment midpoint.
+_Avoid_: Door click box, door tolerance
+
+**Player-view preview**:
+The DM canvas mode (`dmPreviewPlayerView`) that renders the map as seen by a specific player or token, hiding hidden tokens and DM-only controls.
+_Avoid_: DM preview, player view mode
+
 **Spirit layer**:
 The second plane of a map, distinct from the material plane. A token lives on one or the other.
 _Avoid_: Spirit plane, overlay (for this object)
