@@ -252,4 +252,60 @@ describe('CallOfCthulhu7eCharacterEditor - POW 100 Sanity Cap and Container Defa
       }).not.toThrow();
     });
   });
+
+  describe('Accessibility Attributes', () => {
+    it('provides accessible names for Current HP, Current MP, and Luck fields', () => {
+      const character = cocCharacter();
+      render(
+        <CallOfCthulhu7eCharacterEditor
+          character={character}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      );
+
+      expect(screen.getByLabelText('Current HP')).toBeInTheDocument();
+      expect(screen.getByLabelText('Current MP')).toBeInTheDocument();
+      expect(screen.getByLabelText('Luck Score')).toBeInTheDocument();
+    });
+
+    it('provides accessible names for appearance fields in backstory tab', () => {
+      const character = cocCharacter();
+      render(
+        <CallOfCthulhu7eCharacterEditor
+          character={character}
+          onSave={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      );
+
+      fireEvent.click(screen.getByRole('button', { name: /backstory/i }));
+
+      expect(screen.getByLabelText('Age')).toBeInTheDocument();
+      expect(screen.getByLabelText('Height')).toBeInTheDocument();
+      expect(screen.getByLabelText('Weight')).toBeInTheDocument();
+      expect(screen.getByLabelText('Eyes')).toBeInTheDocument();
+      expect(screen.getByLabelText('Hair')).toBeInTheDocument();
+      expect(screen.getByLabelText('Skin')).toBeInTheDocument();
+    });
+
+    it('renders save failure in an alert role container with assertive live announcement', async () => {
+      const onSave = vi.fn().mockRejectedValue(new Error('Save failed'));
+      const character = cocCharacter();
+      render(
+        <CallOfCthulhu7eCharacterEditor
+          character={character}
+          onSave={onSave}
+          onCancel={vi.fn()}
+        />
+      );
+
+      const saveButton = screen.getByRole('button', { name: /save/i });
+      fireEvent.click(saveButton);
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveAttribute('aria-live', 'assertive');
+      expect(alert).toHaveTextContent('Failed to save character. Please try again.');
+    });
+  });
 });

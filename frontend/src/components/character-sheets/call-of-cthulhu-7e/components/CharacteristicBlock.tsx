@@ -68,9 +68,10 @@ export const CharacteristicBlock: React.FC<CharacteristicBlockProps> = ({
             type="number"
             value={regular}
             onChange={(e) => onChange?.(parseInt(e.target.value) || 0)}
+            aria-label={`${label} regular value`}
             className="w-full h-full text-center text-2xl font-bold text-sepia-900 bg-transparent border-none focus:outline-none focus:ring-2 focus:ring-sepia-500 rounded"
             min={0}
-            max={99}
+            max={100}
           />
         ) : (
           <span className="text-2xl font-bold text-sepia-900">{regular}</span>

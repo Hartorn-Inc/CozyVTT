@@ -990,7 +990,8 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
           <div className="bg-white border border-sepia-400 rounded-md p-3">
             <label className="text-xs text-sepia-600 uppercase block mb-1">Current HP</label>
             <NumberField
-value={formData.derivedStats?.hp?.current}
+              aria-label="Current HP"
+              value={formData.derivedStats?.hp?.current}
               onChange={(v: number) => {
                 setFormData({
                   ...formData,
@@ -1001,13 +1002,14 @@ value={formData.derivedStats?.hp?.current}
                 });
               }}
               className="w-full text-center text-2xl font-bold text-red-700 border-none bg-transparent focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
-            fallback={0}
+              fallback={0}
             />
           </div>
           <div className="bg-white border border-sepia-400 rounded-md p-3">
             <label className="text-xs text-sepia-600 uppercase block mb-1">Current MP</label>
             <NumberField
-value={formData.derivedStats?.magicPoints?.current}
+              aria-label="Current MP"
+              value={formData.derivedStats?.magicPoints?.current}
               onChange={(v: number) => {
                 setFormData({
                   ...formData,
@@ -1021,13 +1023,14 @@ value={formData.derivedStats?.magicPoints?.current}
                 });
               }}
               className="w-full text-center text-2xl font-bold text-purple-700 border-none bg-transparent focus:outline-none focus:ring-2 focus:ring-purple-500 rounded"
-            fallback={0}
+              fallback={0}
             />
           </div>
           <div className="bg-white border border-sepia-400 rounded-md p-3">
             <label className="text-xs text-sepia-600 uppercase block mb-1">Luck Score</label>
             <NumberField
-value={formData.derivedStats?.luck?.score}
+              aria-label="Luck Score"
+              value={formData.derivedStats?.luck?.score}
               onChange={(v: number) => {
                 setFormData({
                   ...formData,
@@ -1038,7 +1041,7 @@ value={formData.derivedStats?.luck?.score}
                 });
               }}
               className="w-full text-center text-2xl font-bold text-yellow-700 border-none bg-transparent focus:outline-none focus:ring-2 focus:ring-yellow-500 rounded"
-            fallback={0}
+              fallback={0}
             />
           </div>
         </div>
@@ -1212,6 +1215,7 @@ value={formData.wealth?.cash}
                     appearance: { ...formData.appearance, [key]: e.target.value } as CoC7eAppearance,
                   });
                 }}
+                aria-label={label}
                 className="w-full px-2 py-1 border border-sepia-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-sepia-500"
               />
             </div>
@@ -1308,7 +1312,7 @@ value={formData.wealth?.cash}
         {activeTab === 'backstory' && renderBackstoryTab()}
       </div>
       {errors.submit && (
-        <div className="px-6 py-3 text-sm text-red-700 bg-parchment">{errors.submit}</div>
+        <div role="alert" aria-live="assertive" className="px-6 py-3 text-sm text-red-700 bg-parchment">{errors.submit}</div>
       )}
     </div>
   );
