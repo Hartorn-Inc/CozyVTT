@@ -72,6 +72,10 @@ _Avoid_: PC, sheet (when meaning this object)
 The user the character belongs to. Distinct from the campaign owner and the DM.
 _Avoid_: Owner (unqualified)
 
+**Character edit permission**:
+The authoritative access control check (`canEditCharacter`) governing write operations on a Character, enforcing that spectators cannot edit, character owners can edit, and the sitting DM can edit if and only if the character owner is still an active member of the campaign.
+_Avoid_: Sheet permission (unqualified), edit check (for this authorization gate)
+
 **Game system**:
 The rules framework a Character's sheet is written for. A Character may have none.
 _Avoid_: System (unqualified), ruleset, RPG system
@@ -107,6 +111,22 @@ _Avoid_: HP (unqualified), pool (unqualified)
 **Printed total**:
 A creature number stored as printed, not recomputed from parts. Distinct from a Character derived value.
 _Avoid_: Derived value (for this)
+
+**Spellcasting ability backfill**:
+A one-time initialization migration for legacy D&D 5e sheets without stored other-bonus properties, establishing initial values without contaminating interactive ability modifier updates with negative compensatory offsets.
+_Avoid_: Spell backfill, auto-modifier, DC sync
+
+**Sanity cap**:
+The Call of Cthulhu 7e rules boundary where starting Sanity is strictly capped at 99 even when Power (POW) reaches 100, and current Sanity is bounded by maximum Sanity (`99 - Cthulhu Mythos`).
+_Avoid_: SAN limit, max sanity (unqualified)
+
+**Safe structural default**:
+A typed fallback factory that guarantees full initial object structures for nested sheet properties (such as abilities, saving throws, characteristics, and appearance) to prevent undefined property reads on incomplete or legacy sheets.
+_Avoid_: Empty cast, object fallback, dummy default
+
+**Bulk parsing**:
+The explicit conversion of textual and numeric bulk representation into standardized numerical units (e.g. integer or fractional light bulk) within Pathfinder 2e inventory and encumbrance calculations.
+_Avoid_: String bulk, bulk conversion (unqualified)
 
 **Uploader**:
 The user who added an asset. Distinct from campaign owner and character owner.
