@@ -314,7 +314,7 @@ The split exists for performance. Live token movement is written to the Zustand 
 
 Every color in the themed UI comes from a CSS variable, so switching themes repaints the app without
 re-rendering anything. Tailwind maps each token with `rgb(var(--color-x) / <alpha-value>)`
-([index.css](../frontend/src/index.css)), which is why opacity modifiers such as
+([tailwind.config.js](../frontend/tailwind.config.js)), which is why opacity modifiers such as
 `bg-danger/10` still follow the theme.
 
 | Group | Tokens | Use for |
