@@ -75,7 +75,7 @@ import { useWallLightRequest } from './map/useWallLightRequest';
 import { releaseHeldToken } from './map/tokenHold';
 import { shouldApplySocketDelta } from './map/socketDelta';
 import { applyLocalTokenDrop } from './map/tokenDrop';
-import { offeredDoorAt, type DoorViewer } from './map/doorAccess';
+import { offeredDoorAt, doorHitRadius, type DoorViewer } from './map/doorAccess';
 import { distToSegment, translateWallSegments, gridSquaresToPx } from './map/mapGeometry';
 import { fogCellIndex, gridXToFogCol, gridYToFogRow } from './map/coords';
 import { isTypingInto } from './map/typingTarget';
@@ -1775,16 +1775,49 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
    */
   const doorViewer = useCallback((): DoorViewer => {
     const lightingEnabled = currentMap?.lightingEnabled ?? false;
-    if (!currentMap || !lightingEnabled || isDM) return { role: userRole, lightingEnabled, canSee: () => true };
-    const viewport: Viewport = {
-      zoom: mapControls.zoom,
-      panOffset: mapControls.panOffset,
-      gridSize: currentMap.gridSize,
-      mapWidth: currentMap.width,
-      mapHeight: currentMap.height,
+    const renderIsDM = isDM && !previewing;
+    const gridSize = currentMap?.gridSize || 50;
+    const fogCols = currentMap?.width ?? 0;
+    const fogRows = currentMap?.height ?? 0;
+    const revealedCells = renderIsDM ? null : viewerRevealed;
+    const fog = renderIsDM ? null : effectiveFogState;
+
+    if (!currentMap || renderIsDM) {
+      return {
+        role: userRole,
+        lightingEnabled,
+        canSee: () => true,
+        revealedCells: null,
+        fogState: null,
+        gridSize,
+        fogCols,
+        fogRows,
+      };
+    }
+
+    let canSee: (x: number, y: number) => boolean = () => true;
+    if (lightingEnabled) {
+      const viewport: Viewport = {
+        zoom: mapControls.zoom,
+        panOffset: mapControls.panOffset,
+        gridSize,
+        mapWidth: fogCols,
+        mapHeight: fogRows,
+      };
+      canSee = ruleFor(tokens.filter(viewerOwn), viewport).canSee;
+    }
+
+    return {
+      role: renderIsDM ? 'DM' : userRole,
+      lightingEnabled,
+      canSee,
+      revealedCells,
+      fogState: fog,
+      gridSize,
+      fogCols,
+      fogRows,
     };
-    return { role: userRole, lightingEnabled, canSee: ruleFor(tokens.filter(viewerOwn), viewport).canSee };
-  }, [currentMap, isDM, userRole, mapControls.zoom, mapControls.panOffset, ruleFor, tokens, viewerOwn]);
+  }, [currentMap, isDM, previewing, userRole, viewerRevealed, effectiveFogState, mapControls.zoom, mapControls.panOffset, ruleFor, tokens, viewerOwn]);
 
   /**
    * Draw the TERRAIN layer (bottom canvas): map image, grid, manual fog,
@@ -2677,7 +2710,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
     // one they can see, a spectator none, as the server's wall:update checks.
     if (!wallMode && !fogMode && !lightMode) {
       const mapPx = screenToMapPx(screenX, screenY);
-      const hitThreshold = 12 / mapControls.zoom;
+      const hitThreshold = doorHitRadius(mapControls.zoom, currentMap.gridSize);
       const door = offeredDoorAt(wallSegments, mapPx.x, mapPx.y, hitThreshold, doorViewer());
       if (door) {
         if (door.type === 'door-locked') {
@@ -3036,7 +3069,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
     // the map offers this viewer
     if (!wallMode && !fogMode && !draggedToken) {
       const mapPx = screenToMapPx(screenX, screenY);
-      const hitThreshold = 12 / mapControls.zoom;
+      const hitThreshold = doorHitRadius(mapControls.zoom, currentMap.gridSize);
       const door = offeredDoorAt(wallSegments, mapPx.x, mapPx.y, hitThreshold, doorViewer());
       const newHoveredDoorId = door?.id ?? null;
       if (newHoveredDoorId !== hoveredDoorId) {
@@ -3388,7 +3421,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
     // mode), for a door the map offers this viewer
     if (!wallMode && !fogMode) {
       const mapPx = screenToMapPx(screenX, screenY);
-      const hitThreshold = 12 / mapControls.zoom;
+      const hitThreshold = doorHitRadius(mapControls.zoom, currentMap.gridSize);
       const door = offeredDoorAt(wallSegments, mapPx.x, mapPx.y, hitThreshold, doorViewer());
       if (door) {
         setDoorContextMenu({ door, x: e.clientX, y: e.clientY });
