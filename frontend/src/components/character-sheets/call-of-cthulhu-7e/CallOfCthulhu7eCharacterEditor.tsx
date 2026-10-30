@@ -133,6 +133,222 @@ const COC_APPEARANCE_FIELDS: { key: keyof CoC7eAppearance; label: string }[] = [
   { key: 'skin', label: 'Skin' },
 ];
 
+const DEFAULT_CHARACTERISTIC_SCORE = 50;
+
+function createDefaultCharacteristics(rawCharacteristics?: unknown): CoC7eCharacteristics {
+  const source =
+    typeof rawCharacteristics === 'object' && rawCharacteristics !== null
+      ? (rawCharacteristics as Record<string, unknown>)
+      : {};
+  const keys = ['STR', 'CON', 'SIZ', 'DEX', 'APP', 'INT', 'POW', 'EDU'] as const;
+  const characteristics: Partial<CoC7eCharacteristics> = {};
+
+  for (const key of keys) {
+    const raw =
+      typeof source[key] === 'object' && source[key] !== null
+        ? (source[key] as Record<string, unknown>)
+        : {};
+    const regular =
+      typeof raw.regular === 'number' && Number.isFinite(raw.regular)
+        ? Math.min(100, Math.max(0, Math.trunc(raw.regular)))
+        : DEFAULT_CHARACTERISTIC_SCORE;
+    const derived = cocHalfAndFifth(regular);
+    characteristics[key] = {
+      regular,
+      half:
+        typeof raw.half === 'number' && Number.isFinite(raw.half)
+          ? raw.half
+          : derived.half,
+      fifth:
+        typeof raw.fifth === 'number' && Number.isFinite(raw.fifth)
+          ? raw.fifth
+          : derived.fifth,
+    };
+  }
+
+  return characteristics as CoC7eCharacteristics;
+}
+
+function createDefaultDerivedStats(
+  rawDerivedStats: unknown,
+  characteristics: CoC7eCharacteristics,
+  skills?: CoC7eSkills,
+  ageValue?: string | number
+): CoC7eDerivedStats {
+  const source =
+    typeof rawDerivedStats === 'object' && rawDerivedStats !== null
+      ? (rawDerivedStats as Record<string, unknown>)
+      : {};
+  const rawHp =
+    typeof source.hp === 'object' && source.hp !== null
+      ? (source.hp as Record<string, unknown>)
+      : {};
+  const rawMp =
+    typeof source.magicPoints === 'object' && source.magicPoints !== null
+      ? (source.magicPoints as Record<string, unknown>)
+      : {};
+  const rawSanity =
+    typeof source.sanity === 'object' && source.sanity !== null
+      ? (source.sanity as Record<string, unknown>)
+      : {};
+  const rawLuck =
+    typeof source.luck === 'object' && source.luck !== null
+      ? (source.luck as Record<string, unknown>)
+      : {};
+  const rawDodge =
+    typeof source.dodge === 'object' && source.dodge !== null
+      ? (source.dodge as Record<string, unknown>)
+      : {};
+
+  const con = characteristics.CON?.regular ?? DEFAULT_CHARACTERISTIC_SCORE;
+  const siz = characteristics.SIZ?.regular ?? DEFAULT_CHARACTERISTIC_SCORE;
+  const str = characteristics.STR?.regular ?? DEFAULT_CHARACTERISTIC_SCORE;
+  const dex = characteristics.DEX?.regular ?? DEFAULT_CHARACTERISTIC_SCORE;
+  const pow = characteristics.POW?.regular ?? DEFAULT_CHARACTERISTIC_SCORE;
+  const numericAge = typeof ageValue === 'number' ? ageValue : parseInt(String(ageValue || '30'), 10) || 30;
+
+  const maxHP = cocHitPoints(con, siz);
+  const majorWoundThreshold = Math.max(1, Math.floor(maxHP / 2));
+  const hpCurrent =
+    typeof rawHp.current === 'number' && Number.isFinite(rawHp.current)
+      ? rawHp.current
+      : maxHP;
+  const hpMaximum =
+    typeof rawHp.maximum === 'number' && Number.isFinite(rawHp.maximum)
+      ? rawHp.maximum
+      : maxHP;
+
+  const maxMP = cocMagicPoints(pow);
+  const mpCurrent =
+    typeof rawMp.current === 'number' && Number.isFinite(rawMp.current)
+      ? rawMp.current
+      : maxMP;
+  const mpMaximum =
+    typeof rawMp.maximum === 'number' && Number.isFinite(rawMp.maximum)
+      ? rawMp.maximum
+      : maxMP;
+
+  const cthulhuMythos = skills?.cthulhuMythos?.currentValue || 0;
+  const maxSanity = cocMaxSanity(cthulhuMythos);
+  const startingSanityBounded =
+    typeof rawSanity.starting === 'number' && Number.isFinite(rawSanity.starting)
+      ? Math.min(99, Math.max(0, Math.trunc(rawSanity.starting)))
+      : Math.min(99, Math.max(0, pow));
+  const currentSanityBounded =
+    typeof rawSanity.current === 'number' && Number.isFinite(rawSanity.current)
+      ? Math.min(maxSanity, Math.max(0, Math.trunc(rawSanity.current)))
+      : Math.min(maxSanity, startingSanityBounded);
+
+  const { damageBonus, build } = cocDamageBonusAndBuild(str, siz);
+  const moveRate =
+    typeof source.moveRate === 'number' && Number.isFinite(source.moveRate)
+      ? source.moveRate
+      : cocMoveRate(str, dex, siz, numericAge);
+
+  const dodgeBase = cocDodgeBase(dex);
+  const dodgeValue =
+    typeof rawDodge.value === 'number' && Number.isFinite(rawDodge.value)
+      ? rawDodge.value
+      : (skills?.dodge?.currentValue ?? dodgeBase);
+
+  return {
+    hp: {
+      maximum: hpMaximum,
+      current: hpCurrent,
+      majorWoundThreshold,
+      formula: typeof rawHp.formula === 'string' && rawHp.formula ? rawHp.formula : '(CON + SIZ) / 10, rounded down',
+    },
+    magicPoints: {
+      maximum: mpMaximum,
+      current: mpCurrent,
+      formula: typeof rawMp.formula === 'string' && rawMp.formula ? rawMp.formula : 'POW / 5',
+    },
+    sanity: {
+      starting: startingSanityBounded,
+      maximum: maxSanity,
+      current: currentSanityBounded,
+      formula: typeof rawSanity.formula === 'string' && rawSanity.formula ? rawSanity.formula : 'Starts equal to POW; max is 99 minus Cthulhu Mythos skill',
+    },
+    luck: {
+      score:
+        typeof rawLuck.score === 'number' && Number.isFinite(rawLuck.score)
+          ? Math.min(99, Math.max(0, Math.trunc(rawLuck.score)))
+          : 50,
+      notes: typeof rawLuck.notes === 'string' ? rawLuck.notes : '',
+    },
+    damageBonus: typeof source.damageBonus === 'string' && source.damageBonus ? source.damageBonus : damageBonus,
+    build: typeof source.build === 'number' && Number.isFinite(source.build) ? source.build : build,
+    moveRate,
+    dodge: {
+      value: dodgeValue,
+      formula: typeof rawDodge.formula === 'string' && rawDodge.formula ? rawDodge.formula : 'DEX / 2',
+      improvementChecked: rawDodge.improvementChecked === true,
+    },
+  };
+}
+
+function createDefaultAppearance(rawAppearance?: unknown): CoC7eAppearance {
+  const source =
+    typeof rawAppearance === 'object' && rawAppearance !== null
+      ? (rawAppearance as Record<string, unknown>)
+      : {};
+  return {
+    age: typeof source.age === 'number' || typeof source.age === 'string' ? (source.age as number) : ('' as unknown as number),
+    height: typeof source.height === 'string' ? source.height : '',
+    weight: typeof source.weight === 'string' ? source.weight : '',
+    eyes: typeof source.eyes === 'string' ? source.eyes : '',
+    hair: typeof source.hair === 'string' ? source.hair : '',
+    skin: typeof source.skin === 'string' ? source.skin : '',
+  };
+}
+
+function createDefaultWealth(rawWealth?: unknown): CoC7eWealth {
+  const source =
+    typeof rawWealth === 'object' && rawWealth !== null
+      ? (rawWealth as Record<string, unknown>)
+      : {};
+  return {
+    spendingLevel: typeof source.spendingLevel === 'string' ? source.spendingLevel : 'Average',
+    cash: typeof source.cash === 'number' && Number.isFinite(source.cash) ? source.cash : 0,
+    assets: typeof source.assets === 'string' ? source.assets : '',
+    notes: typeof source.notes === 'string' ? source.notes : '',
+  };
+}
+
+function createDefaultBackstory(rawBackstory?: unknown): CoC7eBackstory {
+  const source =
+    typeof rawBackstory === 'object' && rawBackstory !== null
+      ? (rawBackstory as Record<string, unknown>)
+      : {};
+  return {
+    description: typeof source.description === 'string' ? source.description : '',
+    personalDescription: typeof source.personalDescription === 'string' ? source.personalDescription : '',
+    ideology: typeof source.ideology === 'string' ? source.ideology : '',
+    significantPeople: typeof source.significantPeople === 'string' ? source.significantPeople : '',
+    meaningfulLocations: typeof source.meaningfulLocations === 'string' ? source.meaningfulLocations : '',
+    treasuredPossessions: typeof source.treasuredPossessions === 'string' ? source.treasuredPossessions : '',
+    traits: typeof source.traits === 'string' ? source.traits : '',
+    injuriesAndScars: typeof source.injuriesAndScars === 'string' ? source.injuriesAndScars : '',
+    phobiasAndManias: typeof source.phobiasAndManias === 'string' ? source.phobiasAndManias : '',
+    arcaneTomesAndSpells: typeof source.arcaneTomesAndSpells === 'string' ? source.arcaneTomesAndSpells : '',
+    encountersWithStrangeEntities: typeof source.encountersWithStrangeEntities === 'string' ? source.encountersWithStrangeEntities : '',
+  };
+}
+
+function createDefaultConditions(rawConditions?: unknown): CoC7eConditions {
+  const source =
+    typeof rawConditions === 'object' && rawConditions !== null
+      ? (rawConditions as Record<string, unknown>)
+      : {};
+  return {
+    unconscious: source.unconscious === true,
+    dying: source.dying === true,
+    majorWound: source.majorWound === true,
+    temporaryInsanity: source.temporaryInsanity === true,
+    indefiniteInsanity: source.indefiniteInsanity === true,
+  };
+}
+
 /**
  * CallOfCthulhu7eCharacterEditor - Editable CoC 7e character sheet
  */
@@ -156,22 +372,33 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
   const keeperNotesShown = typeof data.notes === 'string';
 
   // Form state
-  const [formData, setFormData] = useState<CoC7eFormData>(() => ({
-    ...data,
-    // TODO(#152): `{}` has none of the keys these types require, and the
-    // effects and inputs below read straight off them. Pre-existing; the casts
-    // keep the behaviour for a sheet stored without one exactly as it was.
-    characteristics: (data.characteristics || {}) as CoC7eCharacteristics,
-    derivedStats: (data.derivedStats || {}) as CoC7eDerivedStats,
-    skills: (data.skills || {}) as CoC7eSkills,
-    combat: (data.combat || { weapons: [] }) as CoC7eCombat,
-    possessions: data.possessions || [],
-    wealth: (data.wealth || {}) as CoC7eWealth,
-    backstory: (data.backstory || {}) as CoC7eBackstory,
-    appearance: (data.appearance || {}) as CoC7eAppearance,
-    contacts: data.contacts || [],
-    conditions: (data.conditions || {}) as CoC7eConditions,
-  }));
+  const [formData, setFormData] = useState<CoC7eFormData>(() => {
+    const characteristics = createDefaultCharacteristics(data.characteristics);
+    const derivedStats = createDefaultDerivedStats(
+      data.derivedStats,
+      characteristics,
+      data.skills,
+      data.age
+    );
+    const appearance = createDefaultAppearance(data.appearance);
+    const wealth = createDefaultWealth(data.wealth);
+    const backstory = createDefaultBackstory(data.backstory);
+    const conditions = createDefaultConditions(data.conditions);
+
+    return {
+      ...data,
+      characteristics,
+      derivedStats,
+      skills: (data.skills || {}) as CoC7eSkills,
+      combat: (data.combat || { weapons: [] }) as CoC7eCombat,
+      possessions: data.possessions || [],
+      wealth,
+      backstory,
+      appearance,
+      contacts: data.contacts || [],
+      conditions,
+    };
+  });
 
   // Report the first edit up to whoever is hosting this sheet, so leaving with
   // unsaved work can be caught. One effect on the whole form rather than a call
@@ -337,13 +564,12 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
               improvementChecked: prev.derivedStats?.dodge?.improvementChecked || false,
             },
             sanity: {
-              // TODO(#152): POW may be 100 but the schema caps Sanity at 99, so
-              // an investigator with POW 100 and no Sanity yet gets 100 for both
-              // of these and the sheet cannot be saved. Cap the starting value at
-              // 99 and the current value at maxSanity.
-              starting: prev.derivedStats?.sanity?.starting ?? pow,
+              starting: Math.min(99, Math.max(0, prev.derivedStats?.sanity?.starting ?? pow)),
               maximum: maxSanity,
-              current: prev.derivedStats?.sanity?.current ?? pow,
+              current: Math.min(
+                maxSanity,
+                Math.max(0, prev.derivedStats?.sanity?.current ?? Math.min(99, pow))
+              ),
               formula: 'Starts equal to POW; max is 99 minus Cthulhu Mythos skill',
             },
             luck: prev.derivedStats?.luck || { score: 50, notes: '' },
@@ -764,7 +990,8 @@ export const CallOfCthulhu7eCharacterEditor: React.FC<CallOfCthulhu7eCharacterEd
           <div className="bg-white border border-sepia-400 rounded-md p-3">
             <label className="text-xs text-sepia-600 uppercase block mb-1">Current HP</label>
             <NumberField
-value={formData.derivedStats?.hp?.current}
+              aria-label="Current HP"
+              value={formData.derivedStats?.hp?.current}
               onChange={(v: number) => {
                 setFormData({
                   ...formData,
@@ -775,13 +1002,14 @@ value={formData.derivedStats?.hp?.current}
                 });
               }}
               className="w-full text-center text-2xl font-bold text-red-700 border-none bg-transparent focus:outline-none focus:ring-2 focus:ring-red-500 rounded"
-            fallback={0}
+              fallback={0}
             />
           </div>
           <div className="bg-white border border-sepia-400 rounded-md p-3">
             <label className="text-xs text-sepia-600 uppercase block mb-1">Current MP</label>
             <NumberField
-value={formData.derivedStats?.magicPoints?.current}
+              aria-label="Current MP"
+              value={formData.derivedStats?.magicPoints?.current}
               onChange={(v: number) => {
                 setFormData({
                   ...formData,
@@ -795,13 +1023,14 @@ value={formData.derivedStats?.magicPoints?.current}
                 });
               }}
               className="w-full text-center text-2xl font-bold text-purple-700 border-none bg-transparent focus:outline-none focus:ring-2 focus:ring-purple-500 rounded"
-            fallback={0}
+              fallback={0}
             />
           </div>
           <div className="bg-white border border-sepia-400 rounded-md p-3">
             <label className="text-xs text-sepia-600 uppercase block mb-1">Luck Score</label>
             <NumberField
-value={formData.derivedStats?.luck?.score}
+              aria-label="Luck Score"
+              value={formData.derivedStats?.luck?.score}
               onChange={(v: number) => {
                 setFormData({
                   ...formData,
@@ -812,7 +1041,7 @@ value={formData.derivedStats?.luck?.score}
                 });
               }}
               className="w-full text-center text-2xl font-bold text-yellow-700 border-none bg-transparent focus:outline-none focus:ring-2 focus:ring-yellow-500 rounded"
-            fallback={0}
+              fallback={0}
             />
           </div>
         </div>
@@ -986,6 +1215,7 @@ value={formData.wealth?.cash}
                     appearance: { ...formData.appearance, [key]: e.target.value } as CoC7eAppearance,
                   });
                 }}
+                aria-label={label}
                 className="w-full px-2 py-1 border border-sepia-300 rounded text-sm focus:outline-none focus:ring-2 focus:ring-sepia-500"
               />
             </div>
@@ -1082,7 +1312,7 @@ value={formData.wealth?.cash}
         {activeTab === 'backstory' && renderBackstoryTab()}
       </div>
       {errors.submit && (
-        <div className="px-6 py-3 text-sm text-red-700 bg-parchment">{errors.submit}</div>
+        <div role="alert" aria-live="assertive" className="px-6 py-3 text-sm text-red-700 bg-parchment">{errors.submit}</div>
       )}
     </div>
   );
