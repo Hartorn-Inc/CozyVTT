@@ -95,7 +95,7 @@ export const uploadGeneric = multer({
 /**
  * Error handler middleware for multer errors
  */
-export function handleUploadError(err: unknown, req: Request, res: Response, next: NextFunction): Response | void {
+export function handleUploadError(err: unknown, req: Request, res: Response, _next: NextFunction): Response | void {
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
       // On the generic upload route multer aborts mid-stream, so req.assetType
@@ -135,5 +135,8 @@ export function handleUploadError(err: unknown, req: Request, res: Response, nex
     });
   }
 
-  next();
+  return res.status(400).json({
+    error: 'Upload Error',
+    message: 'File upload failed',
+  });
 }

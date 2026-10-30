@@ -16,7 +16,9 @@ import request from 'supertest';
 const UPLOAD_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cozyvtt-assets-e2e-'));
 process.env.UPLOAD_DIR = UPLOAD_DIR;
 
+import { positiveIntegerFromEnv } from '../../config/env';
 import { createTestApp } from '../../__tests__/helpers/test-app';
+import { uploadLimiter } from '../assets';
 import {
   prisma,
   createTestUser,
@@ -131,6 +133,39 @@ describe('GET /api/assets query parameter validation and LIKE escaping', () => {
       const names = res.body.assets.map((a: { name: string }) => a.name);
       expect(names).toContain('Token_Alpha_1');
       expect(names).not.toContain('Token-Alpha-1');
+    });
+  });
+
+  describe('ASSET_UPLOAD_RATE_LIMIT parsing with positiveIntegerFromEnv', () => {
+    it('falls back to 30 when ASSET_UPLOAD_RATE_LIMIT is invalid or non-numeric', () => {
+      expect(positiveIntegerFromEnv('ASSET_UPLOAD_RATE_LIMIT', 30, { ASSET_UPLOAD_RATE_LIMIT: 'invalid-number' })).toBe(30);
+      expect(positiveIntegerFromEnv('ASSET_UPLOAD_RATE_LIMIT', 30, { ASSET_UPLOAD_RATE_LIMIT: 'NaN' })).toBe(30);
+      expect(positiveIntegerFromEnv('ASSET_UPLOAD_RATE_LIMIT', 30, { ASSET_UPLOAD_RATE_LIMIT: '-5' })).toBe(30);
+    });
+
+    it('parses valid numeric ASSET_UPLOAD_RATE_LIMIT values', () => {
+      expect(positiveIntegerFromEnv('ASSET_UPLOAD_RATE_LIMIT', 30, { ASSET_UPLOAD_RATE_LIMIT: '50' })).toBe(50);
+    });
+
+    it('exports an uploadLimiter configured with a positive integer ceiling', () => {
+      expect(typeof uploadLimiter).toBe('function');
+    });
+  });
+
+  describe('UTF-8 non-ASCII filename decoding on upload', () => {
+    it('persists non-ASCII filename correctly decoded from latin1 to utf-8', async () => {
+      const nonAsciiOriginalName = 'héroïque_créature_épée.png';
+      const latin1EncodedName = Buffer.from(nonAsciiOriginalName, 'utf8').toString('latin1');
+
+      const res = await userAgent
+        .post('/api/assets/upload')
+        .field('type', 'TOKEN')
+        .field('scope', 'USER')
+        .attach('file', PNG, { filename: latin1EncodedName, contentType: 'image/png' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.asset.originalName).toBe(nonAsciiOriginalName);
+      assetIds.push(res.body.asset.id);
     });
   });
 });

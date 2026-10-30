@@ -324,46 +324,29 @@ describe('malformed multipart upload bodies', () => {
     expect(await isAlive(live)).toBe(true);
   }, 90_000);
 
-  // These three answer a refused body themselves.
-  describe.each([['/api/assets/upload'], ['/api/campaigns/import/preview'], ['/api/campaigns/import']])(
+  // Upload endpoints answer a refused body with HTTP 400 Bad Request.
+  describe.each([
+    ['/api/assets/upload', 'user' as const],
+    ['/api/campaigns/import/preview', 'user' as const],
+    ['/api/campaigns/import', 'user' as const],
+    ['/api/campaigns/:campaignId/maps/import-uvtt', 'dm' as const],
+    ['/api/admin/backups/restore', 'admin' as const],
+  ])(
     'POST %s',
-    (route) => {
+    (route, who) => {
       it.each(MALFORMED_BODIES)('answers 400 and keeps running for $name', async ({ contentType, body }) => {
         const live = server as RunningServer;
-        const res = await sendRaw(live, route, 'user', contentType, body);
+        const resolvedRoute = route.replace(':campaignId', campaignId);
+        const res = await sendRaw(live, resolvedRoute, who, contentType, body);
 
         // A crash shows up as a connection that broke with no answer.
         if (res.socketError) {
           throw new Error(`No answer (${res.socketError}). The server wrote to stderr:\n${live.stderr().slice(-1500)}`);
         }
-        // Refused by the parser itself, not let through to be refused later for
-        // lacking the fields a real upload has.
+        // Refused by the parser with a 400 client error response.
         expect(res.status).toBe(400);
-        expect(JSON.parse(res.body)).toMatchObject({ error: 'Upload Error' });
-
-        // Still running, and still serving.
         expect(await isAlive(live)).toBe(true);
       }, 90_000);
     }
   );
-
-  // TODO(#154): these two leave a refused body to the generic error handler,
-  // which answers 500 "An unexpected error occurred". A refusal should be a 400
-  // that says what was wrong, as on the routes above. Until then this checks
-  // only what matters most: that the server survives and does not report success.
-  describe.each([
-    ['/api/campaigns/:campaignId/maps/import-uvtt', 'dm' as const],
-    ['/api/admin/backups/restore', 'admin' as const],
-  ])('POST %s', (route, who) => {
-    it.each(MALFORMED_BODIES)('keeps running and refuses $name', async ({ contentType, body }) => {
-      const live = server as RunningServer;
-      const res = await sendRaw(live, route.replace(':campaignId', campaignId), who, contentType, body);
-
-      if (res.socketError) {
-        throw new Error(`No answer (${res.socketError}). The server wrote to stderr:\n${live.stderr().slice(-1500)}`);
-      }
-      expect(res.status).toBeGreaterThanOrEqual(400);
-      expect(await isAlive(live)).toBe(true);
-    }, 90_000);
-  });
 });

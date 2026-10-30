@@ -5,6 +5,7 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { AuthenticatedRequest } from '../middleware/rbac';
 import { authenticated } from '../middleware/compose';
 import { prisma } from '../config/database';
+import { positiveIntegerFromEnv } from '../config/env';
 import { UploadRequest, uploadGeneric, handleUploadError } from '../middleware/upload';
 import { validateFileType, validateFileSize } from '../middleware/fileValidation';
 import {
@@ -62,9 +63,7 @@ const router = Router();
 // this ceiling instead of keeping a second one that could drift.
 export const uploadLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  // TODO(#154): a value that is not a number gives NaN and turns this limit
-  // off; read it with positiveIntegerFromEnv as app.ts reads the general limit.
-  max: parseInt(process.env.ASSET_UPLOAD_RATE_LIMIT || '30'),
+  max: positiveIntegerFromEnv('ASSET_UPLOAD_RATE_LIMIT', 30),
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => {
@@ -497,11 +496,8 @@ router.post(
       // What the bytes are (validateFileType), never what the browser said:
       // the export writes this into its archive, and it decides the thumbnail.
       const mimeType = req.detectedMimeType ?? 'application/octet-stream';
-      // TODO(#154): multer reads the file name's UTF-8 bytes as latin1, so a
-      // name with non-ASCII characters is stored garbled and shown so in the
-      // library (downloads read it back through downloadNameOf); decode it as
-      // UTF-8 before storing, and the names already stored with it.
-      const originalName = shortenFileName(file.originalname, MAX_ORIGINAL_NAME_LENGTH);
+      const decodedOriginalName = Buffer.from(file.originalname, 'latin1').toString('utf8');
+      const originalName = shortenFileName(decodedOriginalName, MAX_ORIGINAL_NAME_LENGTH);
 
       // Generate thumbnail for images (MAP and TOKEN types)
       thumbnailPath =
