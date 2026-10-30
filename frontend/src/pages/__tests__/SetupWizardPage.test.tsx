@@ -83,7 +83,10 @@ describe('SetupWizardPage display name validation', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /next/i }));
 
-    expect(await screen.findByText('Display name must be between 1 and 50 characters')).toBeInTheDocument();
+    const errorEl = await screen.findByRole('alert');
+    expect(errorEl).toHaveTextContent('Display name must be between 1 and 50 characters');
+    expect(screen.getByLabelText(/display name/i)).toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByLabelText(/display name/i)).toHaveAttribute('aria-describedby', 'displayName-error');
     expect(screen.queryByText('System Configuration')).not.toBeInTheDocument();
   });
 });

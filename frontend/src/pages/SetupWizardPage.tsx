@@ -522,9 +522,11 @@ function Step2AdminAccount({ data, setData, setupToken, setSetupToken, fieldErro
             }`}
             placeholder="Your name"
             maxLength={50}
+            aria-invalid={!!fieldErrors.displayName}
+            aria-describedby={fieldErrors.displayName ? 'displayName-error' : undefined}
           />
           {fieldErrors.displayName && (
-            <p className="mt-1 text-xs text-spirit-red">{fieldErrors.displayName}</p>
+            <p id="displayName-error" role="alert" className="mt-1 text-xs text-spirit-red">{fieldErrors.displayName}</p>
           )}
         </div>
 

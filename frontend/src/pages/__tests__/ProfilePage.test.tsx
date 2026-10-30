@@ -96,7 +96,8 @@ describe('ProfilePage display name validation', () => {
     fireEvent.change(nameInput, { target: { value: '   ' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }));
 
-    expect(await screen.findByText('Display name must be between 1 and 50 characters')).toBeInTheDocument();
+    const errorEl = await screen.findByRole('alert');
+    expect(errorEl).toHaveTextContent('Display name must be between 1 and 50 characters');
     expect(profileService.updateProfile).not.toHaveBeenCalled();
   });
 

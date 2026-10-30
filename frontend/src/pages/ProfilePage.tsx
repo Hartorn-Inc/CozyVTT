@@ -265,7 +265,7 @@ function SaveBar({
 }) {
   return (
     <div className="flex items-center gap-3 pt-4 border-t border-moss-green/10 mt-4">
-      {error && <p className="text-xs text-danger-ink flex-1">{error}</p>}
+      {error && <p role="alert" className="text-xs text-danger-ink flex-1">{error}</p>}
       {success && (
         <p className="text-xs text-brand-ink flex items-center gap-1 flex-1">
           <CheckCircle className="w-3.5 h-3.5" /> {success}
