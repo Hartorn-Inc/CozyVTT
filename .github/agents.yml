@@ -46,6 +46,13 @@ verification:
       path_patterns: ["scripts/**", "docs/**", "*.md", "backend/**", "frontend/**"]
       install_command: "pip install pyyaml"
       test_command: "python3 scripts/spec-coverage.py && python3 scripts/websocket-events.py --check && python3 -m unittest discover -s scripts/tests"
+web_tools:
+  enabled: true
+  phases: ["plan", "spec", "implementation"]
+  max_requests_per_turn: 3
+  max_requests_per_run: 8
+  max_bytes_per_response: 16384
+  timeout_ms: 8000
 security_invariants:
   require_write_permission: true
   sandbox_isolation: true
