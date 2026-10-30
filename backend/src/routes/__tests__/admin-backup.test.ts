@@ -35,9 +35,19 @@ const DUMP = [
   '\\restrict unguessable',
   'DROP SCHEMA public CASCADE;',
   'CREATE SCHEMA public;',
-  'CREATE TABLE public."User" (id text PRIMARY KEY);',
+  'CREATE TABLE public."User" (',
+  '    id text PRIMARY KEY',
+  ');',
   "COMMENT ON TABLE public.\"User\" IS 'instance user';",
-  'CREATE TABLE public."Note" (id text PRIMARY KEY);',
+  'CREATE TABLE public._prisma_migrations (',
+  '    id character varying(36) NOT NULL',
+  ');',
+  'CREATE TABLE public."Note" (',
+  '    id text PRIMARY KEY',
+  ');',
+  '--',
+  '-- PostgreSQL database dump complete',
+  '--',
 ].join('\n') + '\n';
 
 async function backupZip(entries: Record<string, string>): Promise<Buffer> {
