@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/database';
 import { toJson } from '../../utils/prisma-json';
 import { createWsTestServer, waitForEvent, WsTestServer } from '../../__tests__/helpers/websocket-test-server';
@@ -149,6 +150,40 @@ describe('door toggle manual fog authorization (websocket integration)', () => {
         lightingEnabled: false,
         fogEnabled: true,
         fogData: toJson(fogData),
+        wallSegments: toJson([door]),
+        lights: toJson([]),
+        tokens: toJson([]),
+        annotations: [],
+      },
+    });
+    await prisma.campaign.update({ where: { id: campaignId }, data: { currentMapId: map.id } });
+
+    const player = await server.connectAndAuth(playerCookie, campaignId);
+    const refused = waitForEvent<{ message: string }>(player, 'error');
+    const back = waitForEvent<{ segment: WallSegment }>(player, 'wall:updated');
+
+    player.emit('wall:update', { mapId: map.id, segment: { ...door, type: 'door-open' } });
+
+    expect((await refused).message).toBe('You cannot see that door');
+    expect((await back).segment).toEqual(door);
+    expect(await storedDoorType(map.id, door.id)).toBe('door-closed');
+    player.disconnect();
+  });
+
+  it('refuses player door toggle when fogEnabled is true and fogData is null', async () => {
+    const door: WallSegment = { id: randomUUID(), x1: 200, y1: 200, x2: 250, y2: 200, type: 'door-closed' };
+    const map = await prisma.map.create({
+      data: {
+        campaignId,
+        name: 'Null FogData Map',
+        imageUrl: '/api/assets/maps/x',
+        baseLayerUrl: '/api/assets/maps/x',
+        width: 10,
+        height: 10,
+        gridSize: 50,
+        lightingEnabled: false,
+        fogEnabled: true,
+        fogData: Prisma.DbNull,
         wallSegments: toJson([door]),
         lights: toJson([]),
         tokens: toJson([]),
