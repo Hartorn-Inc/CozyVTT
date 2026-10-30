@@ -3692,14 +3692,10 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
         {userRole === 'DM' && (
           <>
             <div className="w-px h-6 bg-moss-green/20" />
-            {/* TODO(#153): while dmShowSpiritTokens is true the tokens are
-               shown, yet the title says "Hiding spirit tokens (click to
-               show)"; both branches say click to show. It should read
-               "Spirit tokens shown, click to hide" in that case. */}
             <Button
               onClick={() => setDmShowSpiritTokens((prev) => !prev)}
               variant="secondary" className={`p-2 ${dmShowSpiritTokens ? 'bg-spirit-purple/15' : ''}`}
-              title={dmShowSpiritTokens ? 'Hiding spirit tokens (click to show)' : 'Spirit tokens hidden — click to show'}
+              title={dmShowSpiritTokens ? 'Spirit tokens shown, click to hide' : 'Hiding spirit tokens (click to show)'}
             >
               <Ghost className={`w-4 h-4 ${dmShowSpiritTokens ? 'text-spirit-purple' : 'text-stone-gray/40'}`} />
             </Button>
@@ -4456,7 +4452,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
                     try {
                       await setTokenFlag(campaign.id, currentMap.id, token, 'visible', !token.visible, socket);
                     } catch (err) {
-                      showToast(apiErrorMessage(err) || 'Failed to change whether players can see the token', 'error');
+                      showToast(apiErrorMessage(err) || 'Failed to update token', 'error');
                     }
                   }}
                 >
@@ -4475,7 +4471,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
                     try {
                       await setTokenFlag(campaign.id, currentMap.id, token, 'obscured', !token.obscured, socket);
                     } catch (err) {
-                      showToast(apiErrorMessage(err) || 'Failed to change whether the token\'s identity is hidden', 'error');
+                      showToast(apiErrorMessage(err) || 'Failed to update token', 'error');
                     }
                   }}
                 >
@@ -4499,7 +4495,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
                         useGameStore.getState().patchToken(token.id, { layer: TokenLayer.SPIRIT });
                         socket?.emitMapChange(currentMap.id);
                       } catch (err) {
-                        showToast(apiErrorMessage(err) || 'Failed to move token to spirit realm', 'error');
+                        showToast(apiErrorMessage(err) || 'Failed to update token', 'error');
                       } finally {
                         setIsMovingTokenLayer(false);
                       }
@@ -4521,7 +4517,7 @@ export default function MapCanvas({ onEditToken, focusedTokenId, onFocusToken, o
                         useGameStore.getState().patchToken(token.id, { layer: TokenLayer.TOKEN });
                         socket?.emitMapChange(currentMap.id);
                       } catch (err) {
-                        showToast(apiErrorMessage(err) || 'Failed to return token to material plane', 'error');
+                        showToast(apiErrorMessage(err) || 'Failed to update token', 'error');
                       } finally {
                         setIsMovingTokenLayer(false);
                       }
