@@ -59,6 +59,7 @@ function gibibytes(bytes: number): string {
  * archive cannot plant a symlink and follow it out of `destRoot`.
  */
 export async function extractArchiveSafely(
+  archivePath: string,
   directory: CentralDirectory,
   destRoot: string,
   options: SafeExtractOptions
@@ -71,7 +72,7 @@ export async function extractArchiveSafely(
   }
 
   const resolvedRoot = path.resolve(destRoot);
-  let totalBytes = 0;
+  const total = new UnpackedTotal(options.maxTotalBytes);
 
   // A backup unpacks its whole database here, so a folder this creates is its
   // user's alone. The files keep the default mode: a restore copies the
@@ -92,21 +93,20 @@ export async function extractArchiveSafely(
 
     await fs.mkdir(path.dirname(destPath), { recursive: true });
 
-    // Count decompressed bytes as they flow so a zip bomb is stopped mid-stream
-    // rather than after the whole (potentially enormous) entry lands on disk.
-    const counter = new Transform({
-      transform(chunk: Buffer, _enc, cb) {
-        totalBytes += chunk.length;
-        if (totalBytes > options.maxTotalBytes) {
-          cb(new ArchiveLimitError(`The archive unpacks to more than the ${gibibytes(options.maxTotalBytes)} a backup may hold.`, 'total'));
-          return;
-        }
-        cb(null, chunk);
-      },
-    });
-
-    // TODO(#158): stopping unzipper stream part-way leaves backup file open; switch to unpackEntry helper
-    await pipeline(entry.stream(), counter, createWriteStream(destPath));
+    try {
+      await writeArchiveEntry(archivePath, entry, destPath, {
+        maxEntryBytes: Number.MAX_SAFE_INTEGER,
+        total,
+      });
+    } catch (error) {
+      if (error instanceof ArchiveLimitError && error.limit === 'total') {
+        throw new ArchiveLimitError(
+          `The archive unpacks to more than the ${gibibytes(options.maxTotalBytes)} a backup may hold.`,
+          'total'
+        );
+      }
+      throw error;
+    }
   }
 }
 

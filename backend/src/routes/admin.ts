@@ -1280,7 +1280,7 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
         await decryptBackupFile(uploadedZip, zipPath);
       }
       const directory = await openArchiveFile(zipPath, RESTORE_MAX_FILES);
-      await extractArchiveSafely(directory, tempDir, {
+      await extractArchiveSafely(zipPath, directory, tempDir, {
         maxFiles: RESTORE_MAX_FILES,
         maxTotalBytes: RESTORE_MAX_TOTAL_BYTES,
       });

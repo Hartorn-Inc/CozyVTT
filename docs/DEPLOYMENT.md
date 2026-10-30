@@ -21,9 +21,10 @@ This guide covers deploying CozyVTT to a **production server** using Docker Comp
 11. [Monitoring and Logs](#monitoring-and-logs)
 12. [Troubleshooting](#troubleshooting)
 13. [Updating CozyVTT](#updating-cozyvtt)
-14. [Hardening Checklist](#hardening-checklist)
-15. [Cloudflare Tunnel (Recommended for Public Instances)](#cloudflare-tunnel-recommended-for-public-instances)
-16. [The API Documentation](#the-api-documentation)
+14. [PostgreSQL Major-Version Upgrades](#postgresql-major-version-upgrades)
+15. [Hardening Checklist](#hardening-checklist)
+16. [Cloudflare Tunnel (Recommended for Public Instances)](#cloudflare-tunnel-recommended-for-public-instances)
+17. [The API Documentation](#the-api-documentation)
 
 ---
 
@@ -1777,6 +1778,25 @@ Coming from 1.4.0 or earlier, also make the database role the owner of the datab
 sudo -u postgres psql -c "ALTER DATABASE cozyvtt OWNER TO cozyvtt;"
 sudo -u postgres psql -d cozyvtt -c "ALTER SCHEMA public OWNER TO cozyvtt;"
 ```
+
+### PostgreSQL Major-Version Upgrades
+
+CozyVTT uses PostgreSQL 18 with its cluster directory stored at `/var/lib/postgresql/18/docker`. Future major versions (such as PostgreSQL 19) write their cluster to a separate versioned directory (`19/docker`). Directly updating the image tag without migrating data causes PostgreSQL to initialize a fresh, empty cluster alongside existing data.
+
+The repository provides the `backend/scripts/upgrade-postgres.sh` helper to detect cluster layout and guide upgrades:
+
+```bash
+# Inspect data volume cluster layout
+sh backend/scripts/upgrade-postgres.sh detect
+
+# Rehearse upgrade via instance backup verification
+BACKUP_ARCHIVE=/path/to/backup.zip sh backend/scripts/upgrade-postgres.sh rehearse-backup
+
+# Review pg_upgrade parameters and guardrails
+sh backend/scripts/upgrade-postgres.sh pg-upgrade
+```
+
+Operators can perform major version migrations either by restoring an Instance backup into a fresh container, or by executing `pg_upgrade` across versioned cluster directories (`/var/lib/postgresql/18/docker` to `/var/lib/postgresql/19/docker`). Always test with `rehearse-backup` and take a full backup before upgrading.
 
 ---
 
