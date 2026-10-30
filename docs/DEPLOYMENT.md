@@ -122,53 +122,6 @@ Every container runs with Docker's `no-new-privileges` option, so no program in 
 
 Database migrations run automatically when the backend starts, as the schema owner. First start after this upgrade creates that role from the bootstrap superuser, or the backend refuses to start.
 
-### PostgreSQL Major-Version Upgrades
-
-CozyVTT mounts the database data volume at `/var/lib/postgresql`, storing PostgreSQL 18 clusters under the versioned directory `/var/lib/postgresql/18/docker`. When preparing to upgrade to PostgreSQL 19 or later, operators must upgrade or migrate the existing cluster before booting the new PostgreSQL container directly, as PostgreSQL does not start across incompatible major data versions.
-
-A helper script is included at `backend/scripts/upgrade-postgres.sh` to detect cluster layouts and rehearse migrations.
-
-#### 1. Detect existing cluster version
-
-To check the current database volume layout on the host before changing image tags:
-
-```bash
-./backend/scripts/upgrade-postgres.sh detect
-```
-
-If PostgreSQL 18 is present, the script outputs `DETECTED_VERSION=18` and points to the cluster directory `/var/lib/postgresql/18/docker`.
-
-#### 2. Recommended Migration Path: Instance Backup Rehearsal
-
-The safest and verified migration path for self-hosters between major database versions is an **Instance backup**:
-
-1. Create a complete backup via **Admin Dashboard → Backups → Create Backup** (or run `./backend/scripts/backup.sh`).
-2. Rehearse the backup readiness:
-   ```bash
-   BACKUP_ARCHIVE=backend/backups/your-backup.zip ./backend/scripts/upgrade-postgres.sh rehearse-backup
-   ```
-3. Stop the stack:
-   ```bash
-   docker compose down
-   ```
-4. Remove or archive the old data volume:
-   ```bash
-   docker volume rm cozyvtt_postgres_data
-   ```
-5. Start the stack with the new version and restore the backup archive via `./backend/scripts/restore.sh` or the Admin Dashboard.
-
-#### 3. In-Place Migration via `pg_upgrade`
-
-For large databases where dump/restore is prohibitive, `pg_upgrade` links data blocks directly in seconds:
-
-```bash
-./backend/scripts/upgrade-postgres.sh pg-upgrade
-```
-
-Because the volume layout places PostgreSQL 18 data in `/var/lib/postgresql/18/docker`, a target PostgreSQL 19 cluster initializes alongside it at `/var/lib/postgresql/19/docker` within the same mounted volume, allowing `pg_upgrade --link` to hard-link database files without duplicating disk usage.
-
----
-
 ### 4. Complete the setup wizard
 
 Until the wizard has run, whoever submits it becomes the instance's administrator. So the wizard asks for a **setup token** that only you can read: the backend prints one in its log when it starts and setup is not yet complete.
