@@ -96,3 +96,69 @@ describe('reading token templates', () => {
     expect(JSON.stringify(one.body)).not.toContain('cult leader');
   });
 });
+
+describe('searching token templates with LIKE metacharacters', () => {
+  beforeAll(async () => {
+    await dm.post(`/api/campaigns/${campaignId}/token-templates`).send({
+      name: '100% Pure Goblin',
+      type: 'npc',
+    });
+    await dm.post(`/api/campaigns/${campaignId}/token-templates`).send({
+      name: '1000 Pure Goblins',
+      type: 'npc',
+    });
+    await dm.post(`/api/campaigns/${campaignId}/token-templates`).send({
+      name: 'Goblin_Scout',
+      type: 'npc',
+    });
+    await dm.post(`/api/campaigns/${campaignId}/token-templates`).send({
+      name: 'Goblin-Scout',
+      type: 'npc',
+    });
+    await dm.post(`/api/campaigns/${campaignId}/token-templates`).send({
+      name: 'Backslash\\Token',
+      type: 'npc',
+    });
+  });
+
+  it("matches literal '%' characters and excludes wildcard matches", async () => {
+    const res = await dm.get(`/api/campaigns/${campaignId}/token-templates?search=${encodeURIComponent('100%')}`);
+    expect(res.status).toBe(200);
+    const names = res.body.templates.map((t: { name: string }) => t.name);
+    expect(names).toContain('100% Pure Goblin');
+    expect(names).not.toContain('1000 Pure Goblins');
+  });
+
+  it("matches literal '_' characters and excludes single-character wildcard matches", async () => {
+    const res = await dm.get(`/api/campaigns/${campaignId}/token-templates?search=${encodeURIComponent('Goblin_')}`);
+    expect(res.status).toBe(200);
+    const names = res.body.templates.map((t: { name: string }) => t.name);
+    expect(names).toContain('Goblin_Scout');
+    expect(names).not.toContain('Goblin-Scout');
+  });
+
+  it("matches literal '\\' characters without syntax error", async () => {
+    const res = await dm.get(`/api/campaigns/${campaignId}/token-templates?search=${encodeURIComponent('Backslash\\')}`);
+    expect(res.status).toBe(200);
+    const names = res.body.templates.map((t: { name: string }) => t.name);
+    expect(names).toContain('Backslash\\Token');
+  });
+
+  it("matches only templates containing '%' when searching with '%'", async () => {
+    const res = await dm.get(`/api/campaigns/${campaignId}/token-templates?search=${encodeURIComponent('%')}`);
+    expect(res.status).toBe(200);
+    const names = res.body.templates.map((t: { name: string }) => t.name);
+    expect(names).toContain('100% Pure Goblin');
+    expect(names).not.toContain('1000 Pure Goblins');
+    expect(names).not.toContain('Traitor Innkeeper');
+  });
+
+  it("matches only templates containing '_' when searching with '_'", async () => {
+    const res = await dm.get(`/api/campaigns/${campaignId}/token-templates?search=${encodeURIComponent('_')}`);
+    expect(res.status).toBe(200);
+    const names = res.body.templates.map((t: { name: string }) => t.name);
+    expect(names).toContain('Goblin_Scout');
+    expect(names).not.toContain('Goblin-Scout');
+    expect(names).not.toContain('Traitor Innkeeper');
+  });
+});

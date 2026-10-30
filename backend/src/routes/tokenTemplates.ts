@@ -18,6 +18,7 @@ import {
 import { TOKEN_TYPES } from '../validators/tokens';
 import { jsonOrNull } from '../utils/prisma-json';
 import { canReferenceAsset } from '../services/permissions';
+import { escapeLikePattern } from '../utils/likePattern';
 import logger from '../utils/logger';
 
 const router = Router({ mergeParams: true });
@@ -40,8 +41,7 @@ router.get('/', campaignDM, async (req: AuthenticatedRequest, res: Response) => 
     const where: Prisma.TokenTemplateWhereInput = { campaignId };
 
     if (search && typeof search === 'string') {
-      // TODO(#153): `search` reaches PostgreSQL as an unescaped LIKE pattern, so a % or _ in it matches any text; pass it through escapeLikePattern (utils/likePattern) so it matches only itself.
-      where.name = { contains: search, mode: 'insensitive' };
+      where.name = { contains: escapeLikePattern(search), mode: 'insensitive' };
     }
     if (type && typeof type === 'string' && (TOKEN_TYPES as readonly string[]).includes(type)) {
       where.type = type;
