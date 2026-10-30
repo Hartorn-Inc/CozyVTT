@@ -1018,11 +1018,8 @@ async function writeBackupZip(dbUrl: string, withUploads: boolean): Promise<{ fi
     archive.file(sqlPath, { name: 'database.sql' });
     if (withUploads) {
       // Under an "uploads/" prefix, skipping the backups subdir older installs had there
-      // TODO(#158): the folder's own entry is named "backups", with no
-      // slash, so the filter keeps it and every backup holds an empty
-      // uploads/backups/ folder. Leave out entry.name === 'backups' too.
       archive.directory(UPLOADS_DIR, 'uploads', (entry) => {
-        return entry.name.startsWith('backups/') ? false : entry;
+        return entry.name === 'backups' || entry.name.startsWith('backups/') ? false : entry;
       });
     }
     archive.finalize();
@@ -1447,9 +1444,17 @@ router.post('/backups/restore', oneRestoreAtATime, takeRestoreUpload, async (req
       await execFileAsync('node_modules/.bin/prisma', ['migrate', 'deploy']);
     } catch (execError: unknown) {
       logger.error('Migrations after restore failed', { stderr: errorStderr(execError), code: errorCode(execError) });
-      // TODO(#158): this return skips step 9, so a restore whose migrations
-      // failed leaves no entry in the admin log although the database was
-      // replaced. It should write the same best-effort entry before answering.
+      const failureDetail = errorStderr(execError) || errorCode(execError) || errorMessage(execError) || 'Migration failed';
+      await writeAdminLog(
+        req.session.userId!,
+        'Restored instance from backup (migrations failed)',
+        'WARNING',
+        {
+          safetyBackup,
+          error: failureDetail,
+          migrationError: failureDetail,
+        }
+      ).catch(() => {});
       return res.status(500).json({
         error: 'Restore Incomplete',
         message:

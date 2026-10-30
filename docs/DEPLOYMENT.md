@@ -1709,6 +1709,37 @@ Database migrations run automatically via `prisma migrate deploy` on every start
 
 > **Back up before you upgrade.** See [Database Backups](#database-backups): one command, `./backend/scripts/backup.sh`, and back up `backend/uploads/` alongside it.
 
+### PostgreSQL Major-Version Upgrades
+
+CozyVTT stores its database cluster on the `postgres_data` volume at `/var/lib/postgresql/18/docker`. When upgrading across major versions of PostgreSQL (for example, from PostgreSQL 18 to 19), PostgreSQL requires a cluster migration before the new engine can start. Starting a newer engine directly against an unmigrated data directory will fail or initialize an empty cluster.
+
+The repository provides `./backend/scripts/upgrade-postgres.sh` to guide and verify major-version upgrades.
+
+1. **Inspect current cluster layout and detect version compatibility:**
+
+   ```bash
+   ./backend/scripts/upgrade-postgres.sh detect
+   ./backend/scripts/upgrade-postgres.sh check
+   ```
+
+2. **Rehearse the upgrade from an Instance backup (`rehearse-backup`):**
+
+   Before making changes, generate an Instance backup from the Admin Dashboard or command line, then test the archive:
+
+   ```bash
+   BACKUP_ARCHIVE=/path/to/backup.zip ./backend/scripts/upgrade-postgres.sh rehearse-backup
+   ```
+
+3. **Run pg_upgrade:**
+
+   Stop the application and run `pg_upgrade` using the helper in dry-run or execution mode:
+
+   ```bash
+   ./backend/scripts/upgrade-postgres.sh pg-upgrade
+   ```
+
+   This verifies source cluster `/var/lib/postgresql/18/docker` and target layout compatibility before applying migrations.
+
 ### One-off data migration (only if upgrading from before 1.3.0)
 
 **None of 1.4.0, 1.5.0, 1.5.1, 1.5.2 and 1.5.3 needs a manual step here**: their database migrations run automatically, and 1.5.1 and 1.5.2 have none. Only one of them changes existing data: 1.5.3 clears the author of any custom creature whose account had already been deleted, and keeps the creature. (1.5.0 has four things to know after the upgrade, all in the changelog's upgrade note: backups now live in `backend/backups/`, MFA backup codes must be regenerated, a production instance refuses to start while `DATABASE_PASSWORD` is still the placeholder, and an install without Docker needs the database role to own the database before a backup can be restored.) This section applies only if you have characters created on a version **before 1.3.0** and never ran it.
