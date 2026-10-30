@@ -37,6 +37,8 @@ import { generateThumbnail } from '../utils/thumbnails';
 import logger from '../utils/logger';
 import { errorCode } from '../utils/errors';
 import { readEnumQuery } from '../utils/queryEnum';
+import { readScalarQuery } from '../utils/queryParams';
+import { escapeLikePattern } from '../utils/likePattern';
 import { parseByteRange } from '../utils/byteRange';
 import { AssetType as AssetTypes, AssetScope as AssetScopes } from '@prisma/client';
 import {
@@ -178,10 +180,38 @@ function handleAssetCaching(
 router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const userId = req.session.userId!;
-    // TODO(#154): a parameter sent twice (`?search=a&search=b`) arrives as an
-    // array, and the casts below hand it to Prisma, which throws, so the list
-    // answers 500. Refuse a repeated parameter with 400, as invitable-users does.
-    const { campaignId, page, limit, search, uploadedBy, usable } = req.query;
+
+    const searchParam = readScalarQuery(req.query.search, 'search');
+    if (!searchParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: searchParam.message });
+    }
+    const campaignIdParam = readScalarQuery(req.query.campaignId, 'campaignId');
+    if (!campaignIdParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: campaignIdParam.message });
+    }
+    const uploadedByParam = readScalarQuery(req.query.uploadedBy, 'uploadedBy');
+    if (!uploadedByParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: uploadedByParam.message });
+    }
+    const usableParam = readScalarQuery(req.query.usable, 'usable');
+    if (!usableParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: usableParam.message });
+    }
+    const pageParam = readScalarQuery(req.query.page, 'page');
+    if (!pageParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: pageParam.message });
+    }
+    const limitParam = readScalarQuery(req.query.limit, 'limit');
+    if (!limitParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: limitParam.message });
+    }
+
+    const search = searchParam.value;
+    const campaignId = campaignIdParam.value;
+    const uploadedBy = uploadedByParam.value;
+    const usable = usableParam.value;
+    const page = pageParam.value;
+    const limit = limitParam.value;
 
     const typeFilter = readEnumQuery(req.query.type, 'type', Object.values(AssetTypes));
     if (!typeFilter.ok) {
@@ -195,8 +225,8 @@ router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) 
     const scope = scopeFilter.value;
 
     // Pagination parameters, clamped to page 1 or later and 1 to 100 per page
-    const pageNum = Math.max(1, parseInt(page as string) || 1);
-    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string) || 50));
+    const pageNum = Math.max(1, parseInt(page || '1', 10) || 1);
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit || '50', 10) || 50));
     const skip = (pageNum - 1) * limitNum;
 
     // Build filter conditions
@@ -219,8 +249,7 @@ router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) 
 
     // Name search
     if (search) {
-      // TODO(#154): `search` reaches PostgreSQL as an unescaped LIKE pattern, so a % or _ in it matches any text; pass it through escapeLikePattern (utils/likePattern) so it matches only itself.
-      where.name = { contains: search as string, mode: 'insensitive' };
+      where.name = { contains: escapeLikePattern(search), mode: 'insensitive' };
     }
 
     // Campaign filter
@@ -229,7 +258,7 @@ router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) 
     // Admin-only: filter by uploader. `none` lists the assets whose uploader's
     // account was deleted, which with no campaign are readable by admins alone.
     if (uploadedBy && isAdmin) {
-      where.uploadedById = uploadedBy === 'none' ? null : (uploadedBy as string);
+      where.uploadedById = uploadedBy === 'none' ? null : uploadedBy;
     }
 
     if (campaignId) {
@@ -239,7 +268,7 @@ router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) 
           where: {
             userId_campaignId: {
               userId,
-              campaignId: campaignId as string,
+              campaignId,
             },
           },
         });
@@ -252,9 +281,9 @@ router.get('/', authenticated, async (req: AuthenticatedRequest, res: Response) 
         }
       }
 
-      where.campaignId = campaignId as string;
+      where.campaignId = campaignId;
       if (!isAdmin) {
-        const hidden = await spiritLayerAssetIdsHiddenFrom(userId, [campaignId as string]);
+        const hidden = await spiritLayerAssetIdsHiddenFrom(userId, [campaignId]);
         if (hidden.length > 0) where.id = { notIn: hidden };
       }
     } else if (!isAdmin || usable === 'true') {
