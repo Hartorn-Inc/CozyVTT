@@ -265,7 +265,7 @@ function SaveBar({
 }) {
   return (
     <div className="flex items-center gap-3 pt-4 border-t border-moss-green/10 mt-4">
-      {error && <p className="text-xs text-danger-ink flex-1">{error}</p>}
+      {error && <p role="alert" className="text-xs text-danger-ink flex-1">{error}</p>}
       {success && (
         <p className="text-xs text-brand-ink flex items-center gap-1 flex-1">
           <CheckCircle className="w-3.5 h-3.5" /> {success}
@@ -375,14 +375,8 @@ export default function ProfilePage() {
 
   const saveProfile = async () => {
     const trimmedName = displayName.trim();
-    // TODO(#157): the server accepts names of 1 to 50 characters
-    // (displayNameSchema), and Invite Player finds one-letter names; use its limits.
-    if (trimmedName.length < 2) {
-      setProfileError('Display name must be at least 2 characters');
-      return;
-    }
-    if (trimmedName.length > 50) {
-      setProfileError('Display name must be 50 characters or less');
+    if (trimmedName.length < 1 || trimmedName.length > 50) {
+      setProfileError('Display name must be between 1 and 50 characters');
       return;
     }
     if (bio.length > 500) {
@@ -738,15 +732,17 @@ export default function ProfilePage() {
             <div className="flex-1 space-y-4">
               {/* Display name */}
               <div>
-                <label className="block text-xs font-medium text-stone-gray mb-1">Display Name</label>
+                <label htmlFor="profile-display-name" className="block text-xs font-medium text-stone-gray mb-1">Display Name</label>
                 {editingProfile ? (
                   <>
                     <input
+                      id="profile-display-name"
                       type="text"
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       maxLength={50}
                       className="input-cozy w-full"
+                      aria-label="Display Name"
                       autoFocus
                     />
                     <p className="text-xs text-warm-gray/70 mt-0.5 text-right">{displayName.length}/50</p>

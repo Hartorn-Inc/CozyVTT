@@ -113,12 +113,9 @@ export default function SetupWizardPage() {
     }
 
     // Display name
-    if (!adminData.displayName) {
-      errors.displayName = 'Display name is required';
-    } else if (adminData.displayName.length < 2) {
-      // TODO(#157): the server accepts names of 1 to 50 characters
-      // (displayNameSchema), and Invite Player finds one-letter names; use its limits.
-      errors.displayName = 'Display name must be at least 2 characters';
+    const trimmedDisplayName = adminData.displayName.trim();
+    if (trimmedDisplayName.length < 1 || trimmedDisplayName.length > 50) {
+      errors.displayName = 'Display name must be between 1 and 50 characters';
     }
 
     // Email
@@ -208,7 +205,7 @@ export default function SetupWizardPage() {
         setupToken: setupToken.trim(),
         email: adminData.email,
         password: adminData.password,
-        displayName: adminData.displayName,
+        displayName: adminData.displayName.trim(),
         instanceName: systemConfig.instanceName,
         allowRegistration: systemConfig.enableRegistration,
       });
@@ -525,9 +522,11 @@ function Step2AdminAccount({ data, setData, setupToken, setSetupToken, fieldErro
             }`}
             placeholder="Your name"
             maxLength={50}
+            aria-invalid={!!fieldErrors.displayName}
+            aria-describedby={fieldErrors.displayName ? 'displayName-error' : undefined}
           />
           {fieldErrors.displayName && (
-            <p className="mt-1 text-xs text-spirit-red">{fieldErrors.displayName}</p>
+            <p id="displayName-error" role="alert" className="mt-1 text-xs text-spirit-red">{fieldErrors.displayName}</p>
           )}
         </div>
 
