@@ -57,14 +57,9 @@ export default function RegisterPage() {
     } = {};
 
     // Validate display name
-    if (!displayName) {
-      errors.displayName = 'Display name is required';
-    } else if (displayName.length < 2) {
-      // TODO(#157): the server accepts names of 1 to 50 characters
-      // (displayNameSchema), and Invite Player finds one-letter names; use its limits.
-      errors.displayName = 'Display name must be at least 2 characters';
-    } else if (displayName.length > 50) {
-      errors.displayName = 'Display name must be less than 50 characters';
+    const trimmedDisplayName = displayName.trim();
+    if (trimmedDisplayName.length < 1 || trimmedDisplayName.length > 50) {
+      errors.displayName = 'Display name must be between 1 and 50 characters';
     }
 
     // Validate email
@@ -108,7 +103,7 @@ export default function RegisterPage() {
 
     try {
       setLoading(true);
-      const result = await register(email, password, displayName);
+      const result = await register(email, password, displayName.trim());
 
       if (result.pendingApproval) {
         // Account submitted — waiting for admin approval
