@@ -174,7 +174,7 @@ export function rollDice(
         val = leftEval.value * rightEval.value;
       } else if (node.op === '/') {
         if (rightEval.value === 0) {
-          throw new DiceParserError('Division by zero');
+          throw new DiceParserError('Division by zero or invalid arithmetic');
         }
         val = leftEval.value / rightEval.value;
       } else {
@@ -182,7 +182,7 @@ export function rollDice(
       }
 
       if (!Number.isFinite(val)) {
-        throw new DiceParserError('Failed to evaluate expression');
+        throw new DiceParserError('Division by zero or invalid arithmetic');
       }
 
       return {
@@ -198,7 +198,14 @@ export function rollDice(
   try {
     const evaluated = evaluateNode(ast.root);
 
+    if (!Number.isFinite(evaluated.value)) {
+      throw new DiceParserError('Division by zero or invalid arithmetic');
+    }
+
     let total = Math.floor(evaluated.value);
+    if (!Number.isFinite(total)) {
+      throw new DiceParserError('Division by zero or invalid arithmetic');
+    }
     if (total === 0) {
       total = 0;
     }
@@ -284,13 +291,13 @@ export function evaluateArithmetic(tokens: string[]): number {
         left = left * right;
       } else {
         if (right === 0) {
-          throw new DiceParserError('Division by zero');
+          throw new DiceParserError('Division by zero or invalid arithmetic');
         }
         left = left / right;
       }
 
       if (!Number.isFinite(left)) {
-        throw new DiceParserError('Failed to evaluate expression');
+        throw new DiceParserError('Division by zero or invalid arithmetic');
       }
     }
 
@@ -643,12 +650,12 @@ export function parseDiceAST(expression: string): DiceAST {
 
       if (node.op === '/') {
         if (rightVal === 0) {
-          throw new DiceParserError('Division by zero');
+          throw new DiceParserError('Division by zero or invalid arithmetic');
         }
         if (leftVal !== null && rightVal !== null) {
           const res = leftVal / rightVal;
           if (!Number.isFinite(res)) {
-            throw new DiceParserError('Failed to evaluate expression');
+            throw new DiceParserError('Division by zero or invalid arithmetic');
           }
           return res;
         }

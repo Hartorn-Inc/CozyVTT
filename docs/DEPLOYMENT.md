@@ -1735,6 +1735,32 @@ What to expect:
 Details in
 [backend/DATABASE_MIGRATIONS.md](../backend/DATABASE_MIGRATIONS.md).
 
+### PostgreSQL Major-Version Upgrades
+
+CozyVTT runs PostgreSQL 18 with its database cluster at `/var/lib/postgresql/18/docker`. When a future release upgrades the PostgreSQL major version, existing data volumes cannot be booted directly by the newer PostgreSQL engine without migrating the cluster layout.
+
+Use the included upgrade utility `./backend/scripts/upgrade-postgres.sh` to detect clusters, rehearse backup restorations, and perform `pg_upgrade`.
+
+1. **Inspect existing cluster layout:**
+
+   ```bash
+   ./backend/scripts/upgrade-postgres.sh detect
+   ```
+
+2. **Rehearse upgrade via instance backup (`rehearse-backup`):**
+
+   ```bash
+   BACKUP_ARCHIVE=/path/to/backup.zip ./backend/scripts/upgrade-postgres.sh rehearse-backup
+   ```
+
+3. **Perform fast in-place cluster upgrade:**
+
+   Stop the stack, then execute the `pg_upgrade` mode to verify source and target directories before running the upgrade container:
+
+   ```bash
+   ./backend/scripts/upgrade-postgres.sh pg-upgrade
+   ```
+
 ### Without Docker
 
 Coming from 1.5.1 or earlier, install Node.js 26 first, as in [Install Node.js 26](#1-install-nodejs-26): CozyVTT is built and tested on Node.js 26 only. Check that `node --version` prints a version starting `v26`, then update:
