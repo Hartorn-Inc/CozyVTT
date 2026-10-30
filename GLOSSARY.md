@@ -200,6 +200,10 @@ _Avoid_: Flat bonus, bonus (unqualified), stat offset
 The internal, zero-dependency calculation engine embedded in CozyVTT that computes basic arithmetic operations (`+`, `-`, `*`, `/`), unary signs, and operator precedence for dice totals without external math packages.
 _Avoid_: Math engine, mathjs evaluator
 
+**Token controller**:
+The member explicitly assigned control of a token, giving them permission to move and interact with it on the map canvas.
+_Avoid_: Token owner, player (for the controller assignment)
+
 ## Contribution
 
 **EPURE orchestration**:
