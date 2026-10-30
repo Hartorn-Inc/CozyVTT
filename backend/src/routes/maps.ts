@@ -1232,8 +1232,6 @@ router.put('/:id/set-current', campaignDM, async (req: AuthenticatedRequest, res
 // TOKEN MANIPULATION ENDPOINTS
 // ============================================
 
-// TODO(#153): broadcast live WebSocket map changes for token create, update, and delete REST routes
-
 /**
  * POST /api/campaigns/:campaignId/maps/:id/tokens
  * Add a new token to the map
@@ -1436,6 +1434,7 @@ router.post('/:id/tokens', campaignDM, async (req: AuthenticatedRequest, res: Re
     // them to the spirit plane, which changes what they are sent of the
     // order. Skipped while nothing is in it.
     await resendInitiative(campaignId);
+    await resendIfCurrent(campaignId, updatedMap);
 
     return res.status(201).json({
       message: 'Token added successfully',
@@ -1705,6 +1704,7 @@ router.put('/:id/tokens/:tokenId', campaignMember, async (req: AuthenticatedRequ
     } else {
       await resendInitiativeFor(campaignId, tokenId);
     }
+    await resendIfCurrent(campaignId, updatedMap);
 
     // Answered as the map fetch answers, never with the stored row: that row
     // carries every token, hidden ones included, with notes, stat blocks and
@@ -1867,9 +1867,9 @@ router.delete('/:id/tokens/:tokenId', campaignDM, async (req: AuthenticatedReque
 
     // Removed from the list as it is under the map's lock; several deletes
     // at once used to leave only whichever wrote last.
-    await withMapsLocked([mapId], async (tx) => {
+    const updatedMap = await withMapsLocked([mapId], async (tx) => {
       const fresh = await tx.map.findUniqueOrThrow({ where: { id: mapId }, select: { tokens: true } });
-      await tx.map.update({ where: { id: mapId }, data: { tokens: toJson(readTokens(fresh.tokens).filter((t) => t.id !== tokenId)) } });
+      return await tx.map.update({ where: { id: mapId }, data: { tokens: toJson(readTokens(fresh.tokens).filter((t) => t.id !== tokenId)) } });
     });
 
     // The entry goes with the token, and the order is sent again without it.
@@ -1880,6 +1880,7 @@ router.delete('/:id/tokens/:tokenId', campaignDM, async (req: AuthenticatedReque
     } else {
       await resendInitiative(campaignId);
     }
+    await resendIfCurrent(campaignId, updatedMap);
 
     return res.status(200).json({
       message: 'Token removed successfully',
