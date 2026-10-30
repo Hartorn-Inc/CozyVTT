@@ -549,8 +549,10 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     const wisdomMod = formData.attributes.wisdom?.modifier || 0;
     const profBonus = calculateProficiencyBonus(formData.level, formData.perception!.proficiencyRank || 'untrained');
     const itemBonus = formData.perception.itemBonus || 0;
-    setFormData((prev) => ({ ...prev, perception: { ...prev.perception, bonus: wisdomMod + profBonus + itemBonus } as PF2ePerception }));
-  }, [formData.level, formData.attributes?.wisdom?.modifier, formData.perception?.proficiencyRank, formData.perception?.itemBonus]);
+    const newBonus = wisdomMod + profBonus + itemBonus;
+    if (formData.perception.bonus === newBonus) return;
+    setFormData((prev) => ({ ...prev, perception: { ...prev.perception, bonus: newBonus } as PF2ePerception }));
+  }, [formData.level, formData.attributes?.wisdom?.modifier, formData.perception?.proficiencyRank, formData.perception?.itemBonus, formData.perception?.bonus]);
 
   // Auto-calculate skills
   useEffect(() => {
@@ -669,8 +671,9 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     // character's AC — which is how the built-in Fighter came to show 18 where
     // its own stored components give 17.
     const total = pf2eArmorClass(formData);
+    if (formData.armorClass.total === total) return;
     setFormData((prev) => ({ ...prev, armorClass: { ...prev.armorClass, total } as PF2eArmorClass }));
-  }, [formData.level, formData.attributes?.dexterity?.modifier, formData.armorClass?.proficiencyRank, formData.armorClass?.itemBonus, formData.armorClass?.capDex]);
+  }, [formData.level, formData.attributes?.dexterity?.modifier, formData.armorClass?.proficiencyRank, formData.armorClass?.itemBonus, formData.armorClass?.capDex, formData.armorClass?.total]);
 
   /**
    * Auto-calculate the initiative bonus.
@@ -724,8 +727,11 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     if (!formData.inventory) return;
     const currentBulk = calculateTotalBulk(formData.inventory);
     const strMod = formData.attributes?.strength?.modifier || 0;
-    setFormData((prev) => ({ ...prev, bulk: { current: currentBulk, encumbered: 5 + strMod, maximum: 10 + strMod } }));
-  }, [formData.inventory, formData.attributes?.strength?.modifier]);
+    const encumbered = 5 + strMod;
+    const maximum = 10 + strMod;
+    if (formData.bulk?.current === currentBulk && formData.bulk?.encumbered === encumbered && formData.bulk?.maximum === maximum) return;
+    setFormData((prev) => ({ ...prev, bulk: { current: currentBulk, encumbered, maximum } }));
+  }, [formData.inventory, formData.attributes?.strength?.modifier, formData.bulk?.current, formData.bulk?.encumbered, formData.bulk?.maximum]);
 
   // Auto-calculate maximum HP
   useEffect(() => {
@@ -734,8 +740,9 @@ export const Pathfinder2eCharacterEditor: React.FC<Pathfinder2eCharacterEditorPr
     const classHpPerLevel = formData.hp.classHpPerLevel || 6;
     const conMod = formData.attributes?.constitution?.modifier || 0;
     const maximum = ancestryHp + (classHpPerLevel * formData.level) + (conMod * formData.level);
+    if (formData.hp.maximum === maximum) return;
     setFormData((prev) => ({ ...prev, hp: { ...prev.hp, maximum } as PF2eHitPoints }));
-  }, [formData.level, formData.hp?.ancestryHp, formData.hp?.classHpPerLevel, formData.attributes?.constitution?.modifier]);
+  }, [formData.level, formData.hp?.ancestryHp, formData.hp?.classHpPerLevel, formData.attributes?.constitution?.modifier, formData.hp?.maximum]);
 
   // Auto-calculate spellcasting
   useEffect(() => {
