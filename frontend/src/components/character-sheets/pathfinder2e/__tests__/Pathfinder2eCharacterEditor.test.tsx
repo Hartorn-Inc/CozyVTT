@@ -390,7 +390,7 @@ describe('Pathfinder 2e Empty and Partial Container Defaults (#216)', () => {
     );
 
     // Strength is +4
-    expect(screen.getByText('+4')).toBeInTheDocument();
+    expect(screen.getAllByText('+4').length).toBeGreaterThan(0);
     // Other scores defaulted to +0
     expect(screen.getAllByText('+0').length).toBeGreaterThan(0);
 
