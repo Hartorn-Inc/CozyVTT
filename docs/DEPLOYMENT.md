@@ -21,7 +21,8 @@ This guide covers deploying CozyVTT to a **production server** using Docker Comp
 11. [Monitoring and Logs](#monitoring-and-logs)
 12. [Troubleshooting](#troubleshooting)
 13. [Updating CozyVTT](#updating-cozyvtt)
-14. [Hardening Checklist](#hardening-checklist)
+14. [PostgreSQL Major-Version Upgrades](#postgresql-major-version-upgrades)
+15. [Hardening Checklist](#hardening-checklist)
 15. [Cloudflare Tunnel (Recommended for Public Instances)](#cloudflare-tunnel-recommended-for-public-instances)
 16. [The API Documentation](#the-api-documentation)
 
@@ -1777,6 +1778,52 @@ Coming from 1.4.0 or earlier, also make the database role the owner of the datab
 sudo -u postgres psql -c "ALTER DATABASE cozyvtt OWNER TO cozyvtt;"
 sudo -u postgres psql -d cozyvtt -c "ALTER SCHEMA public OWNER TO cozyvtt;"
 ```
+
+---
+
+## PostgreSQL Major-Version Upgrades
+
+CozyVTT uses PostgreSQL 18 with its cluster stored at `/var/lib/postgresql/18/docker` on the `postgres_data` volume. Major PostgreSQL upgrades (e.g., migrating to PostgreSQL 19) require deliberate migration steps because PostgreSQL cluster directory formats are not directly backward- or forward-compatible across major versions.
+
+The repository provides the `backend/scripts/upgrade-postgres.sh` helper script to verify compatibility, detect existing layouts, rehearse backups, and guide upgrades.
+
+### Detection and Compatibility Checks
+
+Inspect the existing volume layout before upgrading the image tag:
+
+```bash
+./backend/scripts/upgrade-postgres.sh detect
+TARGET_PG_VERSION=19 ./backend/scripts/upgrade-postgres.sh check
+```
+
+If an existing cluster at `/var/lib/postgresql/18/docker` is detected, starting a PostgreSQL 19 container directly against the volume without migration will halt with code 2 to prevent data corruption.
+
+### Upgrade Path 1: Instance Backup Rehearsal (Recommended)
+
+The safest and verified migration path creates an Instance backup, rehearses its restore in an isolated target cluster, and loads it into the new major version:
+
+1. Generate an Instance backup from **Admin Dashboard → Backups → Create Backup** (or via `./backend/scripts/backup.sh`).
+2. Rehearse the backup format and preflight checks using `rehearse-backup`:
+
+   ```bash
+   BACKUP_ARCHIVE=backend/backups/backup-2026-01-01T03-00-00.zip TARGET_PG_VERSION=19 \
+     ./backend/scripts/upgrade-postgres.sh rehearse-backup
+   ```
+
+3. After successful rehearsal, spin down the stack, switch `docker-compose.yml` to the target database image version, start with a fresh volume, and restore the backup.
+
+### Upgrade Path 2: In-Place pg_upgrade
+
+For large datasets where dump/restore downtime is prohibitive, PostgreSQL's `pg_upgrade` utility can migrate data directories directly:
+
+```bash
+TARGET_PG_VERSION=19 ./backend/scripts/upgrade-postgres.sh pg-upgrade
+```
+
+1. Stop the database container.
+2. Ensure both the source cluster (`/var/lib/postgresql/18/docker`) and the target cluster directory (`/var/lib/postgresql/19/docker`) reside on the same volume.
+3. Execute `pg_upgrade` using a migration container with `--link` for fast in-place hard-linking.
+4. Re-run `./backend/scripts/upgrade-postgres.sh check` to confirm target cluster compatibility.
 
 ---
 
