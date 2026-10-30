@@ -407,4 +407,109 @@ describe('Creature template routes', () => {
       expect((await playerAgent.post(`/api/campaigns/${campaignId}/creatures/${id}/favorite`)).status).toBe(403);
     });
   });
+
+  describe('GET / — query params validation and LIKE pattern escaping', () => {
+    let wildCreatureId: string;
+    let standardCreatureId: string;
+    let underscoreCreatureId: string;
+    let hyphenCreatureId: string;
+
+    beforeAll(async () => {
+      const wild = await prisma.creatureTemplate.create({
+        data: {
+          name: 'Special 100% Dragon',
+          source: 'custom',
+          statBlock: commonerStatBlock,
+          campaignId,
+        },
+      });
+      const standard = await prisma.creatureTemplate.create({
+        data: {
+          name: 'Special 1000 Dragon',
+          source: 'custom',
+          statBlock: commonerStatBlock,
+          campaignId,
+        },
+      });
+      const underscore = await prisma.creatureTemplate.create({
+        data: {
+          name: 'Beast_Alpha_One',
+          source: 'custom',
+          statBlock: commonerStatBlock,
+          campaignId,
+        },
+      });
+      const hyphen = await prisma.creatureTemplate.create({
+        data: {
+          name: 'Beast-Alpha-One',
+          source: 'custom',
+          statBlock: commonerStatBlock,
+          campaignId,
+        },
+      });
+      wildCreatureId = wild.id;
+      standardCreatureId = standard.id;
+      underscoreCreatureId = underscore.id;
+      hyphenCreatureId = hyphen.id;
+    });
+
+    afterAll(async () => {
+      await prisma.creatureTemplate.deleteMany({
+        where: { id: { in: [wildCreatureId, standardCreatureId, underscoreCreatureId, hyphenCreatureId] } },
+      });
+    });
+
+    it('rejects repeated query parameters with 400', async () => {
+      const resSearch = await dmAgent.get(`/api/campaigns/${campaignId}/creatures?search=a&search=b`);
+      expect(resSearch.status).toBe(400);
+      expect(resSearch.body).toEqual({
+        error: 'Validation Error',
+        message: 'Parameter "search" cannot be specified multiple times.',
+      });
+
+      const resSource = await dmAgent.get(`/api/campaigns/${campaignId}/creatures?source=custom&source=srd`);
+      expect(resSource.status).toBe(400);
+      expect(resSource.body).toEqual({
+        error: 'Validation Error',
+        message: 'Parameter "source" cannot be specified multiple times.',
+      });
+
+      const resCr = await dmAgent.get(`/api/campaigns/${campaignId}/creatures?cr=1&cr=2`);
+      expect(resCr.status).toBe(400);
+      expect(resCr.body).toEqual({
+        error: 'Validation Error',
+        message: 'Parameter "cr" cannot be specified multiple times.',
+      });
+
+      const resLimit = await dmAgent.get(`/api/campaigns/${campaignId}/creatures?limit=10&limit=20`);
+      expect(resLimit.status).toBe(400);
+      expect(resLimit.body).toEqual({
+        error: 'Validation Error',
+        message: 'Parameter "limit" cannot be specified multiple times.',
+      });
+
+      const resOffset = await dmAgent.get(`/api/campaigns/${campaignId}/creatures?offset=0&offset=5`);
+      expect(resOffset.status).toBe(400);
+      expect(resOffset.body).toEqual({
+        error: 'Validation Error',
+        message: 'Parameter "offset" cannot be specified multiple times.',
+      });
+    });
+
+    it('escapes % wildcard in search parameter', async () => {
+      const res = await dmAgent.get(`/api/campaigns/${campaignId}/creatures?search=Special 100%`);
+      expect(res.status).toBe(200);
+      const names = res.body.creatures.map((c: { name: string }) => c.name);
+      expect(names).toContain('Special 100% Dragon');
+      expect(names).not.toContain('Special 1000 Dragon');
+    });
+
+    it('escapes _ wildcard in search parameter', async () => {
+      const res = await dmAgent.get(`/api/campaigns/${campaignId}/creatures?search=Beast_Alpha_`);
+      expect(res.status).toBe(200);
+      const names = res.body.creatures.map((c: { name: string }) => c.name);
+      expect(names).toContain('Beast_Alpha_One');
+      expect(names).not.toContain('Beast-Alpha-One');
+    });
+  });
 });

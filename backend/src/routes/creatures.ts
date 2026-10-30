@@ -17,6 +17,8 @@ import { canReferenceAsset } from '../services/permissions';
 import { CreateCreatureSchema, UpdateCreatureSchema } from '../validators/creatures';
 import { toJson } from '../utils/prisma-json';
 import { readEnumQuery } from '../utils/queryEnum';
+import { readScalarQuery } from '../utils/queryParams';
+import { escapeLikePattern } from '../utils/likePattern';
 import { GameSystem } from '../game-systems';
 import logger from '../utils/logger';
 
@@ -114,18 +116,41 @@ router.post('/seed', requireAuth, adminToSeed, async (_req: AuthenticatedRequest
 router.get('/', campaignDM, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { campaignId } = req.params;
-    // TODO(#154): a `search`, `source` or `cr` sent twice arrives as an array,
-    // which the casts below hand to Prisma, so the list answers 500. Refuse a
-    // repeated parameter with 400, as invitable-users does.
-    const { search, source, cr, limit = '50', offset = '0' } = req.query;
+    const searchParam = readScalarQuery(req.query.search, 'search');
+    if (!searchParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: searchParam.message });
+    }
+    const sourceParam = readScalarQuery(req.query.source, 'source');
+    if (!sourceParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: sourceParam.message });
+    }
+    const crParam = readScalarQuery(req.query.cr, 'cr');
+    if (!crParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: crParam.message });
+    }
+    const limitParam = readScalarQuery(req.query.limit, 'limit');
+    if (!limitParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: limitParam.message });
+    }
+    const offsetParam = readScalarQuery(req.query.offset, 'offset');
+    if (!offsetParam.ok) {
+      return res.status(400).json({ error: 'Validation Error', message: offsetParam.message });
+    }
+
+    const search = searchParam.value;
+    const source = sourceParam.value;
+    const cr = crParam.value;
+    const limit = limitParam.value || '50';
+    const offset = offsetParam.value || '0';
+
     const system = readEnumQuery(req.query.gameSystem, 'gameSystem', Object.values(GameSystem));
     if (!system.ok) {
       return res.status(400).json({ error: 'Validation Error', message: system.message });
     }
     const gameSystem = system.value;
 
-    const take = Math.min(100, Math.max(1, parseInt(limit as string, 10) || 50));
-    const skip = Math.max(0, parseInt(offset as string, 10) || 0);
+    const take = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+    const skip = Math.max(0, parseInt(offset, 10) || 0);
 
     // Two independent scopes, so they are ANDed rather than sharing one OR:
     //  - visibility: global creatures (campaignId null) plus this campaign's own
@@ -144,14 +169,13 @@ router.get('/', campaignDM, async (req: AuthenticatedRequest, res: Response) => 
     const where: Prisma.CreatureTemplateWhereInput = { AND: scopes };
 
     if (search) {
-      // TODO(#154): `search` reaches PostgreSQL as an unescaped LIKE pattern, so a % or _ in it matches any text; pass it through escapeLikePattern (utils/likePattern) so it matches only itself.
-      where.name = { contains: search as string, mode: 'insensitive' };
+      where.name = { contains: escapeLikePattern(search), mode: 'insensitive' };
     }
     if (source) {
-      where.source = source as string;
+      where.source = source;
     }
     if (cr) {
-      where.challengeRating = cr as string;
+      where.challengeRating = cr;
     }
 
     const [templates, total] = await Promise.all([
