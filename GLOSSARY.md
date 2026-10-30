@@ -200,6 +200,18 @@ _Avoid_: Flat bonus, bonus (unqualified), stat offset
 The internal, zero-dependency calculation engine embedded in CozyVTT that computes basic arithmetic operations (`+`, `-`, `*`, `/`), unary signs, and operator precedence for dice totals without external math packages.
 _Avoid_: Math engine, mathjs evaluator
 
+**Door sight authorization**:
+The server-side check ensuring that a player cannot interact with a door unless at least one adjacent side of the door's midpoint is revealed (outside manual fog) and visible (within dynamic lighting if enabled).
+_Avoid_: Door permission, door check
+
+**Door hit radius**:
+The distance threshold in world coordinates used to detect a click or hover on a door segment midpoint.
+_Avoid_: Door click box, door tolerance
+
+**Player-view preview**:
+The DM canvas mode (`dmPreviewPlayerView`) that renders the map as seen by a specific player or token, hiding hidden tokens and DM-only controls.
+_Avoid_: DM preview, player view mode
+
 ## Contribution
 
 **EPURE orchestration**:
