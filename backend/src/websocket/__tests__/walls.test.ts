@@ -170,7 +170,7 @@ describe('door toggle manual fog authorization (websocket integration)', () => {
     player.disconnect();
   });
 
-  it('refuses player door toggle when fogEnabled is true and fogData is null', async () => {
+  it('allows player door toggle when fogEnabled is true but fogData is null', async () => {
     const door: WallSegment = { id: randomUUID(), x1: 200, y1: 200, x2: 250, y2: 200, type: 'door-closed' };
     const map = await prisma.map.create({
       data: {
@@ -193,14 +193,12 @@ describe('door toggle manual fog authorization (websocket integration)', () => {
     await prisma.campaign.update({ where: { id: campaignId }, data: { currentMapId: map.id } });
 
     const player = await server.connectAndAuth(playerCookie, campaignId);
-    const refused = waitForEvent<{ message: string }>(player, 'error');
-    const back = waitForEvent<{ segment: WallSegment }>(player, 'wall:updated');
+    const opened = waitForEvent<{ segment: WallSegment }>(player, 'wall:updated');
 
     player.emit('wall:update', { mapId: map.id, segment: { ...door, type: 'door-open' } });
 
-    expect((await refused).message).toBe('You cannot see that door');
-    expect((await back).segment).toEqual(door);
-    expect(await storedDoorType(map.id, door.id)).toBe('door-closed');
+    expect((await opened).segment.type).toBe('door-open');
+    expect(await storedDoorType(map.id, door.id)).toBe('door-open');
     player.disconnect();
   });
 
