@@ -1,4 +1,11 @@
 import request from 'supertest';
+
+// The session routes tell the table over the socket; there is none here.
+jest.mock('../../websocket/utils', () => ({
+  ...jest.requireActual('../../websocket/utils'),
+  broadcastToCampaign: jest.fn(),
+}));
+
 import { createTestApp } from '../../__tests__/helpers/test-app';
 import {
   prisma,

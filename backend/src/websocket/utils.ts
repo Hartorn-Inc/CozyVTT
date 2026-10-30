@@ -39,8 +39,12 @@ export function getSocketInstance(): Server {
  * @param data - Event data
  */
 export function broadcastToCampaign(campaignId: string, event: string, data: unknown): void {
-  const io = getSocketInstance();
-  io.to(campaignId).emit(event, data);
+  try {
+    const io = getSocketInstance();
+    io.to(campaignId).emit(event, data);
+  } catch (error) {
+    logger.warn(`${event} not broadcast; the change stands`, { err: error, campaignId });
+  }
 }
 
 /**
@@ -84,8 +88,12 @@ export async function emitCharacterUpdated<C extends { gameSystem: GameSystem | 
  * @param data - Event data
  */
 export function broadcastToUser(userId: string, event: string, data: unknown): void {
-  const io = getSocketInstance();
-  io.to(userId).emit(event, data);
+  try {
+    const io = getSocketInstance();
+    io.to(userId).emit(event, data);
+  } catch (error) {
+    logger.warn(`${event} not broadcast; the change stands`, { err: error, userId });
+  }
 }
 
 /** A socket as a room fan-out sees it, with the fields authentication set. */
