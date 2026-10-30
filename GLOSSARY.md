@@ -249,3 +249,13 @@ _Avoid_: Mock file, fake buffer, test stub
 **Audio Fallback Sniffer**:
 The application-level frame sniffer invoked when the primary `file-type` detector returns undefined on raw, headerless audio streams (such as MPEG audio frames without ID3 tags).
 _Avoid_: Custom audio parser, fallback codec
+
+## Operations
+
+**Graceful shutdown**:
+The bounded, sequenced termination of backend and reverse-proxy processes that drains in-flight requests, flushes pending audit and operational logs, and cleanly disconnects persistent WebSocket connections before process exit without resource leaks or unhandled write exceptions.
+_Avoid_: Hard kill, container abort, unclean exit
+
+**Administrator audit log**:
+The persistent audit trail recording sensitive Administrator actions—including setup, configuration updates, and Instance backup restorations—with best-effort persistence and fallback logging even under database or migration error conditions.
+_Avoid_: Event log, action log (for this administrative record)
