@@ -1707,7 +1707,7 @@ docker compose logs backend | grep -i migrat
 
 Database migrations run automatically via `prisma migrate deploy` on every startup. Downtime is typically under 30 seconds while containers restart.
 
-> **Back up before you upgrade.** See [Database Backups](#database-backups): one command, `./backend/scripts/backup.sh`, and back up `backend/uploads/` alongside it.
+> **Back up before you upgrade.** See [Database Backups](#database-backups): one command, `./backend/scripts/backup.sh`, and back up `backend/uploads/` alongside it. For major PostgreSQL version upgrades, see [PostgreSQL Major-Version Upgrades](#postgresql-major-version-upgrades).
 
 ### One-off data migration (only if upgrading from before 1.3.0)
 
@@ -1734,6 +1734,66 @@ What to expect:
 
 Details in
 [backend/DATABASE_MIGRATIONS.md](../backend/DATABASE_MIGRATIONS.md).
+
+### PostgreSQL Major-Version Upgrades
+
+PostgreSQL major-version upgrades (for example from 18 to 19) require manual data migration. The Docker Compose stack mounts the `postgres_data` volume at `/var/lib/postgresql`. PostgreSQL 18 stores its cluster data under `/var/lib/postgresql/18/docker`. A newer PostgreSQL container cannot read an older cluster directly, and starting a new major version container against an existing volume initializes an empty cluster or fails to start.
+
+The repository includes the helper script `upgrade-postgres.sh` (`./backend/scripts/upgrade-postgres.sh`) to inspect data directories and guide migrations.
+
+#### 1. Detect existing cluster
+
+Run `upgrade-postgres.sh` from the repository root to detect the cluster:
+
+```bash
+sh ./backend/scripts/upgrade-postgres.sh detect
+```
+
+Verify compatibility with the target version:
+
+```bash
+TARGET_PG_VERSION=19 sh ./backend/scripts/upgrade-postgres.sh check
+```
+
+WHEN the check detects an existing cluster at `/var/lib/postgresql/18/docker`, THEN the script returns exit code 2 and requests migration before container startup.
+
+#### 2. Rehearse upgrade using instance backup
+
+Generate an Instance backup before any database upgrade. Verify the archive format and rehearsal steps with the `rehearse-backup` command:
+
+```bash
+BACKUP_ARCHIVE=./backups/backup-2026-01-01T03-00-00.zip sh ./backend/scripts/upgrade-postgres.sh rehearse-backup
+```
+
+Restore this backup archive into an isolated test container running the target PostgreSQL version before touching production data.
+
+#### 3. Perform in-place upgrade with pg_upgrade
+
+To migrate the existing volume in place:
+
+1. Stop the application containers:
+
+   ```bash
+   docker compose down
+   ```
+
+2. Inspect the migration plan:
+
+   ```bash
+   TARGET_PG_VERSION=19 sh ./backend/scripts/upgrade-postgres.sh pg-upgrade
+   ```
+
+   The script displays the source cluster (`/var/lib/postgresql/18/docker`) and target cluster (`/var/lib/postgresql/19/docker`).
+
+3. Execute `pg_upgrade` with the `--link` flag inside a migration container that mounts `postgres_data`.
+
+4. Update the database image tag in `docker-compose.yml` to the target version.
+
+5. Start the updated stack:
+
+   ```bash
+   docker compose up -d --build
+   ```
 
 ### Without Docker
 
