@@ -8,14 +8,14 @@ import { throttle } from '../../utils/throttle';
 import { AuthenticatedSocket } from '../auth';
 import { prisma } from '../../config/database';
 import { WallSegmentSchema, WallSegmentsArraySchema, DUPLICATE_WALL_ID_MESSAGE } from '../../validators/walls';
-import type { WallSegment } from '../../types/walls';
+import type { FogState, WallSegment } from '../../types/walls';
 import logger from '../../utils/logger';
 import { emitToMapReaders, emitToMapReadersAs } from '../utils';
 import {
   filterTokensByRole, getSpiritVisibility, playerSightOnLitMap, viewerIdFor, wallChangeReachesPlayers, wallChangeSentTo,
   wallListChangeReachesPlayers, wallSentTo, wallsReplacedSentTo, wallsSentTo, type PlayerSight,
 } from '../../utils/spirit-layer';
-import { mapEditLimiter, limiterKey, stateRequestAllowed, resendSightAfterChange } from '../shared';
+import { mapEditLimiter, limiterKey, stateRequestAllowed, resendSightAfterChange, loadFogState } from '../shared';
 import { toJson } from '../../utils/prisma-json';
 import { canReadMap, canToggleDoor } from '../../services/permissions';
 import { wallOutsideMap, WALL_OUTSIDE_MAP_MESSAGE } from '../../validators/maps';
@@ -25,6 +25,59 @@ import { applyWriteAuthzDrop, confirmWriteAuthorization } from '../writeAuthz';
 
 /** What a wall edit reads of the map to check it: whose it is, and its extent. */
 const EXTENT = { campaignId: true, width: true, height: true, gridSize: true } as const;
+
+/**
+ * Samples two points perpendicularly displaced by half a grid square from the door segment's midpoint.
+ */
+export function doorMidpointNormalSamples(
+  door: Pick<WallSegment, 'x1' | 'y1' | 'x2' | 'y2'>,
+  gridSize: number
+): [{ x: number; y: number }, { x: number; y: number }] {
+  const mx = (door.x1 + door.x2) / 2;
+  const my = (door.y1 + door.y2) / 2;
+  const dx = door.x2 - door.x1;
+  const dy = door.y2 - door.y1;
+  const len = Math.hypot(dx, dy);
+  const offset = gridSize / 2;
+  const nx = len === 0 ? 0 : -dy / len;
+  const ny = len === 0 ? 1 : dx / len;
+  return [
+    { x: mx + nx * offset, y: my + ny * offset },
+    { x: mx - nx * offset, y: my - ny * offset },
+  ];
+}
+
+/**
+ * Determines whether a given map-pixel coordinate falls inside a revealed or explored manual fog cell.
+ */
+export function isPointInRevealedOrExploredCell(
+  pt: { x: number; y: number },
+  fog: FogState,
+  exploredFog?: FogState | null
+): boolean {
+  const col = Math.floor(pt.x / fog.cellPx);
+  const row = Math.floor(pt.y / fog.cellPx);
+  if (col < 0 || col >= fog.fogCols || row < 0 || row >= fog.fogRows) {
+    return false;
+  }
+  const idx = row * fog.fogCols + col;
+  if (fog.revealed[idx]) return true;
+  if (exploredFog && exploredFog.revealed[idx]) return true;
+  return false;
+}
+
+/**
+ * Checks if at least one perpendicular midpoint sample of the door lies in a revealed or explored manual fog cell.
+ */
+export function doorVisibleThroughManualFog(
+  door: Pick<WallSegment, 'x1' | 'y1' | 'x2' | 'y2'>,
+  gridSize: number,
+  fog: FogState,
+  exploredFog?: FogState | null
+): boolean {
+  const [p1, p2] = doorMidpointNormalSamples(door, gridSize);
+  return isPointInRevealedOrExploredCell(p1, fog, exploredFog) || isPointInRevealedOrExploredCell(p2, fog, exploredFog);
+}
 
 /**
  * Every edit below reads the map's whole wall list, changes it and writes it
@@ -213,7 +266,15 @@ export function registerWallHandlers(io: Server, socket: AuthenticatedSocket): v
         // a prepared map is the DM's until they switch to it.
         const map = await tx.map.findUnique({
           where: { id: mapId },
-          select: { ...EXTENT, wallSegments: true, lightingEnabled: true, campaign: { select: { currentMapId: true } } },
+          select: {
+            ...EXTENT,
+            wallSegments: true,
+            lightingEnabled: true,
+            fogEnabled: true,
+            fogData: true,
+            explorationEnabled: true,
+            campaign: { select: { currentMapId: true } },
+          },
         });
         if (!map || map.campaignId !== campaignId || !canReadMap(commitRole, mapId, map.campaign.currentMapId)) {
           return { refused: 'Map not found' };
@@ -237,14 +298,24 @@ export function registerWallHandlers(io: Server, socket: AuthenticatedSocket): v
           // is now, so one the DM moved since the sight was worked out is
           // refused if it went out of it, and on a map lit since then, with
           // no sight worked out, no door is seen yet.
-          // TODO(#156): manual fog is not asked. A player can still toggle a
-          // door in unrevealed squares, which their screen covers, and learn
-          // from the answer that it is there. Refuse a door with no revealed
-          // square on either side of its middle, and offer none in the
-          // client's doorAccess.ts.
           const door = existing[idx];
           if (map.lightingEnabled && !(sight?.seesPoint((door.x1 + door.x2) / 2, (door.y1 + door.y2) / 2) ?? false)) {
             return { refused: 'You cannot see that door', current: door };
+          }
+          if (map.fogEnabled && map.fogData !== null) {
+            const fog = loadFogState(map, map.fogData as unknown as FogState | null);
+            const explorationRow = map.explorationEnabled
+              ? await tx.mapExploration.findUnique({
+                  where: { mapId_userId: { mapId, userId } },
+                  select: { explored: true },
+                })
+              : null;
+            const exploredFog = explorationRow?.explored
+              ? loadFogState(map, explorationRow.explored as unknown as FogState | null)
+              : null;
+            if (!doorVisibleThroughManualFog(door, map.gridSize, fog, exploredFog)) {
+              return { refused: 'You cannot see that door', current: door };
+            }
           }
           const targetType = sent.type;
           const currentType = existing[idx].type;
