@@ -1778,30 +1778,6 @@ sudo -u postgres psql -c "ALTER DATABASE cozyvtt OWNER TO cozyvtt;"
 sudo -u postgres psql -d cozyvtt -c "ALTER SCHEMA public OWNER TO cozyvtt;"
 ```
 
-### PostgreSQL Major-Version Upgrades
-
-CozyVTT uses PostgreSQL 18 with its cluster directory at `/var/lib/postgresql/18/docker` on the `postgres_data` volume. Major-version PostgreSQL upgrades (such as 18 to 19) require migration because PostgreSQL data directories are incompatible across major versions.
-
-The repository provides `./backend/scripts/upgrade-postgres.sh` to assist operators with version checks and migration:
-
-1. **Check cluster compatibility and detection**:
-   ```bash
-   ./backend/scripts/upgrade-postgres.sh detect
-   ./backend/scripts/upgrade-postgres.sh check
-   ```
-
-2. **Rehearse upgrade via instance backup (`rehearse-backup`)**:
-   Verify the instance backup archive before upgrading:
-   ```bash
-   BACKUP_ARCHIVE=/path/to/backup.zip ./backend/scripts/upgrade-postgres.sh rehearse-backup
-   ```
-
-3. **Perform fast in-place migration with `pg_upgrade`**:
-   Stop the stack (`docker compose down`) prior to executing `pg_upgrade` against the stopped cluster:
-   ```bash
-   ./backend/scripts/upgrade-postgres.sh pg-upgrade
-   ```
-
 ---
 
 ## Hardening Checklist
