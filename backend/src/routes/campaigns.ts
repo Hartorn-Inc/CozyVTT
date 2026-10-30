@@ -1939,10 +1939,17 @@ router.post('/:campaignId/sessions', campaignDM, async (req: AuthenticatedReques
   try {
     const { campaignId } = req.params;
 
-    // Check if there's already an active session
+    // Check if there's already an active or paused session or unended row
     const campaign = await prisma.campaign.findUnique({
       where: { id: campaignId },
-      select: { status: true },
+      select: {
+        status: true,
+        sessions: {
+          where: { endedAt: null },
+          take: 1,
+          select: { id: true },
+        },
+      },
     });
 
     if (!campaign) {
@@ -1952,10 +1959,10 @@ router.post('/:campaignId/sessions', campaignDM, async (req: AuthenticatedReques
       });
     }
 
-    if (campaign.status === 'ACTIVE') {
+    if (campaign.status === 'ACTIVE' || campaign.status === 'PAUSED' || campaign.sessions.length > 0) {
       return res.status(400).json({
         error: 'Bad Request',
-        message: 'A session is already active. Please end or pause the current session first.',
+        message: 'A session is already active or paused. Please end or resume the current session first.',
       });
     }
 
@@ -2114,11 +2121,19 @@ router.put('/:campaignId/sessions/:sessionId/end', campaignDM, async (req: Authe
       });
     }
 
-    // Capture game state if requested
-    let savedState = null;
+    // Capture game state if requested, or preserve prior snapshot taken during pause
+    let savedStateJson: Prisma.InputJsonValue | undefined = undefined;
+    let effectiveStateSaved = false;
+
     if (saveState) {
       const gameState = await captureGameState(campaignId, sessionId);
-      savedState = gameState;
+      savedStateJson = toJson(gameState);
+      effectiveStateSaved = true;
+    } else if (session.savedState !== null) {
+      // Preserve pre-existing savedState captured during pause rather than clobbering it
+      effectiveStateSaved = true;
+    } else {
+      effectiveStateSaved = false;
     }
 
     // Update session with end time, optional notes, and saved state
@@ -2126,7 +2141,7 @@ router.put('/:campaignId/sessions/:sessionId/end', campaignDM, async (req: Authe
       where: { id: sessionId },
       data: {
         endedAt: new Date(),
-        savedState: toJson(savedState),
+        ...(savedStateJson !== undefined ? { savedState: savedStateJson } : {}),
         ...(notes ? { notes: String(notes).slice(0, 2000) } : {}),
       },
     });
@@ -2137,15 +2152,22 @@ router.put('/:campaignId/sessions/:sessionId/end', campaignDM, async (req: Authe
       data: { status: 'INACTIVE' },
     });
 
+    const endMessage =
+      saveState
+        ? `Session ${session.sessionNumber} has ended. Game state saved!`
+        : effectiveStateSaved
+        ? `Session ${session.sessionNumber} has ended. Pre-existing paused game state was preserved.`
+        : `Session ${session.sessionNumber} has ended without saving state.`;
+
     // Send system message
     await sendSystemMessage(
       campaignId,
-      `Session ${session.sessionNumber} has ended.${saveState ? ' Game state saved!' : ''}`,
+      endMessage,
       {
         sessionId: session.id,
         sessionNumber: session.sessionNumber,
         action: 'session.ended',
-        stateSaved: saveState,
+        stateSaved: effectiveStateSaved,
       }
     );
 
@@ -2155,9 +2177,16 @@ router.put('/:campaignId/sessions/:sessionId/end', campaignDM, async (req: Authe
       sessionNumber: session.sessionNumber,
     });
 
+    const responseMessage =
+      saveState
+        ? 'Session ended successfully'
+        : effectiveStateSaved
+        ? 'Session ended successfully (pre-existing paused state preserved)'
+        : 'Session ended without saving state';
+
     return res.status(200).json({
-      message: 'Session ended successfully',
-      stateSaved: saveState,
+      message: responseMessage,
+      stateSaved: effectiveStateSaved,
     });
   } catch (error) {
     logger.error('Error ending session', { err: error });

@@ -21,9 +21,10 @@ This guide covers deploying CozyVTT to a **production server** using Docker Comp
 11. [Monitoring and Logs](#monitoring-and-logs)
 12. [Troubleshooting](#troubleshooting)
 13. [Updating CozyVTT](#updating-cozyvtt)
-14. [Hardening Checklist](#hardening-checklist)
-15. [Cloudflare Tunnel (Recommended for Public Instances)](#cloudflare-tunnel-recommended-for-public-instances)
-16. [The API Documentation](#the-api-documentation)
+14. [PostgreSQL Major-Version Upgrades](#postgresql-major-version-upgrades)
+15. [Hardening Checklist](#hardening-checklist)
+16. [Cloudflare Tunnel (Recommended for Public Instances)](#cloudflare-tunnel-recommended-for-public-instances)
+17. [The API Documentation](#the-api-documentation)
 
 ---
 
@@ -1777,6 +1778,53 @@ Coming from 1.4.0 or earlier, also make the database role the owner of the datab
 sudo -u postgres psql -c "ALTER DATABASE cozyvtt OWNER TO cozyvtt;"
 sudo -u postgres psql -d cozyvtt -c "ALTER SCHEMA public OWNER TO cozyvtt;"
 ```
+
+---
+
+## PostgreSQL Major-Version Upgrades
+
+When a future release upgrades the database container to a newer major version (such as PostgreSQL 19), PostgreSQL will refuse to start against a data directory created by an older major version. Under Docker Compose, CozyVTT stores PostgreSQL data at `/var/lib/postgresql/18/docker` inside the `postgres_data` volume.
+
+The helper script `backend/scripts/upgrade-postgres.sh` assists in verifying, planning, and performing major-version cluster migrations.
+
+### 1. Detect Cluster Version and Status
+
+Inspect the existing data volume layout before starting an upgraded container:
+
+```bash
+./backend/scripts/upgrade-postgres.sh detect
+./backend/scripts/upgrade-postgres.sh status
+```
+
+If an older cluster version is detected at `/var/lib/postgresql/18/docker`, the check command warns that direct startup without migration will fail:
+
+```bash
+./backend/scripts/upgrade-postgres.sh check
+```
+
+### 2. Recommended Migration Path: Instance Backup Rehearsal and Restore
+
+The safest and verified migration path uses CozyVTT's built-in backup and restore mechanism:
+
+1. Create a full instance backup via **Admin Dashboard -> Backups -> Create Backup** or `./backend/scripts/backup.sh`.
+2. Rehearse the backup archive compatibility before touching production data:
+   ```bash
+   ./backend/scripts/upgrade-postgres.sh rehearse-backup /path/to/backup.zip
+   ```
+3. Stop the stack: `docker compose down`.
+4. Initialize the new PostgreSQL version on a clean volume and restore the database using `./backend/scripts/restore.sh`.
+
+### 3. Fast In-Place Migration: pg_upgrade
+
+For large databases where a dump and restore would cause unacceptable downtime, use `pg_upgrade` with `--link` mode:
+
+1. Stop the application stack: `docker compose stop backend frontend nginx`.
+2. Preview source and target cluster paths with the helper:
+   ```bash
+   ./backend/scripts/upgrade-postgres.sh pg-upgrade
+   ```
+3. Execute `pg_upgrade` in a dedicated PostgreSQL upgrade container where both the old `/var/lib/postgresql/18/docker` cluster and the new target cluster directory are mounted on the same volume.
+4. Verify that schema ownership and permissions are intact, then start the updated stack.
 
 ---
 
