@@ -674,6 +674,30 @@ describe('Game Systems Validation', () => {
 
       expect(result.success).toBe(false);
     });
+
+    it('should validate Call of Cthulhu 7e character with POW 100 and Sanity 99 (#219)', () => {
+      const example = loadExampleJSON('Call_of_Cthulhu_7th_Edition_character.json');
+      const validData = {
+        ...example.data,
+        characteristics: {
+          ...example.data.characteristics,
+          POW: { regular: 100, half: 50, fifth: 20 },
+        },
+        derivedStats: {
+          ...example.data.derivedStats,
+          sanity: {
+            ...example.data.derivedStats!.sanity,
+            starting: 99,
+            current: 99,
+            maximum: 99,
+          },
+        },
+      };
+
+      const result = validateCharacterData(GameSystem.CALL_OF_CTHULHU_7E, validData);
+
+      expect(result.success).toBe(true);
+    });
   });
 
   describe('Blank Character Templates', () => {
