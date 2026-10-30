@@ -200,6 +200,14 @@ _Avoid_: Flat bonus, bonus (unqualified), stat offset
 The internal, zero-dependency calculation engine embedded in CozyVTT that computes basic arithmetic operations (`+`, `-`, `*`, `/`), unary signs, and operator precedence for dice totals without external math packages.
 _Avoid_: Math engine, mathjs evaluator
 
+**Sitting DM**:
+The member currently assigned the active `DM` role in a campaign. The sitting DM possesses operational management authority over the campaign table and campaign-scoped assets, even if campaign ownership remains with the founding creator.
+_Avoid_: Active host, current owner (for this role)
+
+**Sandboxed document**:
+A document asset (Markdown, plain text, or PDF) served with defensive isolation headers (`Content-Security-Policy: default-src 'none'; sandbox` and `X-Content-Type-Options: nosniff`) preventing script execution in the instance origin context.
+_Avoid_: Raw document, unsafe asset, embedded view
+
 ## Contribution
 
 **EPURE orchestration**:
