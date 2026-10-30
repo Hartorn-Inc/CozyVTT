@@ -302,8 +302,8 @@ export function registerWallHandlers(io: Server, socket: AuthenticatedSocket): v
           if (map.lightingEnabled && !(sight?.seesPoint((door.x1 + door.x2) / 2, (door.y1 + door.y2) / 2) ?? false)) {
             return { refused: 'You cannot see that door', current: door };
           }
-          if (map.fogEnabled) {
-            const fog = loadFogState(map, map.fogData as FogState | null);
+          if (map.fogEnabled && map.fogData) {
+            const fog = loadFogState(map, map.fogData as unknown as FogState | null);
             const explorationRow = map.explorationEnabled
               ? await tx.mapExploration.findUnique({
                   where: { mapId_userId: { mapId, userId } },
