@@ -49,7 +49,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -112,7 +112,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
@@ -180,7 +180,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
       - name: Backend, what an instance runs
         working-directory: backend
         run: npm audit --omit=dev --audit-level=high
@@ -245,7 +245,7 @@ jobs:
           docker compose up -d --wait --wait-timeout 180
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.12.0
+          node-version: 26.13.0
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - name: Install the smoke tests and their browser
@@ -282,7 +282,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: zizmorcore/zizmor-action@85b2b9fb8e3325e7a23d7d0a9d7ba5ae0f999e3e # v0.7.1
+      - uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
         with:
           persona: pedantic
           advanced-security: false
